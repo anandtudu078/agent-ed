@@ -23,15 +23,23 @@ const STUDENT_ID =
 // DOM references
 // ---------------------------------------------------------------------------
 
-const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
-const chatContainerEl = document.querySelector<HTMLElement>("#chat-container")!;
-const formEl = document.querySelector<HTMLFormElement>("#chat-form")!;
-const inputEl = document.querySelector<HTMLInputElement>("#message-input")!;
-const sendButtonEl = document.querySelector<HTMLButtonElement>("#send-button")!;
-const voiceToggleEl = document.querySelector<HTMLButtonElement>("#voice-toggle")!;
-const voiceHintEl = document.querySelector<HTMLParagraphElement>("#voice-hint")!;
-const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
-const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
+function getElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) {
+    throw new Error(`AgentEd UI element not found: ${selector}`);
+  }
+  return element;
+}
+
+const messagesEl = getElement<HTMLDivElement>("#messages");
+const chatContainerEl = getElement<HTMLElement>("#chat-container");
+const formEl = getElement<HTMLFormElement>("#chat-form");
+const inputEl = getElement<HTMLInputElement>("#message-input");
+const sendButtonEl = getElement<HTMLButtonElement>("#send-button");
+const voiceToggleEl = getElement<HTMLButtonElement>("#voice-toggle");
+const voiceHintEl = getElement<HTMLParagraphElement>("#voice-hint");
+const statusDotEl = getElement<HTMLSpanElement>("#status-dot");
+const statusTextEl = getElement<HTMLSpanElement>("#status-text");
 
 // ---------------------------------------------------------------------------
 // Socket connection
@@ -43,14 +51,17 @@ const socket: Socket = io(SERVER_URL, {
 
 socket.on("connect", () => {
   setConnectionStatus("connected");
-  appendMessage(
-    "system",
-    "Connected to AgentEd. Ask me about any concept — I'll guide you with questions instead of answers.",
-  );
+  if (messagesEl.childElementCount === 0) {
+    appendMessage(
+      "system",
+      "Connected to AgentEd. Ask about any concept and I’ll guide you with questions instead of answers.",
+    );
+  }
 });
 
 socket.on("disconnect", (reason) => {
   setConnectionStatus("disconnected");
+  setBusy(false);
   appendMessage("system", `Disconnected (${reason}). Trying to reconnect…`);
 });
 
@@ -90,13 +101,17 @@ function appendMessage(
   role: "student" | "tutor" | "system",
   text: string,
 ): void {
+  if (!text.trim()) return;
+
   const wrapper = document.createElement("div");
 
   if (role === "system") {
     wrapper.className = "mx-auto max-w-md text-center";
-    wrapper.innerHTML = `
-      <p class="rounded-full bg-slate-800/70 px-3 py-1 text-xs text-slate-400"></p>`;
-    wrapper.firstChild!.textContent = text;
+    const notice = document.createElement("p");
+    notice.className =
+      "rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1 text-xs text-slate-400";
+    notice.textContent = text;
+    wrapper.appendChild(notice);
   } else {
     const isStudent = role === "student";
     wrapper.className = `flex ${isStudent ? "justify-end" : "justify-start"}`;
@@ -125,19 +140,27 @@ function appendMessage(
 }
 
 function setBusy(busy: boolean): void {
+  requestInFlight = busy;
   sendButtonEl.disabled = busy;
-  inputEl.disabled = busy;
   sendButtonEl.textContent = busy ? "Thinking…" : "Send";
+  sendButtonEl.setAttribute("aria-busy", String(busy));
 }
 
 // ---------------------------------------------------------------------------
 // Sending messages
 // ---------------------------------------------------------------------------
 
+let requestInFlight = false;
+
 formEl.addEventListener("submit", (event) => {
   event.preventDefault();
   const studentMessage = inputEl.value.trim();
-  if (!studentMessage) return;
+  if (!studentMessage || requestInFlight || !socket.connected) {
+    if (!socket.connected) {
+      appendMessage("system", "Still reconnecting — your message will send when you’re online.");
+    }
+    return;
+  }
 
   appendMessage("student", studentMessage);
   inputEl.value = "";
@@ -193,6 +216,7 @@ function getRecognition(): SpeechRecognitionLike | null {
   instance.onresult = (event) => {
     const transcript = event.results[event.results.length - 1]?.[0]?.transcript?.trim();
     if (!transcript) return;
+    if (!socket.connected || requestInFlight) return;
     appendMessage("student", transcript);
 
     socket.emit("student-message", {
@@ -205,7 +229,7 @@ function getRecognition(): SpeechRecognitionLike | null {
 
   instance.onend = () => {
     // Chrome stops recognition after silence; restart while voice mode is on.
-    if (voiceEnabled) recognition?.start();
+    if (voiceEnabled && recognition === instance) recognition.start();
   };
 
   instance.onerror = (event) => {
@@ -237,7 +261,12 @@ function setVoiceMode(enabled: boolean): void {
     voiceToggleEl.innerHTML = '🎙️ <span class="hidden sm:inline">Listening…</span>';
     voiceHintEl.textContent = "Voice mode on — speak, and your words become messages.";
     voiceHintEl.classList.remove("hidden");
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      voiceHintEl.textContent = "Voice mode is already starting. Try speaking in a moment.";
+      voiceHintEl.classList.remove("hidden");
+    }
   } else {
     voiceToggleEl.className =
       "rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95";
