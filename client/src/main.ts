@@ -48,8 +48,10 @@ function clearStoredAuth(): void {
 
 let currentAuth: { token: string; user: StoredUser } | null = loadStoredAuth();
 
-// The session key is now the authenticated username.
-const STUDENT_ID = currentAuth?.user.username ?? "";
+// The session key is the authenticated username, resolved at send time
+// (it is empty until sign-in, so computing it at module load would break
+// the first registration).
+const getStudentId = (): string => currentAuth?.user.username ?? "";
 
 // ---------------------------------------------------------------------------
 // DOM references
@@ -59,8 +61,8 @@ const authViewEl = document.querySelector<HTMLDivElement>("#auth-view")!;
 const appViewEl = document.querySelector<HTMLDivElement>("#app-view")!;
 const authFormEl = document.querySelector<HTMLFormElement>("#auth-form")!;
 const authTitleEl = document.querySelector<HTMLHeadingElement>("#auth-title")!;
-const authToggleTextEl =
-  document.querySelector<HTMLParagraphElement>("#auth-toggle-text")!;
+const authToggleLabelEl =
+  document.querySelector<HTMLSpanElement>("#auth-toggle-label")!;
 const authToggleLinkEl = document.querySelector<HTMLButtonElement>("#auth-toggle")!;
 const authSubmitEl = document.querySelector<HTMLButtonElement>("#auth-submit")!;
 const displayNameInputEl =
@@ -164,7 +166,7 @@ function setAuthMode(register: boolean): void {
   isRegisterMode = register;
   authTitleEl.textContent = register ? "Create your account" : "Welcome back";
   authSubmitEl.textContent = register ? "Sign Up" : "Sign In";
-  authToggleTextEl.textContent = register
+  authToggleLabelEl.textContent = register
     ? "Already have an account?"
     : "New to AgentEd?";
   authToggleLinkEl.textContent = register ? "Sign in" : "Create an account";
@@ -313,7 +315,7 @@ formEl.addEventListener("submit", (event) => {
   setBusy(true);
 
   socket.emit("student-message", {
-    studentId: STUDENT_ID,
+    studentId: getStudentId(),
     activeTopic: studentMessage.slice(0, 60),
     studentMessage,
   });
@@ -363,7 +365,7 @@ function getRecognition(): SpeechRecognitionLike | null {
     appendMessage("student", transcript);
 
     socket.emit("student-message", {
-      studentId: STUDENT_ID,
+      studentId: getStudentId(),
       activeTopic: transcript.slice(0, 60),
       studentMessage: transcript,
     });

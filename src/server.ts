@@ -18,6 +18,10 @@ import {
   requireAuth,
   verifyAuthToken,
 } from "./middleware/auth";
+import {
+  chatRateLimit,
+  createSocketLimiter,
+} from "./middleware/rateLimit";
 
 const app = express();
 const httpServer = createServer(app);
@@ -175,7 +179,7 @@ app.get("/api/sessions/:studentId", requireAuth, async (request, response) => {
   }
 });
 
-app.post("/api/chat", requireAuth, async (request, response) => {
+app.post("/api/chat", requireAuth, chatRateLimit, async (request, response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser;
     const result = await processStudentMessage(
@@ -206,6 +210,13 @@ io.use((socket, next) => {
   }
 });
 
+// Per-username throttle for socket messages (the socket equivalent of the
+// chat HTTP limiter; each message triggers billable AI calls).
+const socketMessageLimiter = createSocketLimiter({
+  windowMs: 60 * 1000,
+  max: 12,
+});
+
 io.on("connection", (socket) => {
   const user = socket.data.user as AuthUser;
   console.log(`Socket connected: ${socket.id} (${user.username})`);
@@ -213,6 +224,16 @@ io.on("connection", (socket) => {
   socket.on(
     "student-message",
     async (payload: StudentMessagePayload) => {
+      const { allowed, retryAfterMs } = socketMessageLimiter(user.username);
+      if (!allowed) {
+        socket.emit("ai-error", {
+          message: "You're sending messages too quickly. Please slow down a little.",
+        });
+        console.warn(
+          `Rate limited socket message from ${user.username} (retry in ${Math.ceil(retryAfterMs / 1000)}s)`,
+        );
+        return;
+      }
       try {
         const result = await processStudentMessage(payload, user);
         socket.emit("socratic-response", result);
