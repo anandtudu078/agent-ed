@@ -22,31 +22,36 @@
     </script>
   </head>
   <body class="h-full bg-slate-950 text-slate-100 antialiased">
+    <!-- Ambient background glow -->
+    <div
+      class="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(99,102,241,0.15),transparent_60%)]"
+      aria-hidden="true"
+    ></div>
+
     <!-- Auth view (sign in / sign up) -->
     <div
       id="auth-view"
-      class="hidden h-full items-center justify-center px-4"
+      class="relative flex h-full flex-col items-center justify-center px-4"
     >
       <div class="w-full max-w-sm">
         <div class="mb-8 text-center">
           <div
-            class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-2xl shadow-lg shadow-indigo-900/40"
+            class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl shadow-xl shadow-indigo-900/50 transition-transform hover:scale-105"
           >
             🎓
           </div>
-          <h1 class="text-2xl font-semibold tracking-tight">
-            AgentEd
-            <span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">
-              Socratic AI Mentor</span>
+          <h1 class="text-3xl font-bold tracking-tight">
+            Agent<span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">Ed</span>
           </h1>
-          <p class="mt-1 text-sm text-slate-400">
-            Guided learning through questions, not answers
+          <p class="mt-2 text-sm text-slate-400">
+            Your Socratic AI mentor — it teaches with questions,
+            <span class="text-slate-300">never answers.</span>
           </p>
         </div>
 
         <form
           id="auth-form"
-          class="space-y-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl"
+          class="space-y-3 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur"
         >
           <h2 id="auth-title" class="text-lg font-semibold">Welcome back</h2>
 
@@ -55,7 +60,7 @@
             type="text"
             autocomplete="name"
             placeholder="Display name (e.g., Anand)"
-            class="hidden w-full rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            class="hidden w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
           />
           <label for="username-input" class="sr-only">Username</label>
           <input
@@ -63,7 +68,7 @@
             type="text"
             autocomplete="username"
             placeholder="Username"
-            class="w-full rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            class="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
           />
           <label for="password-input" class="sr-only">Password</label>
           <input
@@ -71,7 +76,7 @@
             type="password"
             autocomplete="current-password"
             placeholder="Password (8+ characters)"
-            class="w-full rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            class="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
           />
 
           <p id="auth-error" class="min-h-[1.25rem] text-sm text-rose-400"></p>
@@ -79,27 +84,31 @@
           <button
             id="auth-submit"
             type="submit"
-            class="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            class="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Sign In
           </button>
 
           <p id="auth-toggle-text" class="pt-1 text-center text-xs text-slate-400">
-            New to AgentEd?
+            <span id="auth-toggle-label">New to AgentEd?</span>
             <button
               id="auth-toggle"
               type="button"
-              class="font-semibold text-indigo-400 hover:text-indigo-300"
+              class="font-semibold text-indigo-400 transition hover:text-indigo-300"
             >
               Create an account
             </button>
           </p>
         </form>
+
+        <p class="mt-6 text-center text-xs text-slate-600">
+          Learn by curiosity — one guiding question at a time.
+        </p>
       </div>
     </div>
 
     <!-- Chat app view -->
-    <div id="app-view" class="hidden h-full flex-col">
+    <div id="app-view" class="relative hidden h-full flex-col">
     <div class="flex h-full flex-col">
       <!-- Header -->
       <header

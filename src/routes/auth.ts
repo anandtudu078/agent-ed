@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 
 import { User } from "../models/User";
 import { signAuthToken } from "../middleware/auth";
+import { authRateLimit } from "../middleware/rateLimit";
 
 const router = Router();
 
@@ -26,7 +27,7 @@ function parseAuthPayload(body: unknown): AuthPayload | null {
  * POST /api/auth/register
  * Body: { username, password, displayName? }
  */
-router.post("/register", async (request: Request, response: Response) => {
+router.post("/register", authRateLimit, async (request: Request, response: Response) => {
   try {
     const payload = parseAuthPayload(request.body);
     if (!payload) {
@@ -87,7 +88,7 @@ router.post("/register", async (request: Request, response: Response) => {
  * POST /api/auth/login
  * Body: { username, password }
  */
-router.post("/login", async (request: Request, response: Response) => {
+router.post("/login", authRateLimit, async (request: Request, response: Response) => {
   try {
     const payload = parseAuthPayload(request.body);
     if (!payload) {
