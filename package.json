@@ -1,0 +1,37 @@
+{
+  "name": "agented",
+  "version": "1.0.0",
+  "description": "A Personalised mentor to teach AI.",
+  "homepage": "https://github.com/anandtudu078/agent-ed#readme",
+  "bugs": {
+    "url": "https://github.com/anandtudu078/agent-ed/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anandtudu078/agent-ed.git"
+  },
+  "author": "Anand Tudu",
+  "type": "commonjs",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^1.29.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "groq-sdk": "^0.30.0",
+    "mongoose": "^8.18.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
