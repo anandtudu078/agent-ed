@@ -11,6 +11,13 @@ import {
   analyzeStudentInput,
   generateSocraticResponse,
 } from "./services/aiService";
+import authRouter from "./routes/auth";
+import {
+  AuthenticatedRequest,
+  AuthUser,
+  requireAuth,
+  verifyAuthToken,
+} from "./middleware/auth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -24,6 +31,8 @@ const port = Number(process.env.PORT ?? 3000);
 
 app.use(cors());
 app.use(express.json());
+
+app.use("/api/auth", authRouter);
 
 interface StudentMessagePayload {
   studentId: string;
@@ -87,10 +96,13 @@ function toClientMessage(error: unknown): string {
 
 async function processStudentMessage(
   payload: StudentMessagePayload,
+  authUser: AuthUser,
 ): Promise<ChatResult> {
   validateStudentMessage(payload);
 
-  const studentId = payload.studentId.trim();
+  // Sessions are keyed by the authenticated username, so one student can
+  // never read or write another student's conversation.
+  const studentId = authUser.username;
   const activeTopic = payload.activeTopic.trim();
   const studentMessage = payload.studentMessage.trim();
   const analysis = await analyzeStudentInput(studentMessage);
@@ -131,11 +143,17 @@ app.get("/health", (_request, response) => {
   response.json({ status: "ok", service: "AgentEd" });
 });
 
-app.get("/api/sessions/:studentId", async (request, response) => {
+app.get("/api/sessions/:studentId", requireAuth, async (request, response) => {
   try {
-    const studentId = request.params.studentId?.trim();
+    const authUser = (request as AuthenticatedRequest).authUser;
+    const studentId = String(request.params.studentId ?? "").trim();
     if (!studentId) {
       response.status(400).json({ error: "studentId is required." });
+      return;
+    }
+    // Students may only read their own session.
+    if (authUser && authUser.username !== studentId) {
+      response.status(403).json({ error: "You can only view your own session." });
       return;
     }
     const session = await Session.findOne({ studentId }).lean();
@@ -157,9 +175,13 @@ app.get("/api/sessions/:studentId", async (request, response) => {
   }
 });
 
-app.post("/api/chat", async (request, response) => {
+app.post("/api/chat", requireAuth, async (request, response) => {
   try {
-    const result = await processStudentMessage(request.body);
+    const authUser = (request as AuthenticatedRequest).authUser;
+    const result = await processStudentMessage(
+      request.body,
+      authUser as AuthUser,
+    );
     response.status(200).json(result);
   } catch (error) {
     console.error("Failed to process chat request.", error);
@@ -170,14 +192,29 @@ app.post("/api/chat", async (request, response) => {
   }
 });
 
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  if (!token) {
+    next(new Error("Authentication required."));
+    return;
+  }
+  try {
+    socket.data.user = verifyAuthToken(token);
+    next();
+  } catch {
+    next(new Error("Session expired or invalid. Please sign in again."));
+  }
+});
+
 io.on("connection", (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  const user = socket.data.user as AuthUser;
+  console.log(`Socket connected: ${socket.id} (${user.username})`);
 
   socket.on(
     "student-message",
     async (payload: StudentMessagePayload) => {
       try {
-        const result = await processStudentMessage(payload);
+        const result = await processStudentMessage(payload, user);
         socket.emit("socratic-response", result);
       } catch (error) {
         console.error("Failed to process student message.", error);

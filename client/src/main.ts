@@ -7,78 +7,228 @@ import { io, type Socket } from "socket.io-client";
 const SERVER_URL =
   (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "http://localhost:3000";
 
-// Identifies this student for session persistence on the backend.
-const STUDENT_ID =
-  (globalThis.localStorage.getItem("agented:studentId") as string | null) ??
-  (() => {
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `student-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    globalThis.localStorage.setItem("agented:studentId", id);
-    return id;
-  })();
+// ---------------------------------------------------------------------------
+// Auth state (persisted so reloads keep you signed in)
+// ---------------------------------------------------------------------------
+
+interface StoredUser {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+interface AuthResponse {
+  token: string;
+  user: StoredUser;
+}
+
+function loadStoredAuth(): { token: string; user: StoredUser } | null {
+  try {
+    const token = localStorage.getItem("agented:token");
+    const userJson = localStorage.getItem("agented:user");
+    if (token && userJson) {
+      return { token, user: JSON.parse(userJson) as StoredUser };
+    }
+  } catch {
+    // Corrupted storage — fall through to signed-out state.
+  }
+  return null;
+}
+
+function storeAuth(auth: { token: string; user: StoredUser }): void {
+  localStorage.setItem("agented:token", auth.token);
+  localStorage.setItem("agented:user", JSON.stringify(auth.user));
+}
+
+function clearStoredAuth(): void {
+  localStorage.removeItem("agented:token");
+  localStorage.removeItem("agented:user");
+  localStorage.removeItem("agented:studentId");
+}
+
+let currentAuth: { token: string; user: StoredUser } | null = loadStoredAuth();
+
+// The session key is now the authenticated username.
+const STUDENT_ID = currentAuth?.user.username ?? "";
 
 // ---------------------------------------------------------------------------
 // DOM references
 // ---------------------------------------------------------------------------
 
-function getElement<T extends Element>(selector: string): T {
-  const element = document.querySelector<T>(selector);
-  if (!element) {
-    throw new Error(`AgentEd UI element not found: ${selector}`);
-  }
-  return element;
-}
+const authViewEl = document.querySelector<HTMLDivElement>("#auth-view")!;
+const appViewEl = document.querySelector<HTMLDivElement>("#app-view")!;
+const authFormEl = document.querySelector<HTMLFormElement>("#auth-form")!;
+const authTitleEl = document.querySelector<HTMLHeadingElement>("#auth-title")!;
+const authToggleTextEl =
+  document.querySelector<HTMLParagraphElement>("#auth-toggle-text")!;
+const authToggleLinkEl = document.querySelector<HTMLButtonElement>("#auth-toggle")!;
+const authSubmitEl = document.querySelector<HTMLButtonElement>("#auth-submit")!;
+const displayNameInputEl =
+  document.querySelector<HTMLInputElement>("#display-name-input")!;
+const usernameInputEl = document.querySelector<HTMLInputElement>("#username-input")!;
+const passwordInputEl = document.querySelector<HTMLInputElement>("#password-input")!;
+const authErrorEl = document.querySelector<HTMLParagraphElement>("#auth-error")!;
+const signOutButtonEl =
+  document.querySelector<HTMLButtonElement>("#sign-out-button")!;
+const userBadgeEl = document.querySelector<HTMLSpanElement>("#user-badge")!;
 
-const messagesEl = getElement<HTMLDivElement>("#messages");
-const chatContainerEl = getElement<HTMLElement>("#chat-container");
-const formEl = getElement<HTMLFormElement>("#chat-form");
-const inputEl = getElement<HTMLInputElement>("#message-input");
-const sendButtonEl = getElement<HTMLButtonElement>("#send-button");
-const voiceToggleEl = getElement<HTMLButtonElement>("#voice-toggle");
-const voiceHintEl = getElement<HTMLParagraphElement>("#voice-hint");
-const statusDotEl = getElement<HTMLSpanElement>("#status-dot");
-const statusTextEl = getElement<HTMLSpanElement>("#status-text");
+const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
+const chatContainerEl = document.querySelector<HTMLElement>("#chat-container")!;
+const formEl = document.querySelector<HTMLFormElement>("#chat-form")!;
+const inputEl = document.querySelector<HTMLInputElement>("#message-input")!;
+const sendButtonEl = document.querySelector<HTMLButtonElement>("#send-button")!;
+const voiceToggleEl = document.querySelector<HTMLButtonElement>("#voice-toggle")!;
+const voiceHintEl = document.querySelector<HTMLParagraphElement>("#voice-hint")!;
+const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
+const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
+
+let isRegisterMode = false;
 
 // ---------------------------------------------------------------------------
-// Socket connection
+// Socket connection (auth token passed in the handshake)
 // ---------------------------------------------------------------------------
 
-const socket: Socket = io(SERVER_URL, {
-  transports: ["websocket", "polling"],
-});
+let socket: Socket | null = null;
 
-socket.on("connect", () => {
-  setConnectionStatus("connected");
-  if (messagesEl.childElementCount === 0) {
+function connectSocket(): void {
+  if (!currentAuth) return;
+
+  socket = io(SERVER_URL, {
+    transports: ["websocket", "polling"],
+    auth: { token: currentAuth.token },
+  });
+
+  socket.on("connect", () => {
+    setConnectionStatus("connected");
     appendMessage(
       "system",
-      "Connected to AgentEd. Ask about any concept and I’ll guide you with questions instead of answers.",
+      "Connected to AgentEd. Ask me about any concept — I'll guide you with questions instead of answers.",
     );
-  }
-});
+  });
 
-socket.on("disconnect", (reason) => {
-  setConnectionStatus("disconnected");
-  setBusy(false);
-  appendMessage("system", `Disconnected (${reason}). Trying to reconnect…`);
-});
+  socket.on("disconnect", (reason) => {
+    setConnectionStatus("disconnected");
+    appendMessage("system", `Disconnected (${reason}). Trying to reconnect…`);
+  });
 
-socket.on("connect_error", () => {
-  setConnectionStatus("error");
-});
+  socket.on("connect_error", (error: Error) => {
+    // The backend rejects the handshake when the token is missing/expired.
+    if (
+      error.message.includes("Authentication required") ||
+      error.message.includes("Session expired")
+    ) {
+      signOut("Your session expired. Please sign in again.");
+      return;
+    }
+    setConnectionStatus("error");
+  });
 
-// Tutor response — payload matches the backend's ChatResult shape.
-socket.on(
-  "socratic-response",
-  (payload: { response: string; analysis: string }) => {
+  socket.on("socratic-response", (payload: { response: string }) => {
     appendMessage("tutor", payload.response);
-  },
-);
+    setBusy(false);
+  });
 
-socket.on("ai-error", (payload: { message: string }) => {
-  appendMessage("system", `Something went wrong: ${payload.message}`);
+  socket.on("ai-error", (payload: { message: string }) => {
+    appendMessage("system", `Something went wrong: ${payload.message}`);
+    setBusy(false);
+  });
+}
+
+function disconnectSocket(): void {
+  socket?.disconnect();
+  socket = null;
+  setConnectionStatus("disconnected");
+}
+
+// ---------------------------------------------------------------------------
+// Auth UI
+// ---------------------------------------------------------------------------
+
+function showApp(): void {
+  authViewEl.classList.add("hidden");
+  appViewEl.classList.remove("hidden");
+  if (currentAuth) {
+    userBadgeEl.textContent = `👤 ${currentAuth.user.displayName}`;
+  }
+  connectSocket();
+  inputEl.focus();
+}
+
+function showAuth(): void {
+  appViewEl.classList.add("hidden");
+  authViewEl.classList.remove("hidden");
+  authErrorEl.textContent = "";
+}
+
+function setAuthMode(register: boolean): void {
+  isRegisterMode = register;
+  authTitleEl.textContent = register ? "Create your account" : "Welcome back";
+  authSubmitEl.textContent = register ? "Sign Up" : "Sign In";
+  authToggleTextEl.textContent = register
+    ? "Already have an account?"
+    : "New to AgentEd?";
+  authToggleLinkEl.textContent = register ? "Sign in" : "Create an account";
+  displayNameInputEl.classList.toggle("hidden", !register);
+  authErrorEl.textContent = "";
+}
+
+function signOut(message?: string): void {
+  disconnectSocket();
+  clearStoredAuth();
+  currentAuth = null;
+  messagesEl.replaceChildren();
+  if (message) appendAuthError(message);
+  showAuth();
+}
+
+function appendAuthError(text: string): void {
+  authErrorEl.textContent = text;
+}
+
+authToggleLinkEl.addEventListener("click", () => setAuthMode(!isRegisterMode));
+
+signOutButtonEl.addEventListener("click", () => signOut());
+
+authFormEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  authErrorEl.textContent = "";
+
+  const username = usernameInputEl.value.trim();
+  const password = passwordInputEl.value;
+
+  if (!username || !password) {
+    appendAuthError("Username and password are required.");
+    return;
+  }
+
+  const endpoint = isRegisterMode ? "/api/auth/register" : "/api/auth/login";
+  const body = isRegisterMode
+    ? { username, password, displayName: displayNameInputEl.value.trim() || username }
+    : { username, password };
+
+  authSubmitEl.disabled = true;
+  try {
+    const response = await fetch(`${SERVER_URL}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const data = (await response.json()) as AuthResponse & { error?: string };
+
+    if (!response.ok) {
+      appendAuthError(data.error ?? "Authentication failed.");
+      return;
+    }
+
+    storeAuth(data);
+    currentAuth = data;
+    showApp();
+  } catch {
+    appendAuthError("Could not reach the server. Is the backend running?");
+  } finally {
+    authSubmitEl.disabled = false;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -139,6 +289,8 @@ function appendMessage(
   chatContainerEl.scrollTo({ top: chatContainerEl.scrollHeight, behavior: "smooth" });
 }
 
+let requestInFlight = false;
+
 function setBusy(busy: boolean): void {
   requestInFlight = busy;
   sendButtonEl.disabled = busy;
@@ -146,18 +298,12 @@ function setBusy(busy: boolean): void {
   sendButtonEl.setAttribute("aria-busy", String(busy));
 }
 
-// ---------------------------------------------------------------------------
-// Sending messages
-// ---------------------------------------------------------------------------
-
-let requestInFlight = false;
-
 formEl.addEventListener("submit", (event) => {
   event.preventDefault();
   const studentMessage = inputEl.value.trim();
-  if (!studentMessage || requestInFlight || !socket.connected) {
-    if (!socket.connected) {
-      appendMessage("system", "Still reconnecting — your message will send when you’re online.");
+  if (!studentMessage || requestInFlight || !socket?.connected) {
+    if (socket && !socket.connected) {
+      appendMessage("system", "Still reconnecting — try again in a moment.");
     }
     return;
   }
@@ -173,11 +319,8 @@ formEl.addEventListener("submit", (event) => {
   });
 });
 
-socket.on("socratic-response", () => setBusy(false));
-socket.on("ai-error", () => setBusy(false));
-
 // ---------------------------------------------------------------------------
-// Voice mode (Web Speech API — speech recognition + speech synthesis)
+// Voice mode (Web Speech API — speech recognition)
 // ---------------------------------------------------------------------------
 
 type SpeechRecognitionLike = {
@@ -216,7 +359,7 @@ function getRecognition(): SpeechRecognitionLike | null {
   instance.onresult = (event) => {
     const transcript = event.results[event.results.length - 1]?.[0]?.transcript?.trim();
     if (!transcript) return;
-    if (!socket.connected || requestInFlight) return;
+    if (!socket?.connected || requestInFlight) return;
     appendMessage("student", transcript);
 
     socket.emit("student-message", {
@@ -279,5 +422,13 @@ function setVoiceMode(enabled: boolean): void {
 
 voiceToggleEl.addEventListener("click", () => setVoiceMode(!voiceEnabled));
 
-// Focus the input on load.
-inputEl.focus();
+// ---------------------------------------------------------------------------
+// Boot: show the right view for the stored auth state
+// ---------------------------------------------------------------------------
+
+if (currentAuth) {
+  showApp();
+} else {
+  showAuth();
+  setAuthMode(false);
+}
