@@ -56,25 +56,27 @@
       <main
         id="chat-container"
         class="flex-1 overflow-y-auto px-4 py-6 scroll-smooth"
+        aria-label="Conversation with AgentEd"
         aria-live="polite"
       >
-        <div id="messages" class="mx-auto flex max-w-3xl flex-col gap-4"></div>
+        <div id="messages" class="mx-auto flex w-full max-w-3xl flex-col gap-4"></div>
       </main>
 
       <!-- Control bar -->
       <footer class="border-t border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur">
-        <form id="chat-form" class="mx-auto flex max-w-3xl items-center gap-2">
+        <form id="chat-form" class="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
+          <label for="message-input" class="sr-only">Your question</label>
           <input
             id="message-input"
             type="text"
             autocomplete="off"
             placeholder="Ask about any concept…"
-            class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
           />
           <button
             id="send-button"
             type="submit"
-            class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Send
           </button>
@@ -83,7 +85,7 @@
             type="button"
             aria-pressed="false"
             title="Toggle voice mode"
-            class="rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95"
+            class="rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95"
           >
             🎤 <span class="hidden sm:inline">Voice Mode</span>
           </button>

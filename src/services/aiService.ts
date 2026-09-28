@@ -57,6 +57,15 @@ export async function analyzeStudentInput(
   }
 }
 
+// Flash models tried in order — each has its own free-tier quota, and
+// availability/503 throttling varies per model, so falling back keeps the
+// tutor usable when one model is exhausted or overloaded.
+const GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+] as const;
+
 export async function generateSocraticResponse(
   conceptContext: string,
   studentQuery: string,
@@ -66,32 +75,42 @@ export async function generateSocraticResponse(
     apiKey: process.env.GEMINI_API_KEY,
   });
 
-  const response = await googleGenAI.models.generateContent({
-    model: "gemini-3.8-flash",
-    contents: [
-      {
-        role: "user",
-        parts: [
+  const promptText =
+    `Student analysis:\n${conceptContext}\n\n` +
+    `Student question:\n${studentQuery}`;
+
+  let lastError: unknown;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const response = await googleGenAI.models.generateContent({
+        model,
+        contents: [
           {
-            text:
-              `Student analysis:\n${conceptContext}\n\n` +
-              `Student question:\n${studentQuery}`,
+            role: "user",
+            parts: [{ text: promptText }],
           },
         ],
-      },
-    ],
-    config: {
-      systemInstruction:
-        "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
-        "with clear, encouraging questions. Never give a direct answer, complete a " +
-        "solution, or reveal the final result. Ask one focused guiding question at a time. " +
-        "Use the student analysis to target their misunderstanding.",
-    },
-  });
+        config: {
+          systemInstruction:
+            "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
+            "with clear, encouraging questions. Never give a direct answer, complete a " +
+            "solution, or reveal the final result. Ask one focused guiding question at a time. " +
+            "Use the student analysis to target their misunderstanding.",
+        },
+      });
 
-  const text = response.text?.trim();
-  if (!text) {
-    throw new Error("Gemini returned an empty Socratic response.");
+      const text = response.text?.trim();
+      if (text) {
+        return text;
+      }
+      lastError = new Error("Gemini returned an empty Socratic response.");
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return text;
+
+  throw new Error(
+    "All Gemini models are unavailable or out of quota. Please try again shortly.",
+    { cause: lastError },
+  );
 }

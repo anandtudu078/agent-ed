@@ -68,6 +68,23 @@ function validateStudentMessage(
   }
 }
 
+// Messages safe to show to clients; anything else (provider dumps, stack
+// traces, internal details) is logged but replaced with a generic message.
+const CLIENT_SAFE_ERROR_PATTERNS = [
+  "required strings",
+  "cannot be empty",
+  "All Gemini models are unavailable",
+  "Unable to save the tutoring session.",
+];
+
+function toClientMessage(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message : "Unable to process chat request.";
+  return CLIENT_SAFE_ERROR_PATTERNS.some((pattern) => message.includes(pattern))
+    ? message
+    : "The AI tutor is temporarily unavailable. Please try again in a moment.";
+}
+
 async function processStudentMessage(
   payload: StudentMessagePayload,
 ): Promise<ChatResult> {
@@ -146,11 +163,10 @@ app.post("/api/chat", async (request, response) => {
     response.status(200).json(result);
   } catch (error) {
     console.error("Failed to process chat request.", error);
-    const message =
-      error instanceof Error ? error.message : "Unable to process chat request.";
+    const message = toClientMessage(error);
     const isValidationError =
       message.includes("required strings") || message.includes("cannot be empty");
-    response.status(isValidationError ? 400 : 500).json({ error: message });
+    response.status(isValidationError ? 400 : 502).json({ error: message });
   }
 });
 
@@ -165,12 +181,7 @@ io.on("connection", (socket) => {
         socket.emit("socratic-response", result);
       } catch (error) {
         console.error("Failed to process student message.", error);
-        socket.emit("ai-error", {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to process student message.",
-        });
+        socket.emit("ai-error", { message: toClientMessage(error) });
       }
     },
   );
