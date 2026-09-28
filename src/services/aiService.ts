@@ -60,11 +60,34 @@ export async function analyzeStudentInput(
 // Flash models tried in order — each has its own free-tier quota, and
 // availability/503 throttling varies per model, so falling back keeps the
 // tutor usable when one model is exhausted or overloaded.
+// Extend with GEMINI_EXTRA_KEYS="key1,key2" to rotate through additional
+// API keys (e.g. a second Google Cloud project) once per-model quotas die.
 const GEMINI_MODELS = [
   "gemini-3.8-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
 ] as const;
+
+interface GeminiCredential {
+  label: string;
+  apiKey: string;
+}
+
+function loadGeminiCredentials(): GeminiCredential[] {
+  const credentials: GeminiCredential[] = [];
+  const primary = process.env.GEMINI_API_KEY;
+  if (primary) credentials.push({ label: "primary", apiKey: primary });
+
+  const extra = (process.env.GEMINI_EXTRA_KEYS ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  extra.forEach((apiKey, index) => {
+    credentials.push({ label: `extra-${index + 1}`, apiKey });
+  });
+
+  return credentials;
+}
 
 export async function generateSocraticResponse(
   conceptContext: string,
@@ -79,33 +102,46 @@ export async function generateSocraticResponse(
     `Student analysis:\n${conceptContext}\n\n` +
     `Student question:\n${studentQuery}`;
 
-  let lastError: unknown;
-  for (const model of GEMINI_MODELS) {
-    try {
-      const response = await googleGenAI.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: promptText }],
-          },
-        ],
-        config: {
-          systemInstruction:
-            "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
-            "with clear, encouraging questions. Never give a direct answer, complete a " +
-            "solution, or reveal the final result. Ask one focused guiding question at a time. " +
-            "Use the student analysis to target their misunderstanding.",
-        },
-      });
+  const credentials = loadGeminiCredentials();
+  if (credentials.length === 0) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
 
-      const text = response.text?.trim();
-      if (text) {
-        return text;
+  let lastError: unknown;
+  // Outer loop: credentials (keys), inner loop: models. Every key gets a
+  // fresh set of per-model free quotas, so rotation multiplies capacity.
+  for (const credential of credentials) {
+    const googleGenAI = new (await import("@google/genai")).GoogleGenAI({
+      apiKey: credential.apiKey,
+    });
+
+    for (const model of GEMINI_MODELS) {
+      try {
+        const response = await googleGenAI.models.generateContent({
+          model,
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: promptText }],
+            },
+          ],
+          config: {
+            systemInstruction:
+              "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
+              "with clear, encouraging questions. Never give a direct answer, complete a " +
+              "solution, or reveal the final result. Ask one focused guiding question at a time. " +
+              "Use the student analysis to target their misunderstanding.",
+          },
+        });
+
+        const text = response.text?.trim();
+        if (text) {
+          return text;
+        }
+        lastError = new Error("Gemini returned an empty Socratic response.");
+      } catch (error) {
+        lastError = error;
       }
-      lastError = new Error("Gemini returned an empty Socratic response.");
-    } catch (error) {
-      lastError = error;
     }
   }
 
