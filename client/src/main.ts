@@ -68,6 +68,7 @@ const authSubmitEl = document.querySelector<HTMLButtonElement>("#auth-submit")!;
 const displayNameInputEl =
   document.querySelector<HTMLInputElement>("#display-name-input")!;
 const usernameInputEl = document.querySelector<HTMLInputElement>("#username-input")!;
+const usernameHintEl = document.querySelector<HTMLParagraphElement>("#username-hint")!;
 const passwordInputEl = document.querySelector<HTMLInputElement>("#password-input")!;
 const authErrorEl = document.querySelector<HTMLParagraphElement>("#auth-error")!;
 const signOutButtonEl =
@@ -171,6 +172,11 @@ function setAuthMode(register: boolean): void {
     : "New to AgentEd?";
   authToggleLinkEl.textContent = register ? "Sign in" : "Create an account";
   displayNameInputEl.classList.toggle("hidden", !register);
+  usernameHintEl.classList.toggle("hidden", !register);
+  passwordInputEl.placeholder = register
+    ? "Password (8+ characters)"
+    : "Password";
+  passwordInputEl.autocomplete = register ? "new-password" : "current-password";
   authErrorEl.textContent = "";
 }
 
@@ -191,16 +197,33 @@ authToggleLinkEl.addEventListener("click", () => setAuthMode(!isRegisterMode));
 
 signOutButtonEl.addEventListener("click", () => signOut());
 
+// Mirror of the backend's rules (src/routes/auth.ts) so users get instant,
+// friendly feedback instead of discovering them via a 400 response.
+const USERNAME_PATTERN = /^[a-z0-9_.-]{3,32}$/;
+
 authFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
   authErrorEl.textContent = "";
 
-  const username = usernameInputEl.value.trim();
+  const username = usernameInputEl.value.trim().toLowerCase();
   const password = passwordInputEl.value;
 
   if (!username || !password) {
     appendAuthError("Username and password are required.");
     return;
+  }
+
+  if (isRegisterMode) {
+    if (!USERNAME_PATTERN.test(username)) {
+      appendAuthError(
+        "Usernames are 3–32 characters — letters, numbers, dots, dashes, or underscores (no spaces).",
+      );
+      return;
+    }
+    if (password.length < 8) {
+      appendAuthError("Passwords need at least 8 characters.");
+      return;
+    }
   }
 
   const endpoint = isRegisterMode ? "/api/auth/register" : "/api/auth/login";
