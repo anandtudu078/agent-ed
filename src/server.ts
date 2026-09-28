@@ -5,12 +5,12 @@ import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 
-import { connectDB } from "./config/db.js";
-import { Session } from "./models/Session.js";
+import { connectDB } from "./config/db";
+import { Session } from "./models/Session";
 import {
   analyzeStudentInput,
   generateSocraticResponse,
-} from "./services/aiService.js";
+} from "./services/aiService";
 
 const app = express();
 const httpServer = createServer(app);
@@ -121,7 +121,6 @@ app.get("/api/sessions/:studentId", async (request, response) => {
       response.status(400).json({ error: "studentId is required." });
       return;
     }
-
     const session = await Session.findOne({ studentId }).lean();
     if (!session) {
       response.status(404).json({ error: "Session not found." });
