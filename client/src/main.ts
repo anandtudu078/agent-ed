@@ -1,4 +1,5 @@
 import { io, type Socket } from "socket.io-client";
+import { createMascot, type MascotStatus } from "./components/mascot";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -84,6 +85,28 @@ const voiceToggleEl = document.querySelector<HTMLButtonElement>("#voice-toggle")
 const voiceHintEl = document.querySelector<HTMLParagraphElement>("#voice-hint")!;
 const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
 const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
+const mascotHostEl = document.querySelector<HTMLDivElement>("#mascot-host")!;
+const mascot = createMascot(mascotHostEl);
+
+// ---------------------------------------------------------------------------
+// AI status (drives the Wise Owl mascot)
+// ---------------------------------------------------------------------------
+
+type AiStatus = MascotStatus;
+let aiStatus: AiStatus = "idle";
+let speakingRevertTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setAiStatus(next: AiStatus): void {
+  if (aiStatus === next) return;
+  aiStatus = next;
+  mascot.setStatus(next);
+
+  // "speaking" is a momentary celebration: return to idle after 4 seconds.
+  if (next === "speaking") {
+    if (speakingRevertTimer) clearTimeout(speakingRevertTimer);
+    speakingRevertTimer = setTimeout(() => setAiStatus("idle"), 4000);
+  }
+}
 
 let isRegisterMode = false;
 
@@ -129,11 +152,13 @@ function connectSocket(): void {
   socket.on("socratic-response", (payload: { response: string }) => {
     appendMessage("tutor", payload.response);
     setBusy(false);
+    setAiStatus("speaking");
   });
 
   socket.on("ai-error", (payload: { message: string }) => {
     appendMessage("system", `Something went wrong: ${payload.message}`);
     setBusy(false);
+    setAiStatus("idle");
   });
 }
 
@@ -185,6 +210,7 @@ function signOut(message?: string): void {
   clearStoredAuth();
   currentAuth = null;
   messagesEl.replaceChildren();
+  setAiStatus("idle");
   if (message) appendAuthError(message);
   showAuth();
 }
@@ -336,6 +362,7 @@ formEl.addEventListener("submit", (event) => {
   appendMessage("student", studentMessage);
   inputEl.value = "";
   setBusy(true);
+  setAiStatus("thinking");
 
   socket.emit("student-message", {
     studentId: getStudentId(),
@@ -393,6 +420,7 @@ function getRecognition(): SpeechRecognitionLike | null {
       studentMessage: transcript,
     });
     setBusy(true);
+    setAiStatus("thinking");
   };
 
   instance.onend = () => {
