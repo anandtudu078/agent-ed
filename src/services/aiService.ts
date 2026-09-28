@@ -10,10 +10,15 @@ export async function analyzeStudentInput(
 ): Promise<string> {
   const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
+    // Use Node's native fetch: the SDK's bundled node-fetch@2 fails with
+    // "Premature close" on modern Node when reading response bodies.
+    fetch: globalThis.fetch as unknown as NonNullable<
+      ConstructorParameters<typeof Groq>[0]
+    >["fetch"],
   });
 
   const completion = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
+    model: "openai/gpt-oss-20b",
     temperature: 0,
     response_format: { type: "json_object" },
     messages: [
@@ -62,7 +67,7 @@ export async function generateSocraticResponse(
   });
 
   const response = await googleGenAI.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.8-flash",
     contents: [
       {
         role: "user",
