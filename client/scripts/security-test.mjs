@@ -94,7 +94,78 @@ try {
     check("JWT_SECRET readable for authz checks", false, ".env not found from script cwd");
   }
 
-  // 5. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
+  // 5. Refresh tokens: rotation, reuse detection, and that the response never
+  //    echoes the credential back.
+  const refreshUser = `secrefresh${Math.floor(Math.random() * 1e6)}`;
+  const reg = await r.post(`${BACKEND}/api/auth/register`, {
+    data: { username: refreshUser, password: "refresh-pass-12345", displayName: "Refresh" },
+  });
+  const regBody = await reg.json();
+  check("register issues a refresh token", Boolean(regBody.refreshToken));
+
+  const first = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: regBody.refreshToken },
+  });
+  const firstBody = await first.json();
+  check("refresh returns a new access token", first.status() === 200 && Boolean(firstBody.token));
+  check(
+    "refresh rotates the refresh token",
+    Boolean(firstBody.refreshToken) && firstBody.refreshToken !== regBody.refreshToken,
+  );
+  check("refresh response does not echo the old token", !JSON.stringify(firstBody).includes(regBody.refreshToken));
+
+  // Replaying the spent token is the replay-attack case: the family is revoked.
+  const replay = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: regBody.refreshToken },
+  });
+  check("replayed refresh token rejected", replay.status() === 401, String(replay.status()));
+
+  // ...and because reuse revoked the family, the rotated token is dead too.
+  const afterBreach = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: firstBody.refreshToken },
+  });
+  check(
+    "reuse detection revokes the whole token family",
+    afterBreach.status() === 401,
+    String(afterBreach.status()),
+  );
+
+  const noRefreshToken = await r.post(`${BACKEND}/api/auth/refresh`, { data: {} });
+  check(
+    "refresh without a token rejected",
+    noRefreshToken.status() === 400,
+    String(noRefreshToken.status()),
+  );
+  const junk = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: "not-a-real-token" },
+  });
+  check("unknown refresh token rejected", junk.status() === 401, String(junk.status()));
+
+  // A normal rotation (no reuse) must keep working, so the revocation above is
+  // specific to the breach and not a blanket kill.
+  const reg2 = await r.post(`${BACKEND}/api/auth/register`, {
+    data: {
+      username: `secrefresh2${Math.floor(Math.random() * 1e6)}`,
+      password: "refresh-pass-12345",
+      displayName: "Refresh2",
+    },
+  });
+  const reg2Body = await reg2.json();
+  const rotated = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: reg2Body.refreshToken },
+  });
+  const rotatedBody = await rotated.json();
+  check("a second rotation succeeds", rotated.status() === 200 && Boolean(rotatedBody.token));
+  const logout = await r.post(`${BACKEND}/api/auth/logout`, {
+    headers: { Authorization: `Bearer ${rotatedBody.token}` },
+  });
+  check("logout revokes refresh tokens", logout.status() === 200);
+  const afterLogout = await r.post(`${BACKEND}/api/auth/refresh`, {
+    data: { refreshToken: rotatedBody.refreshToken },
+  });
+  check("refresh token is dead after logout", afterLogout.status() === 401, String(afterLogout.status()));
+
+  // 6. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
     for (let i = 0; i < 12; i += 1) {

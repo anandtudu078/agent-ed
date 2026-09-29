@@ -33,7 +33,25 @@ export function createGroqClient(): Groq {
 }
 
 /**
+ * JSON-mode models, tried in order.
+ *
+ * Separate from GROQ_TEXT_MODELS because JSON mode is not equally supported:
+ * a model that chats fine can still reject `response_format`. These three are
+ * all verified to serve JSON mode on this account.
+ */
+export const GROQ_JSON_MODELS = [
+  "openai/gpt-oss-20b",
+  "qwen/qwen3.8-27b",
+  "openai/gpt-oss-120b",
+] as const;
+
+/**
  * Run a JSON-mode chat completion and return the parsed object.
+ *
+ * Walks the model chain rather than trying a single model. The prose path has
+ * always done this, so assessment grading, input analysis and diagram
+ * generation were the one place where a single unavailable model took the whole
+ * request down — a worse failure than a slightly different grade.
  *
  * `response_format: json_object` still isn't a guarantee — models wrap JSON in
  * prose or fences often enough that the recovery path earns its keep. Throws a
@@ -44,22 +62,40 @@ export async function completeJson<T>(
   userPrompt: string,
   options: { model?: string; temperature?: number } = {},
 ): Promise<T> {
+  // An explicit model still gets a single-element chain, so callers that name a
+  // specific model keep that choice.
+  const models = options.model
+    ? [options.model]
+    : [...GROQ_JSON_MODELS];
   const groq = createGroqClient();
-  const completion = await groq.chat.completions.create({
-    model: options.model ?? "openai/gpt-oss-20b",
-    temperature: options.temperature ?? 0,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-  });
+  let lastError: unknown;
 
-  const content = completion.choices[0]?.message.content;
-  if (!content) {
-    throw new Error("Groq returned an empty response.");
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: options.temperature ?? 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+
+      const content = completion.choices[0]?.message.content;
+      if (!content) {
+        lastError = new Error(`Groq model ${model} returned an empty response.`);
+        continue;
+      }
+      return parseJsonLoose<T>(content);
+    } catch (error) {
+      lastError = error;
+    }
   }
-  return parseJsonLoose<T>(content);
+
+  throw new Error("Every Groq model failed for a JSON completion.", {
+    cause: lastError,
+  });
 }
 
 /**

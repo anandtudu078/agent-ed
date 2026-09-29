@@ -1,7 +1,15 @@
 import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
-const TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+/**
+ * Access tokens are deliberately short-lived.
+ *
+ * A 7-day token meant a student could not renew a session at all — signing out
+ * of a lesson meant signing back in from scratch, mid-thought. Half an hour
+ * keeps the blast radius of a stolen token small while being invisible to the
+ * student, because the client refreshes transparently before it ever expires.
+ */
+const TOKEN_TTL_SECONDS = 30 * 60; // 30 minutes
 
 export interface AuthUser {
   id: string;
