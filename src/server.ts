@@ -2,6 +2,7 @@ import "dotenv/config";
 
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 
@@ -31,13 +32,35 @@ import {
 
 const app = express();
 const httpServer = createServer(app);
+
+/**
+ * CORS allowlist: the Vercel frontend plus localhost for development. An
+ * unset CLIENT_ORIGIN would previously have left the API readable from any
+ * origin; now the allowlist is derived explicitly instead.
+ */
+const allowedOrigins = [
+  "https://agent-ed-sage.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  ...(process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(",").map((o) => o.trim()) : []),
+];
+
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_ORIGIN ?? "*",
+    origin: allowedOrigins.length ? allowedOrigins : undefined,
   },
 });
 
 const port = Number(process.env.PORT ?? 3000);
+
+/**
+ * The app runs behind Render's reverse proxy in production, so without this
+ * Express would take the proxy's IP for every request and the IP-based rate
+ * limits would throttle everyone collectively (or be bypassable). Trust
+ * exactly one proxy hop — never "true", which would let clients spoof
+ * X-Forwarded-For directly against us.
+ */
+app.set("trust proxy", 1);
 
 /**
  * Retention caps. `conversationHistory` lives inside a single document, and
@@ -49,7 +72,21 @@ const port = Number(process.env.PORT ?? 3000);
 const MAX_STORED_MESSAGES = 200; // ~100 exchange pairs
 const MAX_STORED_TOPIC_VISITS = 500;
 
-app.use(cors());
+// Security headers (CSP defaults, nosniff, frameguard, HSTS…).
+app.use(helmet());
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow non-browser tools (curl, same-origin, server-to-server) with no Origin.
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+  }),
+);
 app.use(express.json());
 
 app.use("/api/auth", authRouter);

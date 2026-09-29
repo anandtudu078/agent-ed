@@ -30,7 +30,12 @@ export function signAuthToken(user: AuthUser): string {
 }
 
 export function verifyAuthToken(token: string): AuthUser {
-  return jwt.verify(token, requireJwtSecret()) as AuthUser;
+  // Pin the algorithm: without this, a token signed with any algorithm the
+  // jsonwebtoken library supports would be accepted (e.g. `none`-family
+  // confusion bugs in older versions).
+  return jwt.verify(token, requireJwtSecret(), {
+    algorithms: ["HS256"],
+  }) as AuthUser;
 }
 
 /**
