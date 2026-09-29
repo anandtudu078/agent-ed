@@ -264,7 +264,7 @@
             </button>
             <span
               id="user-badge"
-              class="flex items-center rounded-full bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300"
+              class="flex max-w-[5.5rem] items-center truncate whitespace-nowrap rounded-full bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300 sm:max-w-[12rem]"
             >
               👤
             </span>
@@ -272,7 +272,7 @@
               id="sign-out-button"
               type="button"
               title="Sign out"
-              class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-400 transition hover:border-rose-500/50 hover:text-rose-400"
+              class="whitespace-nowrap rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-400 transition hover:border-rose-500/50 hover:text-rose-400"
             >
               Sign out
             </button>
@@ -447,7 +447,7 @@
             title="Toggle voice mode"
             class="rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95"
           >
-            🎤 <span class="hidden sm:inline">Voice Mode</span>
+            🎤 <span>Voice Mode</span>
           </button>
         </form>
         <p id="voice-hint" class="mx-auto mt-2 hidden max-w-3xl text-center text-xs text-slate-500"></p>
