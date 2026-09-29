@@ -39,6 +39,11 @@ import {
   renderLearnerBriefing,
 } from "./services/progressService";
 import { flowGuidance, flowSignals } from "./services/flowSignals";
+import {
+  isFirstRun,
+  recommendedStarterCourse,
+  returnState,
+} from "./services/returnState";
 
 const app = express();
 const httpServer = createServer(app);
@@ -336,10 +341,37 @@ app.get("/api/sessions/:studentId", requireAuth, async (request, response) => {
       return;
     }
 
+    // Whether the student is coming back or starting fresh. The client has no
+    // way to work this out on its own — the conversation, the review cards and
+    // the test history all live server-side — and it is the difference between
+    // a welcome back and a blank screen.
+    const progress = await Progress.findOne({ studentId })
+      .select({ reviewCards: 1, testHistory: 1 })
+      .lean();
+    const returning = returnState({
+      conversation: session.conversationHistory,
+      reviewCards: progress?.reviewCards ?? [],
+      testHistory: progress?.testHistory ?? [],
+      activeTopic: session.activeTopic,
+    });
+
     response.json({
       studentId: session.studentId,
       activeTopic: session.activeTopic,
       conversationHistory: session.conversationHistory,
+      returning: {
+        isFirstRun: isFirstRun({
+          conversation: session.conversationHistory,
+          testHistory: progress?.testHistory ?? [],
+          reviewCards: progress?.reviewCards ?? [],
+        }),
+        isReturn: returning.isReturn,
+        dueCount: returning.dueCount,
+        resumeTopic: returning.resumeTopic,
+        leftMidQuestion: returning.leftMidQuestion,
+        greeting: returning.greeting,
+      },
+      starterCourse: recommendedStarterCourse(),
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
     });

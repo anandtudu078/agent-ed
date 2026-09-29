@@ -583,8 +583,35 @@ async function restoreSessionHistory(): Promise<void> {
 
     const body = (await res.json()) as {
       conversationHistory?: StoredConversationMessage[];
+      returning?: {
+        isFirstRun: boolean;
+        isReturn: boolean;
+        dueCount: number;
+        resumeTopic: string | null;
+        leftMidQuestion: boolean;
+        greeting: string;
+      };
+      starterCourse?: { title: string; topic: string };
     };
     const history = body.conversationHistory ?? [];
+    const returning = body.returning;
+
+    // A student coming back should be greeted by the character, not shown a
+    // replayed transcript and a silent owl. This is the one moment where all the
+    // adaptive work pays off visibly, so it is the owl's opening line.
+    if (returning?.isReturn && returning.greeting) {
+      mascot.setLanguage(teachLanguage);
+      mascot.setMessage(returning.greeting);
+      mascot.setMood("happy");
+      appendMessage("system", returning.greeting);
+    }
+
+    // Nothing at all yet: offer a way in instead of 27 courses and no opinion.
+    if (returning?.isFirstRun && body.starterCourse) {
+      showWelcome(body.starterCourse);
+      return;
+    }
+
     if (!history.length) return;
 
     // The student may have started a new message while this was in flight.
@@ -610,6 +637,52 @@ async function restoreSessionHistory(): Promise<void> {
   } catch {
     // History is a convenience, never a reason to block the app from loading.
   }
+}
+
+/**
+ * A brand-new student's first screen.
+ *
+ * The catalog is 27 courses and a blank chat is a wall: nothing says where to
+ * begin. This offers one concrete next step, or lets them straight into asking.
+ * Not a tour - a first run should be one click to useful, or one click to skip.
+ */
+function showWelcome(starter: { title: string; topic: string }): void {
+  mascot.setLanguage(teachLanguage);
+  mascot.setMood("curious");
+  mascot.setMessage(
+    "Hoo! I'm your AI tutor. Start wherever you like, or let me point you at the beginning.",
+  );
+  setEmptyStateVisible(true);
+  emptyStateEl.innerHTML = `
+    <div class="mx-auto w-full max-w-md space-y-3 text-center">
+      <p class="text-sm text-slate-300">Not sure where to start?</p>
+      <button
+        type="button"
+        id="begin-starter"
+        class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500"
+      >
+        Start with ${escapeHtml(starter.title)}
+      </button>
+      <p class="text-xs text-slate-500">or just ask a question below</p>
+    </div>`;
+  document
+    .querySelector<HTMLButtonElement>("#begin-starter")
+    ?.addEventListener("click", () => {
+      inputEl.value = `I want to learn about ${starter.topic}. Where should I begin?`;
+      updateCharCount();
+      inputEl.focus();
+      formEl.requestSubmit();
+    });
+}
+
+/** Escape text before it goes into innerHTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** Clear the server-side thread and start a fresh conversation. */
