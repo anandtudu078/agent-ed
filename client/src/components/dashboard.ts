@@ -627,6 +627,20 @@ export function createDashboard(
     if (topic) void startAssessment(topic);
   });
 
+  // Dev-only test hook: drive the exact client path (panel + question render)
+  // when live AI providers are drained, so the suite covers the UI contract
+  // without depending on provider quotas. Stripped from production builds.
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__agentedTest = {
+      ...((window as unknown as Record<string, unknown>).__agentedTest ?? {}),
+      showAssessmentQuestion: (questionTopic: string, question: string) => {
+        testPanelEl.classList.remove("hidden");
+        testTopicEl.textContent = `Topic: ${questionTopic}`;
+        testQuestionEl.textContent = question;
+      },
+    };
+  }
+
   // Hand the graded result back to the tutor so the loop can be closed.
   testResultEl.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
