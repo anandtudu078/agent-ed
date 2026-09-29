@@ -1,42 +1,43 @@
-feat: expressive reactive owl + AI/ML course track
+feat: full AI curriculum across every major branch
 
-The owl now reacts to how the student is actually doing, and the catalog
-covers artificial intelligence end to end.
+Catalog goes from 6 courses to 27 (178 modules), 22 of which are AI. The AI
+material was previously one flat "AI & ML" bucket; it is now split into nine
+branches so a student can actually see the shape of the field.
 
-The owl
-Mood is separate from status on purpose. Status is the lifecycle (idle /
-thinking / speaking); mood is the personality. An owl that is *speaking* can
-be excited, curious, or supportive - folding those into one enum would
-multiply into a mess. The expressive work is in the geometry, not the colour:
-brows, closed happy arcs, an open supportive palm, and blush/sparkles that
-appear only on warm moods, because a permanent sparkle is just noise.
+  AI Foundations   (4)  what AI is, search, logic & knowledge representation,
+                        expert systems
+  Machine Learning (4)  foundations, supervised, unsupervised, reinforcement
+  Deep Learning    (3)  networks, architectures, training & optimisation
+  Generative AI    (3)  transformers/LLMs, generative models, prompting & RAG
+  Natural Language (1)  preprocessing through QA and translation
+  Computer Vision  (1)  classification, detection, segmentation, multimodal
+  Speech & Audio   (1)  ASR, TTS, speaker recognition, music
+  Robotics         (1)  perception, planning, control, SLAM, self-driving
+  Responsible AI   (4)  ethics & fairness, safety & alignment, production,
+                        applications by industry
 
-- react() maps an outcome to a mood and speaks a matching line, alternating
-  between two phrasings so it never repeats itself
-- "close" and "wrong" are distinct reactions - being nearly right is a
-  different moment from missing entirely, and one "wrong" face would make the
-  owl look like it isn't paying attention
-- celebration plays a real hop with squash-and-stretch, plus sparkles
-- a gentle nod when the answer is wrong, rather than a shrug
-- reactions relax to neutral after 4.2s so the owl never looks stuck
-- breathing on the body, and the blink is randomised per render so it never
-  falls into a metronome the student can predict
+Classical AI is deliberately included alongside the modern material. Search,
+logic, expert systems and knowledge graphs are real branches that a
+"machine-learning-only" catalog quietly drops, and they are also the parts
+students can reason about most easily.
 
-Course catalog
-Five AI/ML tracks, 30 modules: machine learning fundamentals, neural networks
-(perceptron -> backpropagation -> CNN/RNN), transformers and LLMs (attention,
-tokenization, context windows, hallucination), prompting and RAG, and AI in
-practice (bias, drift, cost, safety, privacy). The seeder keys on title, so
-these appear on existing databases too.
+Structural changes
+- The catalog moved out of the route file into src/data/curriculum.ts. It is
+  content, not request handling, and it had outgrown the file it lived in.
+- Boot now syncs category/description/level, not just modules. Previously an
+  edited category or an extended syllabus only reached brand-new databases;
+  existing installs silently kept serving the old version. Since modules are
+  the denominator for a student's progress percentage, a stale syllabus
+  quietly corrupts numbers rather than just looking out of date.
 
-Two bugs the tests caught
-- The mood class and .owl-visual are set on the same element, so the hop was
-  written as a descendant selector and silently never matched. Asserting the
-  computed animation-name is what found it.
-- react() originally set the owl's status directly, which would have left it
-  stuck in "speaking" with no timer to bring it back. main.ts owns the
-  lifecycle, so react() only touches mood now.
+Retiring courses
+Renaming "AI in Practice" to "AI in Production" left the old course in the
+database forever, because the seeder only ever inserted by title. Retired
+titles are now an explicit allowlist, and a retired course is never deleted
+while a student is still enrolled in it - the enrolment stores the courseId
+inline, so deleting it would orphan real progress. Losing history is a better
+failure than an enrolment pointing at nothing.
 
-Verified: 79/79 UI checks (7 new), 13/13 security, both TS projects compile.
-Still not possible: true phoneme lip-sync. SpeechSynthesis has no reliable
-boundary events, so the beak flaps on a timer - convincing, not word-accurate.
+Verified: 83/83 UI checks (4 new, pinning the branch set, course count, a
+minimum syllabus depth, and total module count), 13/13 security, both TS
+projects compile.
