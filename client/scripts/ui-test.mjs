@@ -250,6 +250,38 @@ try {
     clearedBoard.includes("<svg") && !clearedBoard.includes("Loop back"),
   );
 
+  // 7b-5. Reactions. The owl has to actually respond to how the student is
+  // doing — a mascot that only ever looks pleased isn't reacting to anything.
+  const moodClass = async () =>
+    (await page.locator("#owl-stage .owl-visual").getAttribute("class")) ?? "";
+
+  await page.evaluate(() => window.__agentedTest.react("correct"));
+  await page.waitForTimeout(250);
+  let cls = await moodClass();
+  check("owl looks excited on a correct answer", cls.includes("owl-mood-excited"), cls.slice(0, 60));
+  const sparkles = await page.locator("#owl-stage .owl-sparkles").count();
+  check("celebration adds sparkles", sparkles === 1, `sparkles=${sparkles}`);
+  const hop = await page.evaluate(() => {
+    const el = document.querySelector("#owl-stage .owl-visual");
+    return el ? getComputedStyle(el).animationName : "none";
+  });
+  check("celebration plays the hop animation", hop === "owlhop", hop);
+  const happyEyes = await page.locator("#owl-stage .owl-brows").count();
+  check("owl has expressive brows", happyEyes === 1);
+
+  await page.evaluate(() => window.__agentedTest.react("wrong"));
+  await page.waitForTimeout(250);
+  cls = await moodClass();
+  check("owl looks supportive, not punished, on a wrong answer",
+    cls.includes("owl-mood-supportive"), cls.slice(0, 60));
+  const noSparkles = await page.locator("#owl-stage .owl-sparkles").count();
+  check("no sparkles when the answer is wrong", noSparkles === 0, `sparkles=${noSparkles}`);
+
+  // A reaction must not stick forever, or the owl looks frozen.
+  await page.waitForTimeout(4600);
+  cls = await moodClass();
+  check("the reaction relaxes back to neutral", cls.includes("owl-mood-neutral"), cls.slice(0, 60));
+
   // 7b-4. Language: the owl's own phrases switch, and the choice persists to
   // the server so it follows the student to another device.
   const langBtn = page.locator("#language-toggle");
