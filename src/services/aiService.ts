@@ -282,11 +282,22 @@ export async function generateTutorResponse(
   priorMessages: ConversationMessage[] = [],
   mode: TutorMode = "socratic",
   language: TeachLanguage = "en",
+  /**
+   * What we know about this student, rendered for the prompt.
+   *
+   * This is the parameter that makes the tutor adaptive. Without it the model
+   * receives twelve messages and a topic and teaches a student who scored 20%
+   * on backpropagation exactly as it teaches one who scored 95%. An empty
+   * string means "we know nothing yet", which is genuinely different from
+   * "they have no gaps".
+   */
+  learnerBriefing: string = "",
 ): Promise<string> {
   const history = selectHistoryWindow(priorMessages);
   const transcript = renderTranscript(history);
 
   const promptText =
+    (learnerBriefing ? `${learnerBriefing}\n\n` : "") +
     `Student analysis:\n${JSON.stringify(analysis)}\n\n` +
     `Earlier conversation:\n${transcript}\n\n` +
     `New message:\n${studentQuery}`;

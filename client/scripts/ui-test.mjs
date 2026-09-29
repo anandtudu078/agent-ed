@@ -669,14 +669,20 @@ try {
   );
   check("un-enrolled course has no Leave button", (await page.locator(".dash-leave").count()) === 0);
 
+  const totalCourses = await page.locator(".dash-courses .dash-course").count();
   await page.locator(".dash-search").fill("machine");
   await page.waitForTimeout(150);
   const visibleCourses = await page.locator(".dash-courses .dash-course").count();
   const catalogText = await page.locator(".dash-courses").textContent();
+  // Not "exactly 1": searching a category name legitimately matches every course
+  // in it, and the AI curriculum put three more in "Machine Learning". What must
+  // hold is that the search narrows the list and the expected course is in it.
   check(
     "catalog search filters live",
-    visibleCourses === 1 && (catalogText ?? "").includes("Machine Learning"),
-    `${visibleCourses} result(s)`,
+    visibleCourses > 0 &&
+      visibleCourses < totalCourses &&
+      (catalogText ?? "").includes("Machine Learning"),
+    `${visibleCourses} of ${totalCourses} result(s)`,
   );
   await page.locator(".dash-search").fill("");
   await page.waitForTimeout(150);

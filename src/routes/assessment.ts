@@ -178,6 +178,10 @@ router.post("/submit", requireAuth, chatRateLimit, aiSpendLimit, async (request:
       score: grade.score,
       feedback: grade.feedback,
       recommendedFocus: grade.recommendedFocus,
+      // Persisted with the evaluation. These used to be returned to the client
+      // and immediately forgotten, which threw away the only record of *what*
+      // the student actually got wrong as opposed to *where*.
+      misconceptions: grade.misconceptions,
       evaluatedAt: new Date(),
     };
 

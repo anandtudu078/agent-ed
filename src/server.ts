@@ -32,6 +32,11 @@ import {
   createSocketLimiter,
 } from "./middleware/rateLimit";
 import { aiSpendLimit, pruneOldUsage } from "./middleware/aiSpendLimit";
+import { Progress } from "./models/Progress";
+import {
+  buildLearnerProfile,
+  renderLearnerBriefing,
+} from "./services/progressService";
 
 const app = express();
 const httpServer = createServer(app);
@@ -189,6 +194,24 @@ async function processStudentMessage(
   // Language comes from the token, not the request body: the client must not be
   // able to set it per-message and desync from the stored preference.
   const language: TeachLanguage = authUser.language === "hi" ? "hi" : "en";
+
+  // What we know about this student, folded into the prompt.
+  //
+  // The Progress read is separate from the Session read above and is scoped to
+  // the caller's own id, so a student can only ever be briefed on themselves.
+  // Best effort: losing the briefing degrades the reply to the old
+  // one-size-fits-all behaviour, which must never cost the student their
+  // answer.
+  let learnerBriefing = "";
+  try {
+    const progress = await Progress.findOne({ studentId })
+      .select({ weakPoints: 1, testHistory: 1, reviewCards: 1 })
+      .lean();
+    learnerBriefing = renderLearnerBriefing(buildLearnerProfile(progress));
+  } catch (error) {
+    console.error("Failed to build the learner profile.", error);
+  }
+
   const analysis = await analyzeStudentInput(studentMessage, priorMessages);
   const response = await generateTutorResponse(
     analysis,
@@ -196,6 +219,7 @@ async function processStudentMessage(
     priorMessages,
     mode,
     language,
+    learnerBriefing,
   );
 
   // The model names the topic far better than the client's first 60 characters

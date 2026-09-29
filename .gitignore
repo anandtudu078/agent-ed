@@ -1,10 +1,13 @@
-node_modules/
-dist/
+node_modules
+dist
 .env
-.idea/
+*.log
+.commitmsg.txt
 
-# Local verification artifacts (never part of the app)
+# scratch/test output
+.ui.out
+.ui.err
+.sec.out
+.sec.err
 .srv.out
 .srv.err
-client/client/
-*.ui-*.png
