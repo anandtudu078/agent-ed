@@ -21,6 +21,9 @@ try {
 
   // 1. Auth view shows first
   await page.goto(FRONTEND);
+  // Wait for the app module to finish wiring listeners (dev-only boot signal
+  // set at the end of main.ts) — avoids racing Vite's cold transforms.
+  await page.waitForFunction(() => window.__agentedTest !== undefined);
   const authVisible = await page.locator("#auth-view").isVisible();
   check("auth screen shown when signed out", authVisible);
 
@@ -152,6 +155,50 @@ try {
   await voicePage.waitForFunction(() => window.__ttsCalls.cancel >= 1, { timeout: 5000 });
   check("turning voice mode off stops the owl's speech", await voicePage.evaluate(() => window.__ttsCalls.cancel >= 1));
   await voicePage.close();
+
+  // 7d. Mobile layout: on a phone viewport the display starts collapsed to a
+  // compact bar and expands via the chevron; on desktop there is no toggle.
+  check(
+    "desktop has no collapse toggle and shows the bubble",
+    (await page.locator("#owl-stage .owl-toggle").isHidden()) &&
+      (await page.locator("#owl-stage .owl-bubble").isVisible()),
+  );
+  const stored = await page.evaluate(() => ({
+    token: localStorage.getItem("agented:token"),
+    user: localStorage.getItem("agented:user"),
+  }));
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const mobilePage = await mobileContext.newPage();
+  await mobilePage.addInitScript(
+    ([token, user]) => {
+      localStorage.setItem("agented:token", token);
+      localStorage.setItem("agented:user", user);
+    },
+    [stored.token, stored.user],
+  );
+  await mobilePage.goto(FRONTEND);
+  await mobilePage.waitForFunction(() => window.__agentedTest !== undefined);
+  await mobilePage.locator("#app-view").waitFor({ state: "visible" });
+  await mobilePage.locator("#owl-stage .owl-compact").waitFor({ state: "visible" });
+  check(
+    "mobile starts collapsed to compact bar",
+    (await mobilePage.locator("#owl-stage .owl-bubble").isHidden()) &&
+      (await mobilePage.locator("#owl-stage .owl-toggle").getAttribute("aria-expanded")) === "false",
+  );
+  await mobilePage.locator("#owl-stage .owl-toggle").click();
+  await mobilePage.locator("#owl-stage .owl-bubble").waitFor({ state: "visible" });
+  check(
+    "chevron expands the full classroom display",
+    (await mobilePage.locator("#owl-stage .owl-toggle").getAttribute("aria-expanded")) === "true",
+  );
+  await mobilePage.locator("#owl-stage .owl-toggle").click();
+  await mobilePage.locator("#owl-stage .owl-compact").waitFor({ state: "visible" });
+  check("chevron collapses back to compact bar", await mobilePage.locator("#owl-stage .owl-bubble").isHidden());
+  await mobileContext.close();
 
   // 8. Reload — still signed in (token persisted)
   await page.reload();

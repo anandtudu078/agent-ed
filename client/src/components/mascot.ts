@@ -4,6 +4,10 @@
 // lifecycle (idle / thinking / teaching), and shows the latest Socratic
 // guidance in its speech bubble. (main.ts reads that guidance aloud in voice
 // mode via speechSynthesis.)
+//
+// On small screens the display collapses to a compact one-line bar (small owl
+// + its current line + expand chevron) so it doesn't eat the chat's vertical
+// space; the chevron toggles the full classroom display.
 
 export type MascotStatus = "idle" | "thinking" | "speaking";
 
@@ -178,7 +182,7 @@ export function createMascot(host: HTMLElement): {
     <div class="owl-display" data-state="idle">
       <div class="rounded-[1.75rem] border border-slate-700/70 bg-slate-800/40 p-1.5 shadow-2xl shadow-black/50">
         <div class="owl-screen relative overflow-hidden rounded-[1.35rem] border p-4 transition-all duration-300 sm:p-5 [background-image:radial-gradient(ellipse_at_top,rgba(99,102,241,0.12),transparent_65%)]">
-          <div class="mb-3 flex items-center gap-2">
+          <div class="owl-status-row mb-3 flex items-center gap-2">
             <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"></span>
             <span class="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500 sm:text-[10px]">AgentEd classroom display</span>
             <span class="owl-state-pill ml-auto rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors sm:text-[10px]"></span>
@@ -192,6 +196,19 @@ export function createMascot(host: HTMLElement): {
               <span class="absolute left-3 top-2 text-[9px] font-semibold uppercase tracking-widest text-slate-600">Lesson board</span>
               <div class="owl-board-art m-auto w-full max-w-[230px] px-2 pb-1 pt-5"></div>
             </div>
+            <div class="owl-compact hidden min-w-0 flex-1 items-center gap-2 sm:hidden">
+              <p class="owl-compact-message min-w-0 flex-1 truncate text-xs font-medium"></p>
+            </div>
+            <button
+              type="button"
+              class="owl-toggle ml-1 shrink-0 rounded-lg border border-slate-700/80 bg-slate-800/60 p-1.5 text-slate-400 transition hover:text-slate-200 sm:hidden"
+              aria-expanded="false"
+              aria-label="Expand or collapse the classroom display"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" class="owl-chevron h-4 w-4 transition-transform" aria-hidden="true">
+                <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.23 8.29a.75.75 0 0 1 0-1.08Z" clip-rule="evenodd"/>
+              </svg>
+            </button>
           </div>
           <div class="owl-bubble relative mt-3 rounded-2xl border px-4 py-3 transition-colors duration-300">
             <span class="owl-bubble-tail absolute -top-[7px] left-14 h-3 w-3 rotate-45 rounded-[2px] border-l border-t sm:left-20"></span>
@@ -205,15 +222,23 @@ export function createMascot(host: HTMLElement): {
 
   const display = host.firstElementChild as HTMLElement;
   const screen = display.querySelector<HTMLElement>(".owl-screen")!;
+  const statusRow = display.querySelector<HTMLElement>(".owl-status-row")!;
   const pill = display.querySelector<HTMLElement>(".owl-state-pill")!;
   const visual = display.querySelector<HTMLElement>(".owl-visual")!;
   const boardArt = display.querySelector<HTMLElement>(".owl-board-art")!;
+  const compactRow = display.querySelector<HTMLElement>(".owl-compact")!;
+  const compactMessage = display.querySelector<HTMLElement>(".owl-compact-message")!;
+  const toggleButton = display.querySelector<HTMLButtonElement>(".owl-toggle")!;
+  const chevron = display.querySelector<HTMLElement>(".owl-chevron")!;
   const bubble = display.querySelector<HTMLElement>(".owl-bubble")!;
   const tail = display.querySelector<HTMLElement>(".owl-bubble-tail")!;
   const message = display.querySelector<HTMLElement>(".owl-message")!;
 
   let status: MascotStatus = "idle";
   let customMessage: string | null = null;
+  // Mobile-first: the display starts collapsed on small screens, expanded on
+  // desktop (>= sm, where the toggle button is hidden anyway).
+  let collapsed = window.innerWidth < 640;
 
   function render(): void {
     // While the owl is showing the tutor's guidance it keeps its "teaching"
@@ -221,22 +246,35 @@ export function createMascot(host: HTMLElement): {
     // state reverts to idle.
     const vis: MascotStatus = customMessage && status !== "thinking" ? "speaking" : status;
     const boardKind = vis === "speaking" ? "teaching" : vis;
+    const line = customMessage ?? DEFAULT_MESSAGE[status];
 
     visual.innerHTML = owlSvg(status);
-    visual.className = `owl-visual h-28 w-28 shrink-0 sm:h-36 sm:w-36 ${owlAnimation(status)}`;
+    visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(status)}`;
     boardArt.innerHTML = boardSvg(boardKind);
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
     // state: while the tutor's guidance is on screen the owl keeps presenting
     // it ("Teaching"), even after the momentary speaking bounce has calmed.
     display.dataset.state = vis;
-    screen.className = `owl-screen relative overflow-hidden rounded-[1.35rem] border p-4 transition-all duration-300 sm:p-5 [background-image:radial-gradient(ellipse_at_top,rgba(99,102,241,0.12),transparent_65%)] ${SCREEN_STYLES[vis]}`;
+    screen.className = `owl-screen relative overflow-hidden rounded-[1.35rem] border transition-all duration-300 [background-image:radial-gradient(ellipse_at_top,rgba(99,102,241,0.12),transparent_65%)] ${collapsed ? "p-2.5" : "p-4 sm:p-5"} ${SCREEN_STYLES[vis]}`;
+
+    statusRow.className = `owl-status-row mb-3 flex items-center gap-2 ${collapsed ? "hidden" : ""}`;
     pill.textContent = PILL_TEXT[vis];
     pill.className = `owl-state-pill ml-auto rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors sm:text-[10px] ${PILL_STYLES[vis]}`;
 
-    bubble.className = `owl-bubble relative mt-3 rounded-2xl border px-4 py-3 transition-colors duration-300 ${BUBBLE_STYLES[vis]}`;
+    compactRow.className = `owl-compact min-w-0 flex-1 items-center gap-2 sm:hidden ${collapsed ? "flex" : "hidden"}`;
+    compactMessage.textContent = line;
+    compactMessage.title = customMessage ?? "";
+    compactMessage.className = `owl-compact-message min-w-0 flex-1 truncate text-xs font-medium ${MESSAGE_STYLES[vis]}`;
+
+    toggleButton.setAttribute("aria-expanded", String(!collapsed));
+    toggleButton.title = collapsed ? "Expand the classroom display" : "Collapse the display";
+    // NB: chevron is an <svg> — className is read-only on SVG elements, so use classList.
+    chevron.classList.toggle("rotate-180", !collapsed);
+
+    bubble.className = `owl-bubble relative mt-3 rounded-2xl border px-4 py-3 transition-colors duration-300 ${collapsed ? "hidden" : BUBBLE_STYLES[vis]}`;
     tail.className = `owl-bubble-tail absolute -top-[7px] left-14 h-3 w-3 rotate-45 rounded-[2px] border-l border-t sm:left-20 ${TAIL_STYLES[vis]}`;
-    message.textContent = customMessage ?? DEFAULT_MESSAGE[status];
+    message.textContent = line;
     message.title = customMessage ?? "";
     message.className = `owl-message text-sm font-medium leading-relaxed sm:text-base ${MESSAGE_STYLES[vis]}`;
   }
@@ -259,6 +297,11 @@ export function createMascot(host: HTMLElement): {
     customMessage = null;
     render();
   }
+
+  toggleButton.addEventListener("click", () => {
+    collapsed = !collapsed;
+    render();
+  });
 
   setStatus("idle");
   return { setStatus, setMessage, clearMessage };
