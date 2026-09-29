@@ -302,7 +302,8 @@ function setDashboardVisible(visible: boolean): void {
         stopOwlSpeech();
         resumeMicAfterSpeech();
         setAiStatus("thinking");
-        socket.emit("student-message", {
+        responseEpoch = conversationEpoch;
+    socket.emit("student-message", {
           studentId: getStudentId(),
           activeTopic: (nextModule?.topic ?? course.title).slice(0, 60),
           mode: tutorMode,
@@ -320,7 +321,8 @@ function setDashboardVisible(visible: boolean): void {
         stopOwlSpeech();
         resumeMicAfterSpeech();
         setAiStatus("thinking");
-        socket.emit("student-message", {
+        responseEpoch = conversationEpoch;
+    socket.emit("student-message", {
           studentId: getStudentId(),
           activeTopic: topic.slice(0, 60),
           mode: tutorMode,
@@ -397,8 +399,20 @@ function connectSocket(): void {
   });
 }
 
+/**
+ * Bumped whenever the conversation is discarded. A reply that arrives for an
+ * older epoch belongs to a thread the student already threw away, so it is
+ * dropped rather than rendered.
+ */
+let conversationEpoch = 0;
+/** The epoch a reply was requested under; mirrors the emit sites. */
+let responseEpoch = 0;
+
 /** Shared handler so tests can drive the exact same client path (DEV only). */
 function handleSocraticResponse(payload: { response: string }): void {
+  // Drop a reply that was already in flight when the student started a new
+  // chat: it belongs to a conversation they deliberately discarded.
+  if (conversationEpoch !== responseEpoch) return;
   appendMessage("tutor", payload.response);
   setBusy(false);
   setAiStatus("speaking");
@@ -482,6 +496,9 @@ async function restoreSessionHistory(): Promise<void> {
 
 /** Clear the server-side thread and start a fresh conversation. */
 async function startNewChat(): Promise<void> {
+  // Invalidate anything already in flight before we clear, so a late reply
+  // can't repopulate the thread we are about to discard.
+  conversationEpoch += 1;
   const studentId = getStudentId();
   try {
     await fetch(`${SERVER_URL}/api/sessions/${encodeURIComponent(studentId)}`, {
@@ -713,6 +730,14 @@ let requestInFlight = false;
 function setBusy(busy: boolean): void {
   requestInFlight = busy;
   sendButtonEl.disabled = busy;
+  // New chat must not be clickable mid-answer. Clearing the thread while a
+  // reply is in flight lets that reply land afterwards and repopulate the
+  // conversation the student just asked to discard.
+  newChatButtonEl.disabled = busy;
+  newChatButtonEl.classList.toggle("opacity-50", busy);
+  newChatButtonEl.title = busy
+    ? "Wait for the owl to finish answering"
+    : "Start a new conversation";
   // Write to the label span so the spinner survives; the UI test reads the
   // button's textContent and expects it to mention "Thinking".
   sendLabelEl.textContent = busy ? "Thinking…" : "Send";
@@ -740,7 +765,8 @@ formEl.addEventListener("submit", (event) => {
   resumeMicAfterSpeech();
   setAiStatus("thinking");
 
-  socket.emit("student-message", {
+  responseEpoch = conversationEpoch;
+    socket.emit("student-message", {
     studentId: getStudentId(),
     activeTopic: studentMessage.slice(0, 60),
     mode: tutorMode,
@@ -868,6 +894,7 @@ function getRecognition(): SpeechRecognitionLike | null {
     mascot.clearMessage();
     stopOwlSpeech();
 
+    responseEpoch = conversationEpoch;
     socket.emit("student-message", {
       studentId: getStudentId(),
       activeTopic: transcript.slice(0, 60),
