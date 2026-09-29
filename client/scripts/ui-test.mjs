@@ -15,7 +15,8 @@ function check(label, ok, detail = "") {
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const page = await browser.newPage();
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
   page.setDefaultTimeout(20000);
 
   // 1. Auth view shows first
@@ -50,6 +51,33 @@ try {
   const busyText = await page.locator("#send-button").textContent();
   check("send button enters Thinking state", busyText?.includes("Thinking") ?? true, busyText ?? "");
 
+  // 6b. Owl teacher: stage visible, cap + pointer present, thinking pose on send
+  const owlStage = page.locator("#owl-stage");
+  check("owl teaching stage visible on screen", await owlStage.isVisible());
+  check(
+    "owl wears a graduation cap",
+    (await page.locator("#owl-stage .owl-cap").count()) > 0,
+  );
+  // (Tolerant sampling: a fast reply may already have flipped the owl into its
+  // teaching pose before we look.)
+  const owlSvgClass = (await page.locator("#owl-stage .owl-visual").getAttribute("class")) ?? "";
+  check(
+    "owl animates while thinking/teaching",
+    owlSvgClass.includes("wiggle") || owlSvgClass.includes("mascotbounce"),
+    owlSvgClass,
+  );
+  const pillText = (await page.locator("#owl-stage .owl-state-pill").textContent())?.trim();
+  check(
+    "state pill shows Thinking or Teaching",
+    pillText === "Thinking" || pillText === "Teaching",
+    pillText ?? "",
+  );
+  const thinkingBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
+  check(
+    "lesson board shows a thinking/teaching sketch",
+    thinkingBoard.includes("Connecting the ideas") || thinkingBoard.includes("step by step"),
+  );
+
   // 7. A reply eventually arrives (tutor response or sanitized ai-error system pill)
   await page
     .locator("#messages > div:nth-child(3)")
@@ -57,6 +85,73 @@ try {
   const convo = await page.locator("#messages").textContent();
   const gotReply = (convo?.length ?? 0) > 60;
   check("tutor reply (or sanitized error) arrives", gotReply);
+
+  // 7b. Owl presents the reply: teaching pose, lesson diagram, and the tutor's
+  // text in its speech bubble. If the AI replied with an error (e.g. exhausted
+  // AI quota), drive the owl through the dev-only test hook so the rendering
+  // checks stay deterministic.
+  const gotError = convo?.includes("Something went wrong") ?? false;
+  if (gotError) {
+    await page.evaluate(() =>
+      window.__agentedTest.setMessage("What everyday tools do you think use AI?"),
+    );
+  }
+  const owlMsg = (await page.locator("#owl-stage .owl-message").textContent()) ?? "";
+  check(
+    "owl speech bubble shows the tutor's guidance",
+    owlMsg.length > 20 && !owlMsg.startsWith("Hoo there!"),
+    owlMsg.slice(0, 60),
+  );
+  const teachingBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
+  const teachingPill = (await page.locator("#owl-stage .owl-state-pill").textContent())?.trim();
+  check(
+    "owl switches to teaching pose with step diagram",
+    teachingBoard.includes("step by step") && teachingPill === "Teaching",
+  );
+
+  // 7c. Voice mode TTS: run a second page (same session) with speechSynthesis
+  // stubbed, then verify the owl TALKS — speaks the guidance and stops speech
+  // on voice-off.
+  const voicePage = await context.newPage();
+  await voicePage.addInitScript(() => {
+    const calls = { speak: [], cancel: 0 };
+    const synth = {
+      speak(u) { calls.speak.push(String(u.text)); },
+      cancel() { calls.cancel += 1; },
+      pause() {},
+      resume() {},
+    };
+    class FakeUtterance {
+      constructor(text) { this.text = text; }
+    }
+    Object.defineProperty(window, "speechSynthesis", {
+      get: () => synth,
+      configurable: true,
+    });
+    window.SpeechSynthesisUtterance = FakeUtterance;
+    window.__ttsCalls = calls;
+  });
+  await voicePage.goto(FRONTEND);
+  await voicePage.locator("#app-view").waitFor({ state: "visible" });
+  await voicePage.locator("#voice-toggle").click();
+  await voicePage.locator("#voice-hint").waitFor({ state: "visible" });
+  const pressed = await voicePage.locator("#voice-toggle").getAttribute("aria-pressed");
+  const voiceHintText = (await voicePage.locator("#voice-hint").textContent()) ?? "";
+  check(
+    "voice mode toggles on",
+    pressed === "true" || voiceHintText.includes("isn't supported"),
+    voiceHintText.slice(0, 60),
+  );
+  await voicePage.evaluate(() => {
+    window.__agentedTest.speakOwlMessage("Hoo! Let us think about functions step by step.");
+  });
+  await voicePage.waitForFunction(() => window.__ttsCalls.speak.length > 0, { timeout: 5000 });
+  const spoken = await voicePage.evaluate(() => window.__ttsCalls.speak.join(" | "));
+  check("owl speaks guidance aloud in voice mode", spoken.includes("Hoo! Let us think"), spoken.slice(0, 80));
+  await voicePage.locator("#voice-toggle").click();
+  await voicePage.waitForFunction(() => window.__ttsCalls.cancel >= 1, { timeout: 5000 });
+  check("turning voice mode off stops the owl's speech", await voicePage.evaluate(() => window.__ttsCalls.cancel >= 1));
+  await voicePage.close();
 
   // 8. Reload — still signed in (token persisted)
   await page.reload();
