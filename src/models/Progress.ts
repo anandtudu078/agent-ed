@@ -1,5 +1,28 @@
 import { Document, Model, Schema, model } from "mongoose";
 
+/**
+ * One concept's place in the review queue.
+ *
+ * A weak point says "this is shaky"; a review card says "this is shaky, and
+ * here is when to look at it again". Without the second half the app collects
+ * a list of gaps and then never brings the student back to close them, which is
+ * the difference between a diagnostic and something that actually teaches.
+ */
+export interface ReviewCard {
+  topic: string;
+  /** 0–100, blended across attempts. Lower means shakier. */
+  strength: number;
+  lastReviewedAt: Date | null;
+  /** When this concept next needs attention. */
+  dueAt: Date;
+  /** Current gap in days. Grows on success, collapses on a lapse. */
+  intervalDays: number;
+  /** Consecutive successful reviews. Resets to 0 on a lapse. */
+  reps: number;
+  /** Times this concept has been forgotten after being learned. */
+  lapses: number;
+}
+
 export interface TestEvaluation {
   topic: string;
   score: number; // 0–100
@@ -29,9 +52,23 @@ export interface ProgressDocument extends Document {
   learningSpeed: number; // concepts/week estimate, surfaced on the dashboard header
   weakPoints: WeakPoint[];
   testHistory: TestEvaluation[];
+  reviewCards: ReviewCard[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+const reviewCardSchema = new Schema<ReviewCard>(
+  {
+    topic: { type: String, required: true },
+    strength: { type: Number, required: true, min: 0, max: 100 },
+    lastReviewedAt: { type: Date, default: null },
+    dueAt: { type: Date, required: true },
+    intervalDays: { type: Number, required: true, min: 0 },
+    reps: { type: Number, required: true, min: 0 },
+    lapses: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
 
 const enrolledCourseSchema = new Schema<EnrolledCourse>(
   {
@@ -71,6 +108,7 @@ const progressSchema = new Schema<ProgressDocument>(
     learningSpeed: { type: Number, default: 0 },
     weakPoints: { type: [weakPointSchema], default: [] },
     testHistory: { type: [testEvaluationSchema], default: [] },
+    reviewCards: { type: [reviewCardSchema], default: [] },
   },
   { timestamps: true },
 );

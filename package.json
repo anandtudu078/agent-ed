@@ -17,7 +17,8 @@
     "dev": "ts-node src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test:parse": "ts-node scripts/visual-parse-test.ts"
+    "test:parse": "ts-node scripts/visual-parse-test.ts",
+    "test:review": "ts-node scripts/review-test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
