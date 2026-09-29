@@ -114,6 +114,19 @@ try {
       window.__agentedTest.setMessage("What everyday tools do you think use AI?"),
     );
   }
+  // The owl now reveals its line word by word so it reads as speech, so the
+  // bubble must be allowed to finish revealing before we assert on it.
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector("#owl-stage .owl-message");
+        if (!el) return false;
+        const full = el.getAttribute("title") || el.getAttribute("aria-label") || "";
+        return full.length > 0 && (el.textContent || "").length >= full.length;
+      },
+      { timeout: 10000 },
+    )
+    .catch(() => {});
   const owlMsg = (await page.locator("#owl-stage .owl-message").textContent()) ?? "";
   check(
     "owl speech bubble shows the tutor's guidance",
@@ -125,6 +138,42 @@ try {
   check(
     "owl switches to teaching pose with step diagram",
     teachingBoard.includes("step by step") && teachingPill === "Teaching",
+  );
+  check(
+    "owl is animating as though speaking while it delivers a line",
+    await page.locator("#owl-stage .owl-display.owl-talking").isVisible().catch(() => false),
+  );
+  check(
+    "owl has a moving beak to lip-sync with",
+    (await page.locator("#owl-stage .owl-beak").count()) === 1,
+  );
+
+  // 7b-2. Teach mode: the owl's own toggle switches the tutor from asking to
+  // explaining, and the new lesson board reflects that.
+  const modeBtn = page.locator("#owl-stage .owl-mode-toggle");
+  check("owl offers a mode toggle", await modeBtn.isVisible());
+  check(
+    "starts in Socratic mode",
+    ((await modeBtn.textContent()) ?? "").trim().toLowerCase().includes("socratic"),
+  );
+  await modeBtn.click();
+  await page.waitForTimeout(300);
+  check(
+    "toggle switches to Teach me",
+    ((await modeBtn.textContent()) ?? "").trim().toLowerCase().includes("teach"),
+    ((await modeBtn.textContent()) ?? "").trim(),
+  );
+  const explainBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
+  check(
+    "teach mode shows the explaining board, not the quiz board",
+    explainBoard.includes("Let me walk you through it") && !explainBoard.includes("step by step"),
+  );
+  // Toggling back returns the owl to its original posture.
+  await modeBtn.click();
+  await page.waitForTimeout(300);
+  check(
+    "toggle switches back to Socratic",
+    ((await modeBtn.textContent()) ?? "").trim().toLowerCase().includes("socratic"),
   );
 
   // 7c. Voice mode TTS: run a second page (same session) with speechSynthesis

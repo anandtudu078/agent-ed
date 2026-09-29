@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { createMascot, type MascotStatus } from "./components/mascot";
+import { createMascot, type MascotStatus, type TutorMode } from "./components/mascot";
 import {
   createDashboard,
   type CourseInfo,
@@ -94,7 +94,15 @@ const voiceHintEl = document.querySelector<HTMLParagraphElement>("#voice-hint")!
 const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
 const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
 const mascotHostEl = document.querySelector<HTMLDivElement>("#mascot-host")!;
-const mascot = createMascot(mascotHostEl);
+
+/**
+ * Instructional mode. The owl's own display toggle owns this; main.ts just
+ * forwards it with each message and uses it to label the connection notice.
+ */
+let tutorMode: TutorMode = "socratic";
+const mascot = createMascot(mascotHostEl, (next) => {
+  tutorMode = next;
+});
 
 // ---------------------------------------------------------------------------
 // Additional UI elements
@@ -297,6 +305,7 @@ function setDashboardVisible(visible: boolean): void {
         socket.emit("student-message", {
           studentId: getStudentId(),
           activeTopic: (nextModule?.topic ?? course.title).slice(0, 60),
+          mode: tutorMode,
           studentMessage: prompt,
         });
       },
@@ -314,6 +323,7 @@ function setDashboardVisible(visible: boolean): void {
         socket.emit("student-message", {
           studentId: getStudentId(),
           activeTopic: topic.slice(0, 60),
+          mode: tutorMode,
           studentMessage: prompt,
         });
       },
@@ -354,7 +364,9 @@ function connectSocket(): void {
     setConnectionStatus("connected");
     appendMessage(
       "system",
-      "Connected to AgentEd. Ask me about any concept — I'll guide you with questions instead of answers.",
+      tutorMode === "teach"
+        ? "Connected to AgentEd. Teaching mode is on — name a topic and I'll explain it."
+        : "Connected to AgentEd. Ask me about any concept — I'll guide you with questions instead of answers.",
     );
   });
 
@@ -731,6 +743,7 @@ formEl.addEventListener("submit", (event) => {
   socket.emit("student-message", {
     studentId: getStudentId(),
     activeTopic: studentMessage.slice(0, 60),
+    mode: tutorMode,
     studentMessage,
   });
 });
@@ -748,6 +761,9 @@ let micSuspendedForSpeech = false;
 function stopOwlSpeech(): void {
   currentUtterance = null;
   window.speechSynthesis?.cancel();
+  // The utterance's onend won't fire for a cancelled one, so close the mouth
+  // here or the owl would keep chewing on nothing.
+  mascot.setSpeaking(false);
 }
 
 /** Restart the microphone once the owl finishes speaking (voice mode only). */
@@ -788,16 +804,19 @@ function speakOwlMessage(text: string): void {
   utterance.lang = "en-US";
   utterance.rate = 1;
   utterance.pitch = 1.05;
+  utterance.onstart = () => mascot.setSpeaking(true);
   utterance.onend = () => {
     // Only resume the mic if this is still the current utterance. A cancelled
     // one (stopOwlSpeech nulls currentUtterance) must not restart the mic.
     if (currentUtterance !== utterance) return;
     currentUtterance = null;
+    mascot.setSpeaking(false);
     resumeMicAfterSpeech();
   };
   utterance.onerror = () => {
     if (currentUtterance !== utterance) return;
     currentUtterance = null;
+    mascot.setSpeaking(false);
     resumeMicAfterSpeech();
   };
   currentUtterance = utterance;
@@ -852,6 +871,7 @@ function getRecognition(): SpeechRecognitionLike | null {
     socket.emit("student-message", {
       studentId: getStudentId(),
       activeTopic: transcript.slice(0, 60),
+      mode: tutorMode,
       studentMessage: transcript,
     });
     setBusy(true);

@@ -9,7 +9,8 @@ import { connectDB } from "./config/db";
 import { ConversationMessage, Session, TopicVisit } from "./models/Session";
 import {
   analyzeStudentInput,
-  generateSocraticResponse,
+  generateTutorResponse,
+  type TutorMode,
 } from "./services/aiService";
 import { recordLearningSignal } from "./services/progressService";
 import { refreshEnrollments } from "./services/courseService";
@@ -60,16 +61,24 @@ interface StudentMessagePayload {
   studentId: string;
   activeTopic: string;
   studentMessage: string;
+  /** Defaults to "socratic" when absent, so older clients keep working. */
+  mode?: TutorMode;
 }
 
 interface ChatResult {
   response: string;
   analysis: string;
+  mode: TutorMode;
   session: {
     studentId: string;
     activeTopic: string;
     conversationHistory: unknown[];
   };
+}
+
+/** Normalize an untrusted mode value; anything unrecognized falls back. */
+function parseMode(value: unknown): TutorMode {
+  return value === "teach" ? "teach" : "socratic";
 }
 
 function validateStudentMessage(
@@ -134,11 +143,13 @@ async function processStudentMessage(
     .lean();
 
   const priorMessages: ConversationMessage[] = prior?.conversationHistory ?? [];
+  const mode = parseMode(payload.mode);
   const analysis = await analyzeStudentInput(studentMessage, priorMessages);
-  const response = await generateSocraticResponse(
+  const response = await generateTutorResponse(
     analysis,
     studentMessage,
     priorMessages,
+    mode,
   );
 
   // The model names the topic far better than the client's first 60 characters
@@ -206,6 +217,7 @@ async function processStudentMessage(
   return {
     response,
     analysis: JSON.stringify(analysis),
+    mode,
     session: {
       studentId: session.studentId,
       activeTopic: session.activeTopic,

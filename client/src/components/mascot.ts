@@ -11,10 +11,28 @@
 
 export type MascotStatus = "idle" | "thinking" | "speaking";
 
+/**
+ * Instructional mode. `socratic` asks and withholds; `teach` explains directly.
+ * The owl is the on-screen teacher, so the mode is shown on its own display
+ * rather than buried in a settings panel.
+ */
+export type TutorMode = "socratic" | "teach";
+
 const DEFAULT_MESSAGE: Record<MascotStatus, string> = {
   idle: "Hoo there! Ask me about any concept — I'll guide you with questions, not answers.",
   thinking: "Analyzing your question & sketching a step-by-step path…",
   speaking: "Hoo-hoo! Here is a guiding question for you!",
+};
+
+/** Idle line per mode, so the owl advertises what it's about to do. */
+const MODE_IDLE_LINE: Record<TutorMode, string> = {
+  socratic: "Hoo there! Ask me anything — I'll guide you with questions, not answers.",
+  teach: "Teaching mode on. Name a topic and I'll explain it step by step.",
+};
+
+const MODE_PILL: Record<TutorMode, string> = {
+  socratic: "Socratic",
+  teach: "Teach me",
 };
 
 const PILL_TEXT: Record<MascotStatus, string> = {
@@ -106,19 +124,23 @@ function owlSvg(status: MascotStatus): string {
   <path d="M32 14C20 14 12 24 12 38c0 14 9 24 20 24s20-10 20-24C52 24 44 14 32 14Z" fill="url(#owlBody)"/>
   <!-- facial disc -->
   <ellipse cx="32" cy="33" rx="17" ry="13" fill="#e0e7ff" opacity="0.95"/>
-  <!-- eyes -->
-  <circle cx="24" cy="24" r="6.5" fill="#fff"/>
-  <circle cx="40" cy="24" r="6.5" fill="#fff"/>
-  <circle cx="24" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
-  <circle cx="40" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
+  <!-- eyes — wrapped so the blink can squash them vertically -->
+  <g class="owl-eyes owl-blink" style="transform-origin:32px 24px">
+    <circle cx="24" cy="24" r="6.5" fill="#fff"/>
+    <circle cx="40" cy="24" r="6.5" fill="#fff"/>
+    <circle cx="24" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
+    <circle cx="40" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
+  </g>
   <!-- academic glasses -->
   <circle cx="24" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
   <circle cx="40" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
   <path d="M32 22.5v3" class="${glasses}" stroke-width="1.6"/>
   <path d="M16 24H12" class="${glasses}" stroke-width="1.6"/>
   <path d="M48 24h4" class="${glasses}" stroke-width="1.6"/>
-  <!-- beak -->
-  <path d="M32 31l3.5 4.5c-1 1.4-2.4 2-3.5 2s-2.5-.6-3.5-2L32 31Z" fill="#f59e0b"/>
+  <!-- beak — origin at the top hinge so scaleY opens and closes like a jaw -->
+  <g class="owl-beak" style="transform-origin:32px 31px">
+    <path d="M32 31l3.5 4.5c-1 1.4-2.4 2-3.5 2s-2.5-.6-3.5-2L32 31Z" fill="#f59e0b"/>
+  </g>
   <!-- wings -->
   ${leftWing}
   ${rightWing}
@@ -132,7 +154,27 @@ function owlSvg(status: MascotStatus): string {
 }
 
 /** Lesson-board doodle shown next to the owl, per state. */
-function boardSvg(kind: "idle" | "thinking" | "teaching"): string {
+function boardSvg(kind: "idle" | "thinking" | "teaching" | "explaining"): string {
+  if (kind === "explaining") {
+    // Teach mode: definition -> analogy -> worked example, the shape of the
+    // explanation the tutor is actually giving.
+    return `
+<svg viewBox="0 0 160 100" class="h-auto w-full" aria-hidden="true">
+  <rect x="14" y="14" width="132" height="16" rx="5" fill="rgba(56,189,248,0.14)" stroke="#38bdf8" stroke-width="1.6"/>
+  <text x="80" y="25" text-anchor="middle" font-size="8" fill="#7dd3fc">plain definition</text>
+  <path d="M80 32v7m0 0-3-3m3 3-3 3" stroke="#38bdf8" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <circle cx="42" cy="52" r="13" fill="none" stroke="#a78bfa" stroke-width="2.2"/>
+  <path d="M42 45v14M35 52h14" stroke="#c4b5fd" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="42" y="75" text-anchor="middle" font-size="7.5" fill="#a78bfa">analogy</text>
+  <circle cx="80" cy="52" r="13" fill="none" stroke="#fbbf24" stroke-width="2.2" class="animate-pulse"/>
+  <text x="80" y="56" text-anchor="middle" font-size="12" font-weight="700" fill="#fde68a">1</text>
+  <text x="80" y="75" text-anchor="middle" font-size="7.5" fill="#fbbf24">example</text>
+  <circle cx="118" cy="52" r="13" fill="none" stroke="#34d399" stroke-width="2.2" stroke-dasharray="3 3"/>
+  <text x="118" y="56" text-anchor="middle" font-size="12" font-weight="700" fill="#a7f3d0">2</text>
+  <text x="118" y="75" text-anchor="middle" font-size="7.5" fill="#34d399">check</text>
+  <text x="80" y="95" text-anchor="middle" font-size="8" fill="#64748b">Let me walk you through it</text>
+</svg>`;
+  }
   if (kind === "thinking") {
     return `
 <svg viewBox="0 0 160 100" class="h-auto w-full" aria-hidden="true">
@@ -173,19 +215,41 @@ function boardSvg(kind: "idle" | "thinking" | "teaching"): string {
 </svg>`;
 }
 
-export function createMascot(host: HTMLElement): {
+export function createMascot(
+  host: HTMLElement,
+  onModeChange: (mode: TutorMode) => void = () => {},
+): {
   setStatus: (s: MascotStatus) => void;
   setMessage: (text: string) => void;
   clearMessage: () => void;
+  setMode: (m: TutorMode) => void;
+  getMode: () => TutorMode;
+  setSpeaking: (on: boolean) => void;
 } {
   host.innerHTML = `
+    <style>
+      /* Blink runs always — a still-eyed owl reads as a mascot, not a teacher. */
+      .owl-blink { animation: owlblink 5.4s ease-in-out infinite; }
+      /* The beak only moves while a line is being delivered, so the owl
+         doesn't chew on nothing. */
+      .owl-beak { transform: scaleY(1); }
+      .owl-talking .owl-beak { animation: owlbeak 0.42s steps(6, end) infinite; }
+      @media (prefers-reduced-motion: reduce) {
+        .owl-blink, .owl-talking .owl-beak { animation: none; }
+      }
+    </style>
     <div class="owl-display" data-state="idle">
       <div class="rounded-[1.75rem] border border-slate-700/70 bg-slate-800/40 p-1.5 shadow-2xl shadow-black/50">
         <div class="owl-screen relative overflow-hidden rounded-[1.35rem] border p-4 transition-all duration-300 sm:p-5 [background-image:radial-gradient(ellipse_at_top,rgba(99,102,241,0.12),transparent_65%)]">
           <div class="owl-status-row mb-3 flex items-center gap-2">
             <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"></span>
             <span class="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500 sm:text-[10px]">AgentEd classroom display</span>
-            <span class="owl-state-pill ml-auto rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors sm:text-[10px]"></span>
+            <button
+              type="button"
+              class="owl-mode-toggle ml-auto shrink-0 rounded-full border border-slate-700 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-slate-300 transition hover:border-indigo-500/60 hover:text-indigo-300 sm:text-[10px]"
+              title="Switch between Socratic questions and direct explanations"
+            ></button>
+            <span class="owl-state-pill rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors sm:text-[10px]"></span>
           </div>
           <div class="flex items-center gap-4 sm:gap-5">
             <div class="owl-visual h-28 w-28 shrink-0 sm:h-36 sm:w-36"></div>
@@ -220,7 +284,10 @@ export function createMascot(host: HTMLElement): {
       <div class="mx-auto h-1.5 w-44 rounded-full bg-slate-800/60"></div>
     </div>`;
 
-  const display = host.firstElementChild as HTMLElement;
+  // NB: query explicitly rather than firstElementChild — the scoped <style>
+  // above is the host's first child now, and grabbing it would silently give us
+  // a detached element with no descendants.
+  const display = host.querySelector<HTMLElement>(".owl-display")!;
   const screen = display.querySelector<HTMLElement>(".owl-screen")!;
   const statusRow = display.querySelector<HTMLElement>(".owl-status-row")!;
   const pill = display.querySelector<HTMLElement>(".owl-state-pill")!;
@@ -230,27 +297,74 @@ export function createMascot(host: HTMLElement): {
   const compactMessage = display.querySelector<HTMLElement>(".owl-compact-message")!;
   const toggleButton = display.querySelector<HTMLButtonElement>(".owl-toggle")!;
   const chevron = display.querySelector<HTMLElement>(".owl-chevron")!;
+  const modeButton = display.querySelector<HTMLButtonElement>(".owl-mode-toggle")!;
   const bubble = display.querySelector<HTMLElement>(".owl-bubble")!;
   const tail = display.querySelector<HTMLElement>(".owl-bubble-tail")!;
   const message = display.querySelector<HTMLElement>(".owl-message")!;
 
   let status: MascotStatus = "idle";
   let customMessage: string | null = null;
+  let mode: TutorMode = "socratic";
+  /** True while the owl is actually delivering a line (mouth moving). */
+  let talking = false;
+  let revealTimer: number | null = null;
   // Mobile-first: the display starts collapsed on small screens, expanded on
   // desktop (>= sm, where the toggle button is hidden anyway).
   let collapsed = window.innerWidth < 640;
+
+  /**
+   * Words per tick. Roughly speech-rate when the owl is talking aloud, and
+   * faster when it is only "speaking" visually.
+   */
+  const REVEAL_MS = 70;
+
+  function stopReveal(): void {
+    if (revealTimer !== null) {
+      window.clearInterval(revealTimer);
+      revealTimer = null;
+    }
+  }
+
+  /**
+   * Reveal the line word by word so the owl reads like it is speaking rather
+   * than a caption snapping into place. The full text stays available in the
+   * title/aria-label, so assistive tech still gets the whole line.
+   */
+  function startReveal(text: string): void {
+    stopReveal();
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length < 2) {
+      message.textContent = text;
+      return;
+    }
+    let shown = 0;
+    message.textContent = "";
+    revealTimer = window.setInterval(() => {
+      shown += 1;
+      message.textContent = words.slice(0, shown).join(" ");
+      if (shown >= words.length) {
+        stopReveal();
+        message.textContent = text;
+      }
+    }, REVEAL_MS);
+  }
 
   function render(): void {
     // While the owl is showing the tutor's guidance it keeps its "teaching"
     // look (board diagram + amber bubble), even after the brief speaking
     // state reverts to idle.
     const vis: MascotStatus = customMessage && status !== "thinking" ? "speaking" : status;
-    const boardKind = vis === "speaking" ? "teaching" : vis;
-    const line = customMessage ?? DEFAULT_MESSAGE[status];
+    // Teach mode gets its own board: an explanation reads differently from a
+    // quiz, and reusing the "1-2-3 quiz steps" art would misrepresent it.
+    const boardKind =
+      vis === "speaking" ? (mode === "teach" ? "explaining" : "teaching") : vis;
+    const line =
+      customMessage ?? (status === "idle" ? MODE_IDLE_LINE[mode] : DEFAULT_MESSAGE[status]);
 
     visual.innerHTML = owlSvg(status);
     visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(status)}`;
     boardArt.innerHTML = boardSvg(boardKind);
+    display.classList.toggle("owl-talking", talking);
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
     // state: while the tutor's guidance is on screen the owl keeps presenting
@@ -274,9 +388,29 @@ export function createMascot(host: HTMLElement): {
 
     bubble.className = `owl-bubble relative mt-3 rounded-2xl border px-4 py-3 transition-colors duration-300 ${collapsed ? "hidden" : BUBBLE_STYLES[vis]}`;
     tail.className = `owl-bubble-tail absolute -top-[7px] left-14 h-3 w-3 rotate-45 rounded-[2px] border-l border-t sm:left-20 ${TAIL_STYLES[vis]}`;
-    message.textContent = line;
+    // render() is called on every status change, including the one that fires
+    // the moment a line arrives — so it must NOT rewrite the bubble text, or it
+    // would wipe the word-by-word reveal that setMessage just started.
+    if (revealTimer === null) {
+      message.textContent = line;
+    }
     message.title = customMessage ?? "";
+    message.setAttribute("aria-label", line);
     message.className = `owl-message text-sm font-medium leading-relaxed sm:text-base ${MESSAGE_STYLES[vis]}`;
+
+    modeButton.textContent = MODE_PILL[mode];
+    modeButton.setAttribute("aria-pressed", String(mode === "teach"));
+    modeButton.setAttribute(
+      "aria-label",
+      mode === "teach"
+        ? "Teaching mode. Switch back to Socratic questions."
+        : "Socratic mode. Switch to direct explanations.",
+    );
+    modeButton.className = `owl-mode-toggle ml-auto shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition sm:text-[10px] ${
+      mode === "teach"
+        ? "border-sky-500/60 bg-sky-500/15 text-sky-300"
+        : "border-slate-700 text-slate-300 hover:border-indigo-500/60 hover:text-indigo-300"
+    }`;
   }
 
   function setStatus(next: MascotStatus): void {
@@ -284,19 +418,51 @@ export function createMascot(host: HTMLElement): {
     render();
   }
 
+  /**
+   * Switch between Socratic questioning and direct explanation. Clears any
+   * in-flight reveal so the new mode's line renders immediately.
+   */
+  function setMode(next: TutorMode): void {
+    if (next === mode) return;
+    mode = next;
+    stopReveal();
+    render();
+  }
+
+  function getMode(): TutorMode {
+    return mode;
+  }
+
+  /** Drive the mouth. Called around the speech-synthesis utterance. */
+  function setSpeaking(next: boolean): void {
+    if (next === talking) return;
+    talking = next;
+    display.classList.toggle("owl-talking", next);
+  }
+
   /** Show the tutor's latest guidance in the owl's speech bubble. */
   function setMessage(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
     customMessage = trimmed;
+    talking = true;
     render();
+    startReveal(trimmed);
   }
 
   /** Clear the guidance (e.g. a new question was sent, or an error arrived). */
   function clearMessage(): void {
     customMessage = null;
+    talking = false;
+    stopReveal();
     render();
   }
+
+  modeButton.addEventListener("click", () => {
+    const next: TutorMode = mode === "teach" ? "socratic" : "teach";
+    setMode(next);
+    onModeChange(next);
+  });
 
   toggleButton.addEventListener("click", () => {
     collapsed = !collapsed;
@@ -304,5 +470,5 @@ export function createMascot(host: HTMLElement): {
   });
 
   setStatus("idle");
-  return { setStatus, setMessage, clearMessage };
+  return { setStatus, setMessage, clearMessage, setMode, getMode, setSpeaking };
 }
