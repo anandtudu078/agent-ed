@@ -782,7 +782,7 @@ function setVoiceMode(enabled: boolean): void {
     }
     voiceToggleEl.className =
       "rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500 active:scale-95";
-    voiceToggleEl.innerHTML = '🎙️ <span class="hidden sm:inline">Listening…</span>';
+    voiceToggleEl.innerHTML = '🎙️ <span>Listening…</span>';
     voiceHintEl.textContent =
       "Voice mode on — speak your question, and the owl will answer out loud.";
     voiceHintEl.classList.remove("hidden");
@@ -795,7 +795,7 @@ function setVoiceMode(enabled: boolean): void {
   } else {
     voiceToggleEl.className =
       "rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95";
-    voiceToggleEl.innerHTML = '🎤 <span class="hidden sm:inline">Voice Mode</span>';
+    voiceToggleEl.innerHTML = '🎤 <span>Voice Mode</span>';
     voiceHintEl.classList.add("hidden");
     stopOwlSpeech();
     micSuspendedForSpeech = false;

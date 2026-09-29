@@ -239,6 +239,9 @@ export function createMascot(host: HTMLElement): {
   // Mobile-first: the display starts collapsed on small screens, expanded on
   // desktop (>= sm, where the toggle button is hidden anyway).
   let collapsed = window.innerWidth < 640;
+  // Set once the student toggles the display themselves; after that their
+  // choice wins over the viewport-derived default.
+  let userToggled = false;
 
   function render(): void {
     // While the owl is showing the tutor's guidance it keeps its "teaching"
@@ -249,7 +252,9 @@ export function createMascot(host: HTMLElement): {
     const line = customMessage ?? DEFAULT_MESSAGE[status];
 
     visual.innerHTML = owlSvg(status);
-    visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(status)}`;
+    // Animate the *visible* state so the owl's motion always matches the
+    // chrome around it (pill, board, bubble).
+    visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(vis)}`;
     boardArt.innerHTML = boardSvg(boardKind);
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
@@ -300,6 +305,18 @@ export function createMascot(host: HTMLElement): {
 
   toggleButton.addEventListener("click", () => {
     collapsed = !collapsed;
+    userToggled = true;
+    render();
+  });
+
+  // Keep the default (collapsed on phones, expanded on desktop) in step with
+  // the viewport — rotation and window resizes otherwise leave it stale.
+  // Once the student has toggled it themselves, their choice wins.
+  window.addEventListener("resize", () => {
+    if (userToggled) return;
+    const next = window.innerWidth < 640;
+    if (next === collapsed) return;
+    collapsed = next;
     render();
   });
 
