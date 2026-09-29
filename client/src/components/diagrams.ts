@@ -152,7 +152,7 @@ function barsDiagram(spec: Extract<VisualSpec, { type: "bars" }>, active: number
   return frame(inner, spec.title);
 }
 
-/** Root with a row of children (and optional grandchildren). */
+/** Root with a row of children, each optionally carrying its own grandchildren. */
 function treeDiagram(spec: Extract<VisualSpec, { type: "tree" }>, active: number): string {
   const n = spec.children.length;
   const gap = 8;
@@ -160,21 +160,47 @@ function treeDiagram(spec: Extract<VisualSpec, { type: "tree" }>, active: number
   const totalW = n * w + (n - 1) * gap;
   const startX = (W - totalW) / 2;
 
-  let inner = box(W / 2 - 52, 26, 104, 30, spec.root, active === -1);
-  inner += `<path d="M${W / 2} 56v14" stroke="${MUTED}" stroke-width="1.3"/>`;
-  inner += `<path d="M${startX + w / 2} 70h${totalW - w}" stroke="${MUTED}" stroke-width="1.3"/>`;
+  const ROOT_Y = 26;
+  const ROOT_H = 30;
+  const BUS_Y = 70;
+  const CHILD_Y = 80;
+  const CHILD_H = 24;
+  // Floor for the caption, so a deep tree never draws over its own title.
+  const KID_FLOOR = H - 18;
+
+  let inner = box(W / 2 - 52, ROOT_Y, 104, ROOT_H, spec.root, active === -1);
+  inner += `<path d="M${W / 2} ${ROOT_Y + ROOT_H}v14" stroke="${MUTED}" stroke-width="1.3"/>`;
+  inner += `<path d="M${startX + w / 2} ${BUS_Y}h${totalW - w}" stroke="${MUTED}" stroke-width="1.3"/>`;
 
   spec.children.forEach((child, i) => {
     const x = startX + i * (w + gap);
-    inner += `<path d="M${x + w / 2} 70v10" stroke="${MUTED}" stroke-width="1.3"/>`;
-    const hasKids = (child.children?.length ?? 0) > 0;
-    const childH = hasKids ? 24 : 26;
-    inner += box(x, 80, w, childH, child.label, i === active);
-    if (hasKids) {
-      const kid = child.children![0];
-      inner += `<path d="M${x + w / 2} ${80 + childH}v8" stroke="#475569" stroke-width="1.1"/>`;
-      inner += box(x + 4, 80 + childH + 8, w - 8, 20, kid.label, false);
-    }
+    inner += `<path d="M${x + w / 2} ${BUS_Y}v10" stroke="${MUTED}" stroke-width="1.3"/>`;
+    const kids = child.children ?? [];
+    const hasKids = kids.length > 0;
+    const childH = hasKids ? CHILD_H : 26;
+    inner += box(x, CHILD_Y, w, childH, child.label, i === active);
+
+    if (!hasKids) return;
+
+    // Every grandchild, not just the first. The previous version drew
+    // children![0] and dropped the rest without a word, which silently lost
+    // most of a binary tree — the one shape a tree diagram is usually for.
+    const kidTop = CHILD_Y + childH + 8;
+    const room = KID_FLOOR - kidTop;
+    const kidGap = 3;
+    const kidH = Math.max(12, Math.floor((room - kidGap * (kids.length - 1)) / kids.length));
+
+    inner += `<path d="M${x + w / 2} ${CHILD_Y + childH}v8" stroke="#475569" stroke-width="1.1"/>`;
+    kids.forEach((kid, k) => {
+      const y = kidTop + k * (kidH + kidGap);
+      // Deeper nodes are smaller and dimmer so the hierarchy stays readable
+      // once there are several per branch.
+      const deep = kids.length > 1;
+      inner += `<g>
+        <rect x="${(x + 4).toFixed(1)}" y="${y.toFixed(1)}" width="${(w - 8).toFixed(1)}" height="${kidH}" rx="6" fill="rgba(94,234,212,0.10)" stroke="#5eead4" stroke-width="1" opacity="${deep ? 0.82 : 1}"/>
+        <text x="${(x + w / 2).toFixed(1)}" y="${(y + kidH / 2 + 3.5).toFixed(1)}" text-anchor="middle" font-size="${kidH <= 14 ? 8 : 9}" font-weight="600" fill="${deep ? "#99f6e4" : "#ccfbf1"}">${esc(kid.label)}</text>
+      </g>`;
+    });
   });
   return frame(inner, spec.title);
 }

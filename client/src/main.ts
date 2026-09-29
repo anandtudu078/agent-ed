@@ -94,6 +94,7 @@ const formEl = document.querySelector<HTMLFormElement>("#chat-form")!;
 const inputEl = document.querySelector<HTMLInputElement>("#message-input")!;
 const sendButtonEl = document.querySelector<HTMLButtonElement>("#send-button")!;
 const voiceToggleEl = document.querySelector<HTMLButtonElement>("#voice-toggle")!;
+const speakerToggleEl = document.querySelector<HTMLButtonElement>("#speaker-toggle")!;
 const voiceHintEl = document.querySelector<HTMLParagraphElement>("#voice-hint")!;
 const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
 const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
@@ -462,6 +463,11 @@ function disconnectSocket(): void {
 interface StoredConversationMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  /**
+   * The diagram drawn for this reply, if it had one. Stored server-side so the
+   * board is not blank on reload.
+   */
+  visual?: VisualSpec | null;
 }
 
 const ROLE_TO_UI: Record<StoredConversationMessage["role"], "student" | "tutor" | "system"> = {
@@ -509,8 +515,19 @@ async function restoreSessionHistory(): Promise<void> {
 
     clearMessages();
     appendMessage("system", "Picking up where you left off:");
+    // Put the board back to the most recent diagram in the thread. The owl's
+    // display shows one diagram at a time, so replaying an old one would be
+    // noise; the newest is the one the student was last looking at.
+    let latestVisual: VisualSpec | null = null;
     for (const message of history) {
       appendMessage(ROLE_TO_UI[message.role] ?? "system", message.content);
+      if (message.visual) latestVisual = message.visual;
+    }
+    if (latestVisual) {
+      mascot.setVisual(latestVisual);
+      // Step 0 is highlighted so the restored board reads as "in progress"
+      // rather than a finished poster.
+      mascot.setVisualStep(0);
     }
   } catch {
     // History is a convenience, never a reason to block the app from loading.
@@ -819,6 +836,11 @@ function stopOwlSpeech(): void {
   // The utterance's onend won't fire for a cancelled one, so close the mouth
   // here or the owl would keep chewing on nothing.
   mascot.setSpeaking(false);
+  // ...and the highlight timer must die with it. A cancelled utterance used to
+  // leave the walkthrough running, so the board kept stepping through a
+  // diagram for a reply the student had already moved past — the owl appeared
+  // to be explaining something that was no longer on screen.
+  stopVisualWalk();
 }
 
 /** Restart the microphone once the owl finishes speaking (voice mode only). */
@@ -1147,6 +1169,29 @@ function setVoiceMode(enabled: boolean): void {
 }
 
 voiceToggleEl.addEventListener("click", () => setVoiceMode(!voiceEnabled));
+
+/**
+ * The owl's speaker, controlled independently of the microphone.
+ *
+ * These were previously entangled behind one "Voice Mode" button, which meant
+ * the only way to stop the owl talking was to also switch off the mic — and
+ * the only way to use the mic was to accept the owl talking. A student in a
+ * shared room, or with a working microphone and no working speakers, needs
+ * those to be separate decisions.
+ */
+speakerToggleEl.addEventListener("click", () => {
+  speakingEnabled = !speakingEnabled;
+  speakerToggleEl.setAttribute("aria-pressed", String(speakingEnabled));
+  const label = speakerToggleEl.querySelector("span");
+  if (label) label.textContent = speakingEnabled ? "Read aloud" : "Muted";
+  speakerToggleEl.firstChild!.textContent = speakingEnabled ? "🔊 " : "🔇 ";
+  speakerToggleEl.classList.toggle("opacity-60", !speakingEnabled);
+  speakerToggleEl.title = speakingEnabled
+    ? "Turn the owl's voice off"
+    : "Turn the owl's voice on";
+  // Muting mid-sentence should stop the audio now, not at the end of it.
+  if (!speakingEnabled) stopOwlSpeech();
+});
 
 dashboardToggleEl.addEventListener("click", () =>
   setDashboardVisible(!dashboardVisible),

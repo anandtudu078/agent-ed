@@ -1,10 +1,21 @@
 import { Document, Model, Schema, model } from "mongoose";
 
+import type { VisualSpec } from "../types/visual";
+
 export type ConversationRole = "user" | "assistant" | "system";
 
 export interface ConversationMessage {
   role: ConversationRole;
   content: string;
+  /**
+   * The diagram the owl drew for this reply, stored so it survives a reload.
+   *
+   * Without it the board empties on refresh and the student loses the one part
+   * of the explanation they can't reconstruct from the text. Always a spec
+   * that already passed parseVisualSpec, and the client re-renders it through
+   * the same escaped hand-written renderers, so it stays inert data.
+   */
+  visual?: VisualSpec | null;
 }
 
 /** A concept the student has worked on, and when they first reached it. */
@@ -30,6 +41,12 @@ const conversationMessageSchema = new Schema<ConversationMessage>(
       required: true,
     },
     content: { type: String, required: true },
+    // Mixed rather than a second hand-written copy of the six diagram shapes:
+    // the value is written only after parseVisualSpec has bounded and
+    // type-checked it, and the client renders it through the same escaped
+    // renderers. Duplicating the schema here would be a second thing to keep
+    // in sync with no extra safety.
+    visual: { type: Schema.Types.Mixed, default: null },
   },
   { _id: false },
 );

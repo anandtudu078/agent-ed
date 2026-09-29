@@ -282,6 +282,30 @@ try {
   cls = await moodClass();
   check("the reaction relaxes back to neutral", cls.includes("owl-mood-neutral"), cls.slice(0, 60));
 
+  // The tree renderer used to draw only the first grandchild under each child,
+  // silently dropping the rest — which is most of a binary tree.
+  const treeRender = await page.evaluate(() => {
+    window.__agentedTest.setVisual({
+      type: "tree",
+      title: "Binary search tree",
+      root: "root",
+      children: [
+        { label: "left", children: [{ label: "a" }, { label: "b" }, { label: "c" }] },
+        { label: "right", children: [{ label: "d" }, { label: "e" }] },
+      ],
+    });
+    const svg = document.querySelector("#owl-stage .owl-board-art svg");
+    const texts = [...(svg?.querySelectorAll("text") ?? [])].map((t) => t.textContent);
+    return texts;
+  });
+  check(
+    "tree renders every grandchild, not just the first",
+    ["a", "b", "c", "d", "e"].every((k) => treeRender.includes(k)),
+    treeRender.join(" | ").slice(0, 90),
+  );
+  await page.evaluate(() => window.__agentedTest.setVisual(null));
+  await page.waitForTimeout(150);
+
   // 7b-4. Language: the owl's own phrases switch, and the choice persists to
   // the server so it follows the student to another device.
   const langBtn = page.locator("#language-toggle");
@@ -350,6 +374,25 @@ try {
   await voicePage.locator("#app-view").waitFor({ state: "visible" });
   await voicePage.locator("#voice-toggle").click();
   await voicePage.locator("#voice-hint").waitFor({ state: "visible" });
+  // The speaker and the microphone are separate controls now. Muting the owl
+  // must not touch the mic, and it must stop audio that is already playing.
+  check(
+    "speaker is on by default",
+    (await voicePage.locator("#speaker-toggle").getAttribute("aria-pressed")) === "true",
+  );
+  await voicePage.locator("#speaker-toggle").click();
+  await voicePage.waitForTimeout(200);
+  const afterMute = await voicePage.evaluate(() => ({
+    speaker: document.querySelector("#speaker-toggle")?.getAttribute("aria-pressed"),
+    mic: document.querySelector("#voice-toggle")?.getAttribute("aria-pressed"),
+    label: document.querySelector("#speaker-toggle span")?.textContent,
+  }));
+  check("muting the owl flips the speaker control", afterMute.speaker === "false", afterMute.label ?? "");
+  check("muting the owl leaves the microphone alone", afterMute.mic === "true", `mic=${afterMute.mic}`);
+  check("muted control is labelled for the student", afterMute.label === "Muted", afterMute.label ?? "");
+  // Mute again so the rest of the voice checks run with the owl audible.
+  await voicePage.locator("#speaker-toggle").click();
+  await voicePage.waitForTimeout(200);
   const pressed = await voicePage.locator("#voice-toggle").getAttribute("aria-pressed");
   const voiceHintText = (await voicePage.locator("#voice-hint").textContent()) ?? "";
   check(

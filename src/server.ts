@@ -211,6 +211,14 @@ async function processStudentMessage(
       ? []
       : [{ topic: activeTopic, firstSeenAt: new Date() }];
 
+  // Teach mode is where a diagram earns its place: the owl is explaining a
+  // concept, not posing a question. Socratic replies get the question board.
+  // Generated *before* the session write so the spec can be stored with the
+  // message it belongs to. Best-effort — a missing diagram must never cost the
+  // student their answer.
+  const visual =
+    mode === "teach" ? await generateVisual(activeTopic, response, language) : null;
+
   const session = await Session.findOneAndUpdate(
     { studentId },
     {
@@ -219,7 +227,10 @@ async function processStudentMessage(
         conversationHistory: {
           $each: [
             { role: "user", content: studentMessage },
-            { role: "assistant", content: response },
+            // The diagram is stored with the message it belongs to, so the
+            // board survives a reload. The student otherwise loses the one
+            // part of the explanation that can't be read back out of the text.
+            { role: "assistant", content: response, visual: visual ?? null },
           ],
           // Hard cap: a session document can only grow to MongoDB's 16 MB, and
           // an uncapped array eventually fails every write for this student.
@@ -237,12 +248,6 @@ async function processStudentMessage(
   if (!session) {
     throw new Error("Unable to save the tutoring session.");
   }
-
-  // Teach mode is where a diagram earns its place: the owl is explaining a
-  // concept, not posing a question. Socratic replies get the question board.
-  // Best-effort — a missing diagram must never cost the student their answer.
-  const visual =
-    mode === "teach" ? await generateVisual(activeTopic, response, language) : null;
 
   // Feed the dashboard. Best-effort: a progress write must never fail a reply
   // the student is already waiting on.

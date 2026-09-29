@@ -1,4 +1,5 @@
 import { completeJson } from "./groqClient";
+import { VISUAL_LIMITS, type VisualSpec } from "../types/visual";
 
 /**
  * A diagram the owl can draw on its lesson board.
@@ -12,33 +13,19 @@ import { completeJson } from "./groqClient";
  * These types are chosen to cover the shapes real explanations take: something
  * repeating (cycle), something sequential (steps), a trade-off (compare),
  * measured values (bars), a hierarchy (tree), and abstraction layers (layers).
+ *
+ * The shape itself lives in ../types/visual so the Session model can store a
+ * validated spec without depending on the AI layer.
  */
-export type VisualSpec =
-  | { type: "cycle"; title: string; steps: string[] }
-  | { type: "steps"; title: string; steps: string[] }
-  | {
-      type: "compare";
-      title: string;
-      left: { label: string; points: string[] };
-      right: { label: string; points: string[] };
-    }
-  | { type: "bars"; title: string; items: Array<{ label: string; value: number }> }
-  | {
-      type: "tree";
-      title: string;
-      root: string;
-      children: Array<{ label: string; children?: Array<{ label: string }> }>;
-    }
-  | { type: "layers"; title: string; layers: Array<{ label: string; detail: string }> };
+export type { VisualSpec };
 
-/** Hard bounds — a diagram the client has to squeeze into a small board. */
-const MAX_TITLE = 60;
-const MAX_LABEL = 28;
-const MAX_STEPS = 6;
-const MAX_BARS = 5;
-const MAX_TREE_CHILDREN = 5;
-const MAX_DEPTH = 2;
-const MAX_LAYERS = 5;
+const MAX_TITLE = VISUAL_LIMITS.title;
+const MAX_LABEL = VISUAL_LIMITS.label;
+const MAX_STEPS = VISUAL_LIMITS.steps;
+const MAX_BARS = VISUAL_LIMITS.bars;
+const MAX_TREE_CHILDREN = VISUAL_LIMITS.treeChildren;
+const MAX_DEPTH = VISUAL_LIMITS.depth;
+const MAX_LAYERS = VISUAL_LIMITS.layers;
 
 function text(value: unknown, max: number): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
