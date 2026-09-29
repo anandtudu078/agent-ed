@@ -463,6 +463,11 @@ function disconnectSocket(): void {
 interface StoredConversationMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  /**
+   * The diagram drawn for this reply, if it had one. Stored server-side so the
+   * board is not blank on reload.
+   */
+  visual?: VisualSpec | null;
 }
 
 const ROLE_TO_UI: Record<StoredConversationMessage["role"], "student" | "tutor" | "system"> = {
@@ -510,8 +515,19 @@ async function restoreSessionHistory(): Promise<void> {
 
     clearMessages();
     appendMessage("system", "Picking up where you left off:");
+    // Put the board back to the most recent diagram in the thread. The owl's
+    // display shows one diagram at a time, so replaying an old one would be
+    // noise; the newest is the one the student was last looking at.
+    let latestVisual: VisualSpec | null = null;
     for (const message of history) {
       appendMessage(ROLE_TO_UI[message.role] ?? "system", message.content);
+      if (message.visual) latestVisual = message.visual;
+    }
+    if (latestVisual) {
+      mascot.setVisual(latestVisual);
+      // Step 0 is highlighted so the restored board reads as "in progress"
+      // rather than a finished poster.
+      mascot.setVisualStep(0);
     }
   } catch {
     // History is a convenience, never a reason to block the app from loading.
