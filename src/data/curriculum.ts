@@ -14,12 +14,31 @@
  * never a slug ("module-3").
  */
 
+export interface CurriculumModule {
+  title: string;
+  topic: string;
+  /**
+   * Topics that must be understood first.
+   *
+   * Referenced by free text and matched fuzzily, the same way `topicsVisited`
+   * is — these strings come from a model reading chat, so they will never line
+   * up character-for-character with a hand-written syllabus.
+   *
+   * Only curated where a real dependency exists. A module with no entry here
+   * has no known prerequisites and behaves exactly as it did before, which is
+   * why this is a sparse graph rather than a fully specified one: a wrong edge
+   * sends a student backwards for no reason, and an uncurated edge is cheaper
+   * than a wrong one.
+   */
+  prerequisites?: string[];
+}
+
 export interface CurriculumCourse {
   title: string;
   category: string;
   description: string;
   level: "beginner" | "intermediate" | "advanced";
-  modules: Array<{ title: string; topic: string }>;
+  modules: CurriculumModule[];
 }
 
 const CURRICULUM: CurriculumCourse[] = [
@@ -91,6 +110,23 @@ const CURRICULUM: CurriculumCourse[] = [
 
   // ── AI: the classical branches ────────────────────────────────────────
   {
+    title: "Maths for AI",
+    category: "AI Foundations",
+    description:
+      "The small amount of maths that AI actually rests on, taught from scratch.",
+    level: "beginner",
+    modules: [
+      { title: "Vectors and vector spaces", topic: "vectors and vector spaces" },
+      { title: "Matrix shapes and operations", topic: "matrix multiplication for attention", prerequisites: ["vectors and vector spaces"] },
+      { title: "Dot products", topic: "dot products and matrix multiplication", prerequisites: ["matrix multiplication for attention"] },
+      { title: "Linear algebra for ML", topic: "linear algebra for machine learning", prerequisites: ["matrix multiplication for attention"] },
+      { title: "Limits and continuity", topic: "limits and continuity", prerequisites: ["functions and parameters"] },
+      { title: "Derivatives", topic: "calculus and derivatives", prerequisites: ["limits and continuity"] },
+      { title: "Chain rule", topic: "chain rule and partial derivatives", prerequisites: ["calculus and derivatives", "functions and parameters"] },
+      { title: "Probability basics", topic: "probability basics for machine learning" },
+    ],
+  },
+  {
     title: "What Is Artificial Intelligence?",
     category: "AI Foundations",
     description:
@@ -161,12 +197,12 @@ const CURRICULUM: CurriculumCourse[] = [
     description: "What models are, how they learn, and where AI shows up daily.",
     level: "beginner",
     modules: [
-      { title: "What is a model", topic: "machine learning models" },
-      { title: "Features and labels", topic: "features and labels in machine learning" },
-      { title: "Training data", topic: "training data" },
-      { title: "Overfitting and underfitting", topic: "overfitting and underfitting" },
-      { title: "Train, validation and test splits", topic: "train validation and test split" },
-      { title: "Evaluation metrics", topic: "model evaluation and metrics" },
+      { title: "What is a model", topic: "machine learning models", prerequisites: ["variables and data types", "functions and parameters"] },
+      { title: "Features and labels", topic: "features and labels in machine learning", prerequisites: ["variables and data types"] },
+      { title: "Training data", topic: "training data", prerequisites: ["features and labels in machine learning"] },
+      { title: "Overfitting and underfitting", topic: "overfitting and underfitting", prerequisites: ["train validation and test split"] },
+      { title: "Train, validation and test splits", topic: "train validation and test split", prerequisites: ["training data"] },
+      { title: "Evaluation metrics", topic: "model evaluation and metrics", prerequisites: ["classification problems"] },
       { title: "Everyday AI", topic: "everyday applications of ai" },
     ],
   },
@@ -176,13 +212,13 @@ const CURRICULUM: CurriculumCourse[] = [
     description: "Learning from labelled examples: predicting numbers and labels.",
     level: "intermediate",
     modules: [
-      { title: "Regression", topic: "linear and polynomial regression" },
-      { title: "Classification", topic: "classification problems" },
-      { title: "k-nearest neighbours", topic: "k nearest neighbours algorithm" },
-      { title: "Decision trees", topic: "decision trees" },
-      { title: "Support vector machines", topic: "support vector machines" },
-      { title: "Ensembles and bagging", topic: "ensembles and bagging" },
-      { title: "Gradient boosting", topic: "gradient boosting" },
+      { title: "Regression", topic: "linear and polynomial regression", prerequisites: ["linear algebra for machine learning", "functions and parameters"] },
+      { title: "Classification", topic: "classification problems", prerequisites: ["linear and polynomial regression"] },
+      { title: "k-nearest neighbours", topic: "k nearest neighbours algorithm", prerequisites: ["classification problems"] },
+      { title: "Decision trees", topic: "decision trees", prerequisites: ["classification problems"] },
+      { title: "Support vector machines", topic: "support vector machines", prerequisites: ["linear algebra for machine learning", "classification problems"] },
+      { title: "Ensembles and bagging", topic: "ensembles and bagging", prerequisites: ["decision trees"] },
+      { title: "Gradient boosting", topic: "gradient boosting", prerequisites: ["ensembles and bagging"] },
     ],
   },
   {
@@ -191,13 +227,13 @@ const CURRICULUM: CurriculumCourse[] = [
     description: "Finding structure in data that arrives without any labels.",
     level: "intermediate",
     modules: [
-      { title: "Clustering", topic: "clustering" },
-      { title: "k-means", topic: "k means clustering" },
-      { title: "Hierarchical clustering", topic: "hierarchical clustering" },
-      { title: "Dimensionality reduction", topic: "dimensionality reduction" },
-      { title: "Principal component analysis", topic: "principal component analysis" },
-      { title: "Association rules", topic: "association rules and market basket analysis" },
-      { title: "Anomaly detection", topic: "anomaly detection" },
+      { title: "Clustering", topic: "clustering", prerequisites: ["linear and polynomial regression"] },
+      { title: "k-means", topic: "k means clustering", prerequisites: ["clustering", "linear algebra for machine learning"] },
+      { title: "Hierarchical clustering", topic: "hierarchical clustering", prerequisites: ["clustering"] },
+      { title: "Dimensionality reduction", topic: "dimensionality reduction", prerequisites: ["linear algebra for machine learning"] },
+      { title: "Principal component analysis", topic: "principal component analysis", prerequisites: ["dimensionality reduction", "linear algebra for machine learning"] },
+      { title: "Association rules", topic: "association rules and market basket analysis", prerequisites: ["clustering"] },
+      { title: "Anomaly detection", topic: "anomaly detection", prerequisites: ["classification problems", "clustering"] },
     ],
   },
   {
@@ -209,13 +245,14 @@ const CURRICULUM: CurriculumCourse[] = [
       {
         title: "The agent-environment loop",
         topic: "agents and environments in reinforcement learning",
+        prerequisites: ["functions and parameters", "if statements and conditionals"],
       },
-      { title: "Markov decision processes", topic: "markov decision process" },
-      { title: "Rewards and returns", topic: "rewards and discounted returns" },
-      { title: "Q-learning", topic: "q learning algorithm" },
-      { title: "Exploration vs exploitation", topic: "exploration versus exploitation" },
-      { title: "Policy gradients", topic: "policy gradient methods" },
-      { title: "Applications of RL", topic: "applications of reinforcement learning" },
+      { title: "Markov decision processes", topic: "markov decision process", prerequisites: ["agents and environments in reinforcement learning"] },
+      { title: "Rewards and returns", topic: "rewards and discounted returns", prerequisites: ["markov decision process"] },
+      { title: "Q-learning", topic: "q learning algorithm", prerequisites: ["markov decision process", "rewards and discounted returns"] },
+      { title: "Exploration vs exploitation", topic: "exploration versus exploitation", prerequisites: ["q learning algorithm"] },
+      { title: "Policy gradients", topic: "policy gradient methods", prerequisites: ["q learning algorithm", "gradient descent"] },
+      { title: "Applications of RL", topic: "applications of reinforcement learning", prerequisites: ["policy gradient methods"] },
     ],
   },
 
@@ -227,13 +264,13 @@ const CURRICULUM: CurriculumCourse[] = [
       "How a network learns: neurons, layers, weights, and why training actually works.",
     level: "advanced",
     modules: [
-      { title: "The perceptron", topic: "perceptrons and artificial neurons" },
-      { title: "Layers and activation", topic: "layers and activation functions" },
-      { title: "Weights and bias", topic: "weights and bias in neural networks" },
-      { title: "Forward pass", topic: "forward pass in a neural network" },
-      { title: "Backpropagation", topic: "backpropagation" },
-      { title: "Gradient descent", topic: "gradient descent" },
-      { title: "Training a network", topic: "training a neural network from scratch" },
+      { title: "The perceptron", topic: "perceptrons and artificial neurons", prerequisites: ["linear and polynomial regression"] },
+      { title: "Layers and activation", topic: "layers and activation functions", prerequisites: ["perceptrons and artificial neurons"] },
+      { title: "Weights and bias", topic: "weights and bias in neural networks", prerequisites: ["layers and activation functions"] },
+      { title: "Forward pass", topic: "forward pass in a neural network", prerequisites: ["weights and bias in neural networks", "matrix multiplication for attention"] },
+      { title: "Backpropagation", topic: "backpropagation", prerequisites: ["forward pass in a neural network", "chain rule and partial derivatives", "linear algebra for machine learning"] },
+      { title: "Gradient descent", topic: "gradient descent", prerequisites: ["backpropagation", "calculus and derivatives"] },
+      { title: "Training a network", topic: "training a neural network from scratch", prerequisites: ["gradient descent", "training data"] },
     ],
   },
   {
@@ -243,13 +280,13 @@ const CURRICULUM: CurriculumCourse[] = [
       "The specific network shapes that made vision, speech and generation work.",
     level: "advanced",
     modules: [
-      { title: "Convolutional networks", topic: "convolutional neural networks" },
-      { title: "Pooling and feature maps", topic: "pooling and feature maps" },
-      { title: "Recurrent networks", topic: "recurrent neural networks" },
-      { title: "LSTM and gated memory", topic: "lstm and gated recurrent units" },
-      { title: "Autoencoders", topic: "autoencoders" },
-      { title: "Residual connections", topic: "residual connections and skip layers" },
-      { title: "Generative adversarial networks", topic: "generative adversarial networks" },
+      { title: "Convolutional networks", topic: "convolutional neural networks", prerequisites: ["forward pass in a neural network"] },
+      { title: "Pooling and feature maps", topic: "pooling and feature maps", prerequisites: ["convolutional neural networks"] },
+      { title: "Recurrent networks", topic: "recurrent neural networks", prerequisites: ["forward pass in a neural network"] },
+      { title: "LSTM and gated memory", topic: "lstm and gated recurrent units", prerequisites: ["recurrent neural networks"] },
+      { title: "Autoencoders", topic: "autoencoders", prerequisites: ["forward pass in a neural network"] },
+      { title: "Residual connections", topic: "residual connections and skip layers", prerequisites: ["layers and activation functions"] },
+      { title: "Generative adversarial networks", topic: "generative adversarial networks", prerequisites: ["autoencoders", "training a neural network from scratch"] },
     ],
   },
   {
@@ -276,15 +313,15 @@ const CURRICULUM: CurriculumCourse[] = [
       "Attention, tokens, and how models like this one actually generate text.",
     level: "advanced",
     modules: [
-      { title: "Tokens and vocabulary", topic: "tokens and tokenization" },
-      { title: "The attention mechanism", topic: "self attention mechanism" },
-      { title: "Query, key and value", topic: "query key and value in attention" },
-      { title: "Multi-head attention", topic: "multi head attention" },
-      { title: "Positional encoding", topic: "positional encoding in transformers" },
-      { title: "Pretraining and fine-tuning", topic: "pretraining and fine tuning" },
-      { title: "Autoregressive generation", topic: "autoregressive text generation" },
-      { title: "Context windows", topic: "context window and token limits" },
-      { title: "Hallucination", topic: "llm hallucination and why it happens" },
+      { title: "Tokens and vocabulary", topic: "tokens and tokenization", prerequisites: ["text preprocessing and cleaning"] },
+      { title: "The attention mechanism", topic: "self attention mechanism", prerequisites: ["matrix multiplication for attention", "forward pass in a neural network"] },
+      { title: "Query, key and value", topic: "query key and value in attention", prerequisites: ["self attention mechanism"] },
+      { title: "Multi-head attention", topic: "multi head attention", prerequisites: ["query key and value in attention"] },
+      { title: "Positional encoding", topic: "positional encoding in transformers", prerequisites: ["tokens and tokenization"] },
+      { title: "Pretraining and fine-tuning", topic: "pretraining and fine tuning", prerequisites: ["multi head attention"] },
+      { title: "Autoregressive generation", topic: "autoregressive text generation", prerequisites: ["pretraining and fine tuning"] },
+      { title: "Context windows", topic: "context window and token limits", prerequisites: ["autoregressive text generation"] },
+      { title: "Hallucination", topic: "llm hallucination and why it happens", prerequisites: ["autoregressive text generation"] },
     ],
   },
   {
@@ -293,13 +330,13 @@ const CURRICULUM: CurriculumCourse[] = [
     description: "How machines make new things — images, text, audio and video.",
     level: "advanced",
     modules: [
-      { title: "What is generative AI", topic: "generative ai" },
-      { title: "Variational autoencoders", topic: "variational autoencoders" },
-      { title: "Adversarial training", topic: "adversarial training in gans" },
-      { title: "Diffusion models", topic: "diffusion models" },
-      { title: "Denoising in diffusion", topic: "denoising steps in diffusion models" },
-      { title: "Text-to-image models", topic: "text to image generation" },
-      { title: "Video generation", topic: "ai video generation" },
+      { title: "What is generative AI", topic: "generative ai", prerequisites: ["machine learning models"] },
+      { title: "Variational autoencoders", topic: "variational autoencoders", prerequisites: ["autoencoders"] },
+      { title: "Adversarial training", topic: "adversarial training in gans", prerequisites: ["generative adversarial networks"] },
+      { title: "Diffusion models", topic: "diffusion models", prerequisites: ["forward pass in a neural network"] },
+      { title: "Denoising in diffusion", topic: "denoising steps in diffusion models", prerequisites: ["diffusion models"] },
+      { title: "Text-to-image models", topic: "text to image generation", prerequisites: ["denoising steps in diffusion models", "tokens and tokenization"] },
+      { title: "Video generation", topic: "ai video generation", prerequisites: ["text to image generation", "convolutional neural networks"] },
     ],
   },
   {
@@ -308,13 +345,13 @@ const CURRICULUM: CurriculumCourse[] = [
     description: "Getting better answers from a model, and giving it your own data.",
     level: "intermediate",
     modules: [
-      { title: "Anatomy of a prompt", topic: "prompt engineering basics" },
-      { title: "Zero-shot vs few-shot", topic: "zero shot and few shot prompting" },
-      { title: "Chain of thought", topic: "chain of thought prompting" },
-      { title: "Embeddings", topic: "vector embeddings and similarity" },
-      { title: "Retrieval augmented generation", topic: "retrieval augmented generation rag" },
-      { title: "Vector databases", topic: "vector databases and indexing" },
-      { title: "Building an AI assistant", topic: "building an ai assistant" },
+      { title: "Anatomy of a prompt", topic: "prompt engineering basics", prerequisites: ["tokens and tokenization"] },
+      { title: "Zero-shot vs few-shot", topic: "zero shot and few shot prompting", prerequisites: ["prompt engineering basics"] },
+      { title: "Chain of thought", topic: "chain of thought prompting", prerequisites: ["prompt engineering basics"] },
+      { title: "Embeddings", topic: "vector embeddings and similarity", prerequisites: ["linear algebra for machine learning"] },
+      { title: "Retrieval augmented generation", topic: "retrieval augmented generation rag", prerequisites: ["vector embeddings and similarity", "tokens and tokenization"] },
+      { title: "Vector databases", topic: "vector databases and indexing", prerequisites: ["vector embeddings and similarity"] },
+      { title: "Building an AI assistant", topic: "building an ai assistant", prerequisites: ["retrieval augmented generation rag"] },
     ],
   },
 

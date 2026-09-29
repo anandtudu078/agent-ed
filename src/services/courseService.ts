@@ -1,6 +1,38 @@
 import { Course, CourseDocument, CourseModule } from "../models/Course";
 import { EnrolledCourse, Progress } from "../models/Progress";
 import { Session } from "../models/Session";
+import CURRICULUM from "../data/curriculum";
+
+/**
+ * topic (lowercased) -> the topics that must come first.
+ *
+ * Built once at module load from the authored curriculum. Modules with no
+ * prerequisites are simply absent from the map, which is what makes a missing
+ * entry mean "we haven't curated this" rather than "this has no prerequisites".
+ */
+export const PREREQUISITE_GRAPH: ReadonlyMap<string, readonly string[]> = (() => {
+  const graph = new Map<string, readonly string[]>();
+  for (const course of CURRICULUM) {
+    for (const module of course.modules) {
+      if (!module.prerequisites?.length) continue;
+      graph.set(normalizeTopic(module.topic), module.prerequisites.map(normalizeTopic));
+    }
+  }
+  return graph;
+})();
+
+/** How many modules in the catalog declare prerequisites at all. */
+export function prerequisiteCoverage(): { withPrereqs: number; total: number } {
+  let withPrereqs = 0;
+  let total = 0;
+  for (const course of CURRICULUM) {
+    for (const module of course.modules) {
+      total += 1;
+      if (module.prerequisites?.length) withPrereqs += 1;
+    }
+  }
+  return { withPrereqs, total };
+}
 
 /**
  * Below this length a topic is too short to safely test with `includes`:
