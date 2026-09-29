@@ -183,6 +183,73 @@ try {
     ((await modeBtn.textContent()) ?? "").trim().toLowerCase().includes("socratic"),
   );
 
+  // 7b-3. Topic diagrams: the owl draws a vetted diagram for the topic instead
+  // of the generic state sketch. Driven through the dev hook so this is covered
+  // whether or not the live tutor happened to pick a diagram this run.
+  await page.evaluate(() =>
+    window.__agentedTest.setVisual({
+      type: "cycle",
+      title: "How a loop repeats",
+      steps: ["Start", "Check condition", "Do the work", "Loop back"],
+    }),
+  );
+  await page.waitForTimeout(250);
+  const diagramBoard = await page.locator("#owl-stage .owl-board-art").innerHTML();
+  check(
+    "owl draws a topic diagram instead of the generic sketch",
+    diagramBoard.includes("Loop back") && diagramBoard.includes("Check condition"),
+  );
+  check(
+    "diagram is announced to assistive tech",
+    diagramBoard.includes("<title>") && diagramBoard.includes('role="img"'),
+  );
+  // The highlight must move, so the board tracks what the owl is saying.
+  await page.evaluate(() => window.__agentedTest.setVisualStep(2));
+  await page.waitForTimeout(250);
+  const highlighted = await page.locator("#owl-stage .owl-board-art").innerHTML();
+  check("diagram highlight moves as the owl explains", highlighted !== diagramBoard);
+  // Model-supplied text must never reach the DOM as markup.
+  await page.evaluate(() =>
+    window.__agentedTest.setVisual({
+      type: "steps",
+      title: "<script>alert(1)</script>",
+      steps: ["<img src=x onerror=alert(2)>", "safe step"],
+    }),
+  );
+  await page.waitForTimeout(250);
+  // Assert the actual security property via the DOM rather than string matching
+  // the serialised markup: the payload must appear as escaped *text*, and no
+  // real element may be created from it. A naive `.includes("onerror=")` check
+  // would fail on the escaped text itself, which is harmless.
+  const injection = await page.evaluate(() => {
+    const board = document.querySelector("#owl-stage .owl-board-art");
+    if (!board) return null;
+    return {
+      escapedFormPresent: board.innerHTML.includes("&lt;script&gt;"),
+      scriptElements: board.querySelectorAll("script").length,
+      imgElements: board.querySelectorAll("img").length,
+      payloadVisibleAsText: (board.textContent ?? "").includes("<script>alert(1)</script>"),
+    };
+  });
+  check(
+    "diagram labels are escaped, not rendered as markup",
+    injection !== null &&
+      injection.escapedFormPresent &&
+      injection.scriptElements === 0 &&
+      injection.imgElements === 0 &&
+      injection.payloadVisibleAsText,
+    injection === null
+      ? "board not found"
+      : `scripts=${injection.scriptElements} imgs=${injection.imgElements} escaped=${injection.escapedFormPresent}`,
+  );
+  await page.evaluate(() => window.__agentedTest.setVisual(null));
+  await page.waitForTimeout(200);
+  const clearedBoard = await page.locator("#owl-stage .owl-board-art").innerHTML();
+  check(
+    "clearing the diagram falls back to the state sketch",
+    clearedBoard.includes("<svg") && !clearedBoard.includes("Loop back"),
+  );
+
   // 7c. Voice mode TTS: run a second page (same session) with speechSynthesis
   // stubbed, then verify the owl TALKS — speaks the guidance and stops speech
   // on voice-off.
