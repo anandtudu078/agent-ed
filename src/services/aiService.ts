@@ -153,10 +153,58 @@ function loadGeminiCredentials(): GeminiCredential[] {
   return credentials;
 }
 
-export async function generateSocraticResponse(
+/**
+ * How the tutor should answer.
+ *
+ * `socratic` is the original mode and the product's default: ask, never tell.
+ * `teach` is the explicit "just tell me" escape hatch — a student who asks to
+ * be taught deserves a straight explanation, and withholding one forever is
+ * frustrating rather than Socratic. It is opt-in, never inferred.
+ */
+export type TutorMode = "socratic" | "teach";
+
+const SOCRATIC_SYSTEM_PROMPT =
+  "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
+  "with clear, encouraging questions. Never give a direct answer, complete a " +
+  "solution, or reveal the final result. Ask one focused guiding question at a time. " +
+  "Use the student analysis to target their misunderstanding. The earlier " +
+  "conversation is your memory: build on it, never ask the same question twice, " +
+  "and notice when the student is repeating a misconception.";
+
+const TEACH_SYSTEM_PROMPT =
+  "You are AgentEd, a patient expert teacher explaining a concept clearly. " +
+  "The student has explicitly asked to be TOLD, so explain it directly and " +
+  "concretely. Structure your reply like a good teacher speaking aloud: " +
+  "open with a one-sentence plain-English definition in the student's terms; " +
+  "then give a concrete everyday analogy; then walk through one small worked " +
+  "example step by step; then name the one rule or caveat most people get wrong. " +
+  "Keep it to a few short paragraphs and use plain words over jargon. " +
+  "Use the student analysis to target their specific misunderstanding. " +
+  "The earlier conversation is your memory: do not re-explain what they " +
+  "already understand, and build on what you have already covered. " +
+  "Finish with ONE quick check-for-understanding question so they can tell " +
+  "whether it landed.";
+
+/** Instructional framing for a mode. Exported so the client can label the UI. */
+export const MODE_HINTS: Record<TutorMode, string> = {
+  socratic: "I'll ask you questions and never give the answer.",
+  teach: "Teaching mode — I'll explain it directly.",
+};
+
+/**
+ * The prompt for a mode. Exported so the choice itself is unit-testable: the
+ * entire behaviour of teach mode is this string, and it should be verifiable
+ * without spending a Gemini call.
+ */
+export function systemPromptFor(mode: TutorMode): string {
+  return mode === "teach" ? TEACH_SYSTEM_PROMPT : SOCRATIC_SYSTEM_PROMPT;
+}
+
+export async function generateTutorResponse(
   analysis: StudentAnalysis,
   studentQuery: string,
   priorMessages: ConversationMessage[] = [],
+  mode: TutorMode = "socratic",
 ): Promise<string> {
   const history = selectHistoryWindow(priorMessages);
   const transcript = renderTranscript(history);
@@ -190,13 +238,7 @@ export async function generateSocraticResponse(
             },
           ],
           config: {
-            systemInstruction:
-              "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
-              "with clear, encouraging questions. Never give a direct answer, complete a " +
-              "solution, or reveal the final result. Ask one focused guiding question at a time. " +
-              "Use the student analysis to target their misunderstanding. The earlier " +
-              "conversation is your memory: build on it, never ask the same question twice, " +
-              "and notice when the student is repeating a misconception.",
+            systemInstruction: systemPromptFor(mode),
           },
         });
 
