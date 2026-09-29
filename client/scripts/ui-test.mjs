@@ -549,6 +549,18 @@ try {
     "weak points + AI feedback cards render",
     (await page.locator(".dash-weakpoints-body").isVisible()) && (await page.locator(".dash-feedback-body").isVisible()),
   );
+  // Spaced repetition: taking a check must leave a review card behind, so the
+  // queue is never empty once a student has been assessed at all.
+  check(
+    "review today card renders",
+    await page.locator(".dash-reviews-body").isVisible(),
+  );
+  const reviewText = ((await page.locator(".dash-reviews-body").textContent()) ?? "").trim();
+  check(
+    "the review card explains itself instead of showing NaN",
+    reviewText.length > 0 && !reviewText.includes("NaN") && !reviewText.includes("Loading…"),
+    reviewText.slice(0, 60),
+  );
   check("AI evaluation quick action present", await page.locator(".dash-start-test").isVisible());
 
   // The quick action used to dispatch an event nobody listened to, so the

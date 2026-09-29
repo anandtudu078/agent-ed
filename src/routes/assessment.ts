@@ -11,6 +11,7 @@ import {
 } from "../middleware/auth";
 import { chatRateLimit } from "../middleware/rateLimit";
 import { aiSpendLimit } from "../middleware/aiSpendLimit";
+import { upsertReviewCard } from "../services/progressService";
 import {
   gradeAssessmentAnswer,
   generateAssessmentQuestion,
@@ -217,11 +218,19 @@ router.post("/submit", requireAuth, chatRateLimit, aiSpendLimit, async (request:
       attempt.topic,
       clampMastery(grade.masteryEstimate),
     );
+    // ...and it is the only real signal we have for *when* to bring the topic
+    // back, so it also drives the review schedule.
+    const reviewCards = upsertReviewCard(
+      existing?.reviewCards ?? [],
+      attempt.topic,
+      grade.score,
+      now,
+    );
     const learningSpeed = computeLearningSpeed(topicsVisited, now);
 
     await Progress.findOneAndUpdate(
       { studentId },
-      { $set: { testHistory: history, weakPoints, learningSpeed } },
+      { $set: { testHistory: history, weakPoints, reviewCards, learningSpeed } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 

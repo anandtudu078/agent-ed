@@ -8,6 +8,7 @@ import {
   requireAuth,
 } from "../middleware/auth";
 import { refreshEnrollments } from "../services/courseService";
+import { dueCards, dueLabel } from "../services/progressService";
 import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
 
 const router = Router();
@@ -147,7 +148,18 @@ router.get(
 
       const courses = await Course.find().sort({ createdAt: 1 }).lean();
 
-      response.json({ progress, courses });
+      // Derived on read rather than stored, so "due" is always true at the
+      // moment the student looks. A persisted "isDue" flag would be stale the
+      // instant the clock passes midnight, which is exactly the bug that makes
+      // review queues quietly stop working.
+      const dueReviews = dueCards(progress.reviewCards ?? []).map((card) => ({
+        topic: card.topic,
+        strength: card.strength,
+        dueAt: card.dueAt,
+        label: dueLabel(card),
+      }));
+
+      response.json({ progress, courses, dueReviews });
     } catch (error) {
       console.error("Failed to load dashboard.", error);
       response.status(500).json({ error: "Unable to load dashboard." });

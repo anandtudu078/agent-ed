@@ -36,6 +36,8 @@ export interface ProgressInfo {
 export interface DashboardData {
   progress: ProgressInfo;
   courses: CourseInfo[];
+  /** Concepts whose review has come round. Derived server-side on read. */
+  dueReviews: Array<{ topic: string; strength: number; dueAt: string; label: string }>;
 }
 
 const LEVEL_STYLES: Record<CourseInfo["level"], string> = {
@@ -112,6 +114,14 @@ export function createDashboard(
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Last check</p>
             <p class="dash-last-score mt-1 text-sm font-bold leading-tight text-slate-200">…</p>
           </div>
+        </div>
+
+        <!-- Spaced repetition: what has come round for review today. This is
+             the whole point of the schedule — a list of gaps that never comes
+             back is a diagnosis, not a habit. -->
+        <div class="dash-reviews rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Review today</h2>
+          <p class="dash-reviews-body mt-3 text-sm text-slate-400">Loading…</p>
         </div>
 
         <!-- Focus areas: only the few that matter, in plain words -->
@@ -213,6 +223,7 @@ export function createDashboard(
   /** The current recommendation, so the button knows what it is proposing. */
   let nextStep: NextStep | null = null;
   const weakEl = host.querySelector<HTMLElement>(".dash-weakpoints-body")!;
+  const reviewsEl = host.querySelector<HTMLElement>(".dash-reviews-body")!;
   const feedbackEl = host.querySelector<HTMLElement>(".dash-feedback-body")!;
   const coursesEl = host.querySelector<HTMLElement>(".dash-courses")!;
   const searchEl = host.querySelector<HTMLInputElement>(".dash-search")!;
@@ -642,6 +653,37 @@ export function createDashboard(
     nextDetailEl.textContent = next.detail;
     startTestBtn.textContent = next.action.label;
     nextStep = next;
+
+    // --- Review today: the schedule's reason to exist ---
+    // Capped at 3 for the same reason focus areas are: the point is to start one,
+    // not to feel behind. Showing twenty due concepts is how a review queue gets
+    // abandoned on day two.
+    const due = (data.dueReviews ?? []).slice(0, 3);
+    if (due.length) {
+      reviewsEl.innerHTML = `
+        <p class="text-sm text-slate-400">
+          ${due.length === 1 ? "1 concept is" : `${due.length} concepts are`} ready to review.
+          ${(data.dueReviews?.length ?? 0) > 3 ? `<span class="text-slate-500">+${(data.dueReviews?.length ?? 0) - 3} more</span>` : ""}
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          ${due
+            .map(
+              (card) => `
+            <button
+              type="button"
+              class="dash-review inline-block rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:border-indigo-400/60 hover:brightness-125"
+              data-test-topic="${esc(card.topic)}"
+              title="${esc(card.label)} — practise ${esc(card.topic)}"
+            >${esc(card.topic)} · ${esc(card.label)}</button>`,
+            )
+            .join("")}
+        </div>`;
+    } else {
+      reviewsEl.textContent =
+        data.progress.testHistory.length === 0
+          ? "Take a check and anything you need to revisit will show up here."
+          : "Nothing due. Come back when your next review is ready.";
+    }
 
     // --- Focus areas: top 3 only, in words ---
     // Capping at 3 is the point. The model keeps up to 25, and showing 25 grey
