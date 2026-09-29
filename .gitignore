@@ -2,3 +2,9 @@ node_modules/
 dist/
 .env
 .idea/
+
+# Local verification artifacts (never part of the app)
+.srv.out
+.srv.err
+client/client/
+*.ui-*.png

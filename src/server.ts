@@ -13,6 +13,7 @@ import {
 } from "./services/aiService";
 import { recordLearningSignal } from "./services/progressService";
 import authRouter from "./routes/auth";
+import assessmentRouter from "./routes/assessment";
 import dashboardRouter from "./routes/dashboard";
 import {
   AuthenticatedRequest,
@@ -49,6 +50,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRouter);
+app.use("/api/assessment", assessmentRouter);
 app.use("/api/dashboard", dashboardRouter);
 
 interface StudentMessagePayload {

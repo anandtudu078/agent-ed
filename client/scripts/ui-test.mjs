@@ -231,6 +231,70 @@ try {
     (await page.locator(".dash-weakpoints-body").isVisible()) && (await page.locator(".dash-feedback-body").isVisible()),
   );
   check("AI evaluation quick action present", await page.locator(".dash-start-test").isVisible());
+
+  // The quick action used to dispatch an event nobody listened to, so the
+  // button did nothing. Drive it for real: question -> answer -> graded result.
+  check("evaluation panel hidden before starting", await page.locator("#dash-test-panel").isHidden());
+  await page.locator(".dash-start-test").click();
+  await page.locator("#dash-test-panel").waitFor({ state: "visible" });
+  await page.locator(".dash-test-question").filter({ hasText: /\S/ }).waitFor({ timeout: 45000 });
+  const assessmentQuestion = ((await page.locator(".dash-test-question").textContent()) ?? "").trim();
+  check(
+    "starting a test returns a diagnostic question",
+    assessmentQuestion.length > 20,
+    assessmentQuestion.slice(0, 70),
+  );
+  check(
+    "submit becomes available once a question is loaded",
+    await page.locator(".dash-test-submit").isEnabled(),
+  );
+  await page.locator(".dash-test-answer").fill(
+    "A source is credible if it was published in a reputable journal, went through peer review, cites evidence, and other teams have replicated it.",
+  );
+  await page.locator(".dash-test-submit").click();
+  await page.locator(".dash-test-result").waitFor({ state: "visible", timeout: 45000 });
+  const resultText = ((await page.locator(".dash-test-result").textContent()) ?? "").trim();
+  check(
+    "submitting an answer yields a score + feedback",
+    /%/.test(resultText) && resultText.length > 40,
+    resultText.slice(0, 70),
+  );
+  check(
+    "AI test feedback card reflects the new result",
+    ((await page.locator(".dash-feedback-body").textContent()) ?? "").trim().length > 20,
+  );
+  const weakChipCount = await page.locator(".dash-weakpoint").count();
+  const weakBody = ((await page.locator(".dash-weakpoints-body").textContent()) ?? "").trim();
+  // A good score resolves a weak point, so "no chip" is a legitimate outcome
+  // here — what must always hold is that the card agrees with itself.
+  check(
+    "weak points card is consistent after a graded test",
+    weakChipCount > 0 || weakBody.length > 0,
+    `${weakChipCount} chip(s)`,
+  );
+  if (weakChipCount > 0) {
+    // Chips are shortcuts into a test for that exact topic.
+    await page.locator(".dash-weakpoint").first().click();
+    await page
+      .locator(".dash-test-question")
+      .filter({ hasText: /\S/ })
+      .waitFor({ timeout: 45000 });
+    check(
+      "clicking a weak point starts a test on that topic",
+      ((await page.locator(".dash-test-topic").textContent()) ?? "").length > 0,
+      ((await page.locator(".dash-test-topic").textContent()) ?? "").trim(),
+    );
+    await page.locator(".dash-test-close").click();
+    await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
+  }
+  check(
+    "graded result offers a follow-up with the tutor",
+    await page.locator(".dash-test-discuss").isVisible(),
+  );
+  await page.locator(".dash-test-close").click();
+  await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
+  check("closing the panel hides it again", true);
+
   await page.locator(".dash-search").fill("machine");
   await page.waitForTimeout(150);
   const visibleCourses = await page.locator(".dash-courses .dash-course").count();

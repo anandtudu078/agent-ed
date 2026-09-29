@@ -293,6 +293,23 @@ function setDashboardVisible(visible: boolean): void {
           studentMessage: prompt,
         });
       },
+      (topic: string) => {
+        // "Work on this with the tutor" → reopen the chat on the flagged topic.
+        setDashboardVisible(false);
+        if (!socket?.connected) return;
+        const prompt = `We just tested me on ${topic} and it was my weakest area. Can you walk me through it step by step?`;
+        appendMessage("student", prompt);
+        setBusy(true);
+        mascot.clearMessage();
+        stopOwlSpeech();
+        resumeMicAfterSpeech();
+        setAiStatus("thinking");
+        socket.emit("student-message", {
+          studentId: getStudentId(),
+          activeTopic: topic.slice(0, 60),
+          studentMessage: prompt,
+        });
+      },
     );
   }
 }
