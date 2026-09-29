@@ -12,7 +12,10 @@ import {
   generateSocraticResponse,
 } from "./services/aiService";
 import { recordLearningSignal } from "./services/progressService";
+import { refreshEnrollments } from "./services/courseService";
 import authRouter from "./routes/auth";
+import assessmentRouter from "./routes/assessment";
+import coursesRouter from "./routes/courses";
 import dashboardRouter from "./routes/dashboard";
 import {
   AuthenticatedRequest,
@@ -49,6 +52,8 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRouter);
+app.use("/api/assessment", assessmentRouter);
+app.use("/api/courses", coursesRouter);
 app.use("/api/dashboard", dashboardRouter);
 
 interface StudentMessagePayload {
@@ -190,6 +195,14 @@ async function processStudentMessage(
     console.error("Failed to record learning signal.", error);
   }
 
+  // A new topic may have completed a module in one of the student's courses.
+  // Same best-effort rule: course progress must not block the reply.
+  try {
+    await refreshEnrollments(studentId);
+  } catch (error) {
+    console.error("Failed to refresh course enrollments.", error);
+  }
+
   return {
     response,
     analysis: JSON.stringify(analysis),
@@ -301,10 +314,6 @@ io.on("connection", (socket) => {
       }
     },
   );
-
-  socket.on("audio-chunk", (chunk: Buffer | ArrayBuffer | Uint8Array) => {
-    socket.broadcast.emit("audio-chunk", chunk);
-  });
 
   socket.on("disconnect", (reason) => {
     console.log(`Socket disconnected: ${socket.id} (${reason})`);
