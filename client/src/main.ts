@@ -281,6 +281,11 @@ const dashboardToggleEl = document.querySelector<HTMLButtonElement>("#dashboard-
 const dashboardViewEl = document.querySelector<HTMLElement>("#dashboard-view")!;
 const dashboardHostEl = document.querySelector<HTMLDivElement>("#dashboard-host")!;
 const owlStageEl = document.querySelector<HTMLElement>("#owl-stage")!;
+// The chat wrapper (not just #chat-container) must be hidden with the chat:
+// it is a flex-1 sibling of #dashboard-view, so leaving it visible while
+// empty makes it claim half the screen and the dashboard renders squashed.
+const chatWrapperEl = document.querySelector<HTMLElement>("#chat-wrapper")!;
+const controlBarEl = document.querySelector<HTMLElement>("#control-bar")!;
 
 // ---------------------------------------------------------------------------
 // Password affordances (reveal toggle + strength meter)
@@ -365,6 +370,8 @@ function setDashboardVisible(visible: boolean): void {
   dashboardViewEl.classList.toggle("hidden", !visible);
   owlStageEl.classList.toggle("hidden", visible);
   chatContainerEl.classList.toggle("hidden", visible);
+  chatWrapperEl.classList.toggle("hidden", visible);
+  controlBarEl.classList.toggle("hidden", visible);
   dashboardToggleEl.setAttribute("aria-pressed", String(visible));
   dashboardToggleEl.classList.toggle("border-indigo-500/60", visible);
   dashboardToggleEl.classList.toggle("text-indigo-300", visible);
