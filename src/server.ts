@@ -35,6 +35,7 @@ import { aiSpendLimit, pruneOldUsage } from "./middleware/aiSpendLimit";
 import { Progress } from "./models/Progress";
 import {
   buildLearnerProfile,
+  difficultyForTopic,
   renderLearnerBriefing,
 } from "./services/progressService";
 
@@ -207,7 +208,10 @@ async function processStudentMessage(
     const progress = await Progress.findOne({ studentId })
       .select({ weakPoints: 1, testHistory: 1, reviewCards: 1 })
       .lean();
-    learnerBriefing = renderLearnerBriefing(buildLearnerProfile(progress));
+    // The client's current topic, not the model's: analysis.topic is derived
+    // further down, after the tutor has already been called.
+    const band = difficultyForTopic(progress, payload.activeTopic);
+    learnerBriefing = renderLearnerBriefing(buildLearnerProfile(progress), band);
   } catch (error) {
     console.error("Failed to build the learner profile.", error);
   }

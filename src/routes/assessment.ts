@@ -11,7 +11,11 @@ import {
 } from "../middleware/auth";
 import { chatRateLimit } from "../middleware/rateLimit";
 import { aiSpendLimit } from "../middleware/aiSpendLimit";
-import { upsertReviewCard } from "../services/progressService";
+import {
+  difficultyForTopic,
+  upsertReviewCard,
+  type DifficultyBand,
+} from "../services/progressService";
 import {
   gradeAssessmentAnswer,
   generateAssessmentQuestion,
@@ -79,16 +83,40 @@ function parseAnswer(body: unknown): string {
 async function chooseTopic(
   studentId: string,
   requested: string,
-): Promise<{ topic: string; misconceptions: string[] }> {
-  if (requested) return { topic: requested, misconceptions: [] };
+): Promise<{ topic: string; misconceptions: string[]; difficulty: DifficultyBand }> {
+  // Loaded up front regardless of whether a topic was requested: the band and
+  // the misconception targeting both need it, and skipping the read on the
+  // "topic was specified" path is how the difficulty quietly stayed "standard"
+  // for every explicit test.
+  const progress = await Progress.findOne({ studentId })
+    .select({ weakPoints: 1, reviewCards: 1, testHistory: 1 })
+    .lean();
 
-  const progress = await Progress.findOne({ studentId }).select({ weakPoints: 1 }).lean();
-  const weakest = progress?.weakPoints?.[0];
-  if (weakest?.topic) return { topic: weakest.topic, misconceptions: [] };
+  let topic = requested;
+  if (!topic) {
+    const weakest = progress?.weakPoints?.[0];
+    if (weakest?.topic) {
+      topic = weakest.topic;
+    } else {
+      const session = await Session.findOne({ studentId }).select({ activeTopic: 1 }).lean();
+      topic = session?.activeTopic?.trim() || "Critical thinking";
+    }
+  }
 
-  const session = await Session.findOne({ studentId }).select({ activeTopic: 1 }).lean();
-  const active = session?.activeTopic?.trim();
-  return { topic: active || "Critical thinking", misconceptions: [] };
+  // The misconceptions the grader already wrote for this topic, newest first.
+  // They used to be discarded on the way out; now they also steer the *next*
+  // question, which is where they were always most useful.
+  const misconceptions = (progress?.testHistory ?? [])
+    .filter((evaluation) => evaluation.topic?.trim().toLowerCase() === topic.toLowerCase())
+    .reverse()
+    .flatMap((evaluation) => evaluation.misconceptions ?? [])
+    .filter(Boolean);
+
+  return {
+    topic,
+    misconceptions: misconceptions.slice(0, 5),
+    difficulty: difficultyForTopic(progress, topic),
+  };
 }
 
 /**
@@ -99,7 +127,7 @@ async function chooseTopic(
 router.post("/start", requireAuth, chatRateLimit, aiSpendLimit, async (request: Request, response: Response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
-    const { topic, misconceptions } = await chooseTopic(
+    const { topic, misconceptions, difficulty } = await chooseTopic(
       authUser.username,
       parseTopic(request.body),
     );
@@ -110,6 +138,7 @@ router.post("/start", requireAuth, chatRateLimit, aiSpendLimit, async (request: 
       // Read from the token, never the body: a client must not be able to
       // request a Hindi question and have it graded against English criteria.
       authUser.language,
+      difficulty,
     );
     const attemptToken = signAttempt({
       studentId: authUser.username,

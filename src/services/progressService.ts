@@ -143,6 +143,103 @@ export function buildLearnerProfile(
 }
 
 /**
+ * How hard the next question should be for a given topic.
+ *
+ * Three bands, not a 1-10 scale. A text generator cannot reliably produce a
+ * graded difficulty ramp, and a score of "difficulty 7" tells the model nothing
+ * it can act on. What it *can* act on is a shape: one small concrete step, a
+ * normal explanatory question, or a second-step edge case.
+ */
+export type DifficultyBand = "remedial" | "standard" | "stretch";
+
+/** Below this, the student is not holding this at all. */
+const REMEDIAL_BELOW = 40;
+/** At or above this, and with a review behind it, they can take more on. */
+const STRETCH_AT = 75;
+
+/**
+ * Pick the band for a topic, from what we actually know about it.
+ *
+ * Defaults to "standard" when we have no signal at all. Starting a brand-new
+ * student on remedial questions is the tempting choice and the wrong one: it
+ * wastes the one chance to find out what they can do, and it reads as being
+ * talked down to before anyone has looked.
+ */
+export function difficultyForTopic(
+  progress: {
+    weakPoints?: WeakPoint[];
+    reviewCards?: ReviewCard[];
+  } | null | undefined,
+  topic: string,
+): DifficultyBand {
+  const key = topic.trim().toLowerCase();
+  if (!key) return "standard";
+
+  const point = (progress?.weakPoints ?? []).find(
+    (p) => p.topic.trim().toLowerCase() === key,
+  );
+  const card = (progress?.reviewCards ?? []).find(
+    (c) => c.topic.trim().toLowerCase() === key,
+  );
+
+  // Never seen it: no evidence either way.
+  if (!point && !card) return "standard";
+
+  const strength = point?.strength ?? card?.strength ?? 50;
+  if (strength < REMEDIAL_BELOW) return "remedial";
+
+  // Stretch needs proof, not one good answer: a solid score *and* at least one
+  // successful review, so we know it held rather than landed once.
+  if (strength >= STRETCH_AT && (card?.reps ?? 0) >= 1) return "stretch";
+
+  return "standard";
+}
+
+/**
+ * Turn a band into instructions the question generator can actually use.
+ *
+ * Note what is deliberately absent: any suggestion that the student be told
+ * they received an easier question. Being handed remedial work is only useful if
+ * the student believes it was a normal question — the moment it is labelled, it
+ * becomes a verdict on them instead of a decision about the question.
+ */
+export function difficultyClause(band: DifficultyBand): string {
+  switch (band) {
+    case "remedial":
+      return (
+        "This student is struggling with this topic. Ask ONE small, concrete " +
+        "question that can be answered in a single step. Build a worked example " +
+        "into the question itself. Do not assume any steps they have not shown. " +
+        "Keep it under 30 words. Do not mention that the question was made easier."
+      );
+    case "stretch":
+      return (
+        "This student already has this topic. Ask something that needs a second " +
+        "step of reasoning: a 'what would change if', an edge case, or a situation " +
+        "where the standard approach breaks down. Do NOT ask them to define the " +
+        "term or recite a property. Keep it under 40 words."
+      );
+    default:
+      return (
+        "Ask a normal question that requires explaining the idea, not recalling a " +
+        "definition. Keep it under 40 words."
+      );
+  }
+}
+
+/** Short human label, for the dashboard. */
+export function difficultyLabel(band: DifficultyBand): string {
+  switch (band) {
+    case "remedial":
+      return "gentle start";
+    case "stretch":
+      return "pushing you";
+    default:
+      return "right level";
+  }
+}
+
+/**
  * Render the profile as a short briefing for the tutor's system prompt.
  *
  * Returns "" for a student we know nothing about yet. An empty briefing is
@@ -154,7 +251,10 @@ export function buildLearnerProfile(
  * than it reads a record, and a long JSON blob of telemetry is exactly the
  * thing that gets a model to behave like a database.
  */
-export function renderLearnerBriefing(profile: LearnerProfile): string {
+export function renderLearnerBriefing(
+  profile: LearnerProfile,
+  band: DifficultyBand = "standard",
+): string {
   if (!profile.hasAssessmentSignal) return "";
 
   const lines: string[] = [];
@@ -174,6 +274,15 @@ export function renderLearnerBriefing(profile: LearnerProfile): string {
   if (profile.dueTopics.length) {
     lines.push(
       `- These came up in review and are due again: ${profile.dueTopics.join(", ")}.`,
+    );
+  }
+  if (band === "remedial") {
+    lines.push(
+      "- On this topic they are not holding it yet. Keep each step to one move, use a concrete example before any formula, and check the last step landed before moving on. Never say the difficulty was lowered.",
+    );
+  } else if (band === "stretch") {
+    lines.push(
+      "- They have this topic. Do not simply re-explain it: bring in an edge case, a failure mode, or a 'what would change if', and let them do the reasoning.",
     );
   }
   if (profile.overallStruggling) {

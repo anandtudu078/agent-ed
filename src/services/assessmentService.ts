@@ -1,5 +1,6 @@
 import { completeJson } from "./groqClient";
 import type { TeachLanguage } from "./aiService";
+import { difficultyClause, type DifficultyBand } from "./progressService";
 
 export interface AssessmentQuestion {
   topic: string;
@@ -84,6 +85,11 @@ export async function generateAssessmentQuestion(
   topic: string,
   misconceptions: string[] = [],
   language: TeachLanguage = "en",
+  /**
+   * How hard to make this one. Drives the shape of the question, not a number
+   * the model has to interpret — see difficultyClause.
+   */
+  difficulty: DifficultyBand = "standard",
 ): Promise<AssessmentQuestion> {
   const focus = misconceptions.length
     ? `Target these known sticking points: ${misconceptions
@@ -96,8 +102,11 @@ export async function generateAssessmentQuestion(
       "reveal whether the student truly understands the concept, so avoid yes/no " +
       "questions, avoid asking them to recall a definition verbatim, and avoid " +
       "multiple choice. Ask for one thing: an explanation, a prediction, a worked " +
-      "step, or a 'what would change if' scenario. Keep it under 40 words. " +
-      "Return only JSON: {\"topic\": string, \"question\": string}." +
+      "step, or a 'what would change if' scenario. " +
+      // Difficulty is stated separately and last so it reads as a correction to
+      // the generic brief above rather than a competing instruction.
+      difficultyClause(difficulty) +
+      " Return only JSON: {\"topic\": string, \"question\": string}." +
       QUESTION_LANGUAGE[language],
     `Topic: ${topic}\n${focus}\n\nWrite one diagnostic question about this topic.`,
     { temperature: 0.4 },
