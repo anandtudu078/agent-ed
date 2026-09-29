@@ -38,6 +38,12 @@ export interface DashboardData {
   courses: CourseInfo[];
   /** Concepts whose review has come round. Derived server-side on read. */
   dueReviews: Array<{ topic: string; strength: number; dueAt: string; label: string }>;
+  /**
+   * The prerequisite underneath the student's weakest topic, if the curriculum
+   * knows of one. Null when the gap isn't rooted in a known prerequisite, or
+   * when there is nothing to route.
+   */
+  focusRootCause: string | null;
 }
 
 const LEVEL_STYLES: Record<CourseInfo["level"], string> = {
@@ -499,13 +505,22 @@ export function createDashboard(
 
     const weakest = weak[0];
     if (weakest) {
+      // A prerequisite underneath this topic is the more useful thing to say —
+      // and the more useful thing to test. "You are weak at transformers" is a
+      // verdict the student cannot act on; "start with matrix multiplication,
+      // which transformers sits on top of" is a Tuesday's work.
+      const rootCause = data?.focusRootCause;
+      const target = rootCause ?? weakest.topic;
       return {
-        headline: `Work on ${weakest.topic}`,
-        detail: `This is your weakest area right now — ${describeStrength(weakest.strength).toLowerCase()}. A quick check will tell you if it's improving.`,
+        headline: rootCause ? `Start with ${rootCause}` : `Work on ${weakest.topic}`,
+        detail: rootCause
+          ? `You are weak at ${weakest.topic}, but it sits on top of ${rootCause}. Fixing the piece underneath tends to move both.`
+          : `This is your weakest area right now — ${describeStrength(weakest.strength).toLowerCase()}. A quick check will tell you if it's improving.`,
         action: {
           kind: "test-topic",
-          topic: weakest.topic,
-          label: `Practise ${weakest.topic}`,
+          // The check follows the root cause, not the symptom.
+          topic: target,
+          label: `Practise ${target}`,
         },
       };
     }

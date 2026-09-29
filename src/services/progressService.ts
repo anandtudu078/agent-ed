@@ -227,6 +227,73 @@ export function difficultyClause(band: DifficultyBand): string {
   }
 }
 
+/**
+ * The first prerequisite the student hasn't got, for a topic they are stuck on.
+ *
+ * This is the piece that makes "weak on X" actionable. Knowing a student is bad
+ * at transformers is not enough; the useful question is *why*, and usually the
+ * answer is a prerequisite they never had. Sending them forward regardless is
+ * how a student ends up five modules behind and doesn't know it.
+ *
+ * Returns null when every known prerequisite looks fine, or when the topic isn't
+ * in the graph at all — an uncurated module is not a reason to block anyone.
+ */
+export function firstMissingPrerequisite(
+  topic: string,
+  graph: ReadonlyMap<string, readonly string[]>,
+  weakTopics: readonly string[],
+): string | null {
+  const prereqs = graph.get(topic.trim().toLowerCase());
+  if (!prereqs || !prereqs.length) return null;
+
+  const weak = weakTopics.map((t) => t.trim().toLowerCase());
+  // Ordered, not sorted: the first prerequisite is the one that comes first in
+  // the chain, and fixing it is what unblocks the rest.
+  for (const prereq of prereqs) {
+    const key = prereq.trim().toLowerCase();
+    if (weak.includes(key)) return prereq;
+  }
+  return null;
+}
+
+/**
+ * Follow the chain to the root cause.
+ *
+ * A student weak on transformers may be weak on attention, which may be weak on
+ * matrix multiplication. Recommending attention would be technically true and
+ * practically useless, so this walks down while the next step down is *also*
+ * known-weak, and stops at the deepest gap.
+ *
+ * Bounded, because a cycle in hand-written curriculum data would otherwise hang
+ * the request. The curriculum is authored content and can be edited wrong.
+ */
+export function rootCauseTopic(
+  topic: string,
+  graph: ReadonlyMap<string, readonly string[]>,
+  weakTopics: readonly string[],
+  maxDepth = 5,
+): string | null {
+  const weak = weakTopics.map((t) => t.trim().toLowerCase());
+  let current = topic.trim().toLowerCase();
+  let result: string | null = null;
+  const seen = new Set<string>([current]);
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const prereqs = graph.get(current);
+    if (!prereqs) break;
+    const next = prereqs.find((p) => {
+      const key = p.trim().toLowerCase();
+      return weak.includes(key) && !seen.has(key);
+    });
+    if (!next) break;
+    seen.add(next.trim().toLowerCase());
+    current = next.trim().toLowerCase();
+    result = next;
+  }
+  return result;
+}
+
+
 /** Short human label, for the dashboard. */
 export function difficultyLabel(band: DifficultyBand): string {
   switch (band) {

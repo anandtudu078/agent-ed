@@ -7,8 +7,11 @@ import {
   AuthUser,
   requireAuth,
 } from "../middleware/auth";
-import { refreshEnrollments } from "../services/courseService";
-import { dueCards, dueLabel } from "../services/progressService";
+import {
+  refreshEnrollments,
+  PREREQUISITE_GRAPH,
+} from "../services/courseService";
+import { dueCards, dueLabel, rootCauseTopic } from "../services/progressService";
 import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
 
 const router = Router();
@@ -159,7 +162,19 @@ router.get(
         label: dueLabel(card),
       }));
 
-      response.json({ progress, courses, dueReviews });
+      // The prerequisite that is actually holding the weakest topic up.
+      //
+      // Weak points alone say "you are bad at transformers", which the student
+      // cannot act on. This follows the graph down to the gap underneath, so the
+      // dashboard can say "start with matrix multiplication" — something they
+      // can do today, and which unblocks the rest.
+      const weakTopics = (progress.weakPoints ?? []).map((point) => point.topic);
+      const weakestTopic = weakTopics[0];
+      const focusRootCause = weakestTopic
+        ? rootCauseTopic(weakestTopic, PREREQUISITE_GRAPH, weakTopics)
+        : null;
+
+      response.json({ progress, courses, dueReviews, focusRootCause });
     } catch (error) {
       console.error("Failed to load dashboard.", error);
       response.status(500).json({ error: "Unable to load dashboard." });

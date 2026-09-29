@@ -20,7 +20,8 @@
     "test:parse": "ts-node scripts/visual-parse-test.ts",
     "test:review": "ts-node scripts/review-test.ts",
     "test:profile": "ts-node scripts/profile-test.ts",
-    "test:difficulty": "ts-node scripts/difficulty-test.ts"
+    "test:difficulty": "ts-node scripts/difficulty-test.ts",
+    "test:prereqs": "ts-node scripts/prereq-test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
