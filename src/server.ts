@@ -38,6 +38,7 @@ import {
   difficultyForTopic,
   renderLearnerBriefing,
 } from "./services/progressService";
+import { flowGuidance, flowSignals } from "./services/flowSignals";
 
 const app = express();
 const httpServer = createServer(app);
@@ -255,11 +256,11 @@ async function processStudentMessage(
       $push: {
         conversationHistory: {
           $each: [
-            { role: "user", content: studentMessage },
+            { role: "user", content: studentMessage, at: new Date() },
             // The diagram is stored with the message it belongs to, so the
             // board survives a reload. The student otherwise loses the one
             // part of the explanation that can't be read back out of the text.
-            { role: "assistant", content: response, visual: visual ?? null },
+            { role: "assistant", content: response, visual: visual ?? null, at: new Date() },
           ],
           // Hard cap: a session document can only grow to MongoDB's 16 MB, and
           // an uncapped array eventually fails every write for this student.
