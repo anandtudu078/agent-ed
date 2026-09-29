@@ -102,7 +102,13 @@ router.post("/start", requireAuth, chatRateLimit, async (request: Request, respo
       parseTopic(request.body),
     );
 
-    const { question } = await generateAssessmentQuestion(topic, misconceptions);
+    const { question } = await generateAssessmentQuestion(
+      topic,
+      misconceptions,
+      // Read from the token, never the body: a client must not be able to
+      // request a Hindi question and have it graded against English criteria.
+      authUser.language,
+    );
     const attemptToken = signAttempt({
       studentId: authUser.username,
       topic,
@@ -162,6 +168,7 @@ router.post("/submit", requireAuth, chatRateLimit, async (request: Request, resp
       attempt.question,
       answer,
       attempt.misconceptions,
+      authUser.language,
     );
 
     const evaluation: TestEvaluation = {
