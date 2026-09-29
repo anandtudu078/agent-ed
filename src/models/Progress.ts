@@ -28,6 +28,15 @@ export interface TestEvaluation {
   score: number; // 0–100
   feedback: string;
   recommendedFocus: string;
+  /**
+   * The specific wrong ideas this answer revealed.
+   *
+   * The grader already works these out and was sending them to the client,
+   * which then dropped them — so the most valuable signal in the whole system
+   * was being discarded. "Weak on backpropagation" says where to look;
+   * "thinks backprop is the same as gradient descent" says what to say.
+   */
+  misconceptions: string[];
   evaluatedAt: Date;
 }
 
@@ -96,6 +105,15 @@ const testEvaluationSchema = new Schema<TestEvaluation>(
     score: { type: Number, required: true, min: 0, max: 100 },
     feedback: { type: String, default: "" },
     recommendedFocus: { type: String, default: "" },
+    /**
+     * The specific wrong ideas this answer revealed.
+     *
+     * The grader already works these out and was sending them to the client,
+     * which then dropped them — so the most valuable signal in the whole system
+     * was being discarded. "Weak on backpropagation" says where to look;
+     * "thinks backprop is the same as gradient descent" says what to say.
+     */
+    misconceptions: { type: [String], default: [] },
     evaluatedAt: { type: Date, default: Date.now },
   },
   { _id: false },

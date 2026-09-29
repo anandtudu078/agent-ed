@@ -1,5 +1,191 @@
-import { Progress, WeakPoint, ReviewCard } from "../models/Progress";
+import { Progress, TestEvaluation, WeakPoint, ReviewCard } from "../models/Progress";
 import { TopicVisit } from "../models/Session";
+
+/**
+ * What the app believes about one student, assembled from everything it records.
+ *
+ * This exists because the telemetry was all being collected and none of it was
+ * reaching the tutor: weak points and review cards shaped the *dashboard*, not
+ * the *teaching*. The tutor prompt received twelve messages and a topic, and
+ * taught everyone identically no matter what we knew.
+ *
+ * The profile is the seam. It is derived on read, never stored as its own
+ * document — it has no state of its own to fall out of sync, and it is cheap
+ * to rebuild.
+ */
+export interface LearnerProfile {
+  /** Concepts the student has demonstrated, weakest first. */
+  weakTopics: string[];
+  /** Concepts covered with no recorded gap. */
+  strongTopics: string[];
+  /**
+   * Misconceptions that have now come up more than once.
+   *
+   * A single wrong answer is noise — everyone misses things. The same wrong
+   * idea twice is a belief, and beliefs are what you have to un-teach. Repeats
+   * are counted by exact text, which is crude, but the grader is instructed to
+   * phrase them consistently for a given error.
+   */
+  recurringMisconceptions: string[];
+  /** True once the student has been assessed enough times to be confident. */
+  isWellCalibrated: boolean;
+  /**
+   * Struggling across several topics at once.
+   *
+   * Deliberately requires more than one data point. "This student is
+   * struggling" is a claim about a person, and one bad test is just a bad test.
+   */
+  overallStruggling: boolean;
+  /** True once the student has been assessed at least twice. */
+  hasAssessmentSignal: boolean;
+  /** Concepts whose review is outstanding, most overdue first. */
+  dueTopics: string[];
+}
+
+const MIN_ASSESSMENTS_FOR_PROFILE = 2;
+const MAX_PROFILE_TOPICS = 6;
+const MAX_MISCONCEPTIONS = 5;
+
+/**
+ * Build the profile from stored progress.
+ *
+ * Pure and clock-injectable, like the rest of this module, so the behaviour is
+ * testable without a database — and so it is obvious that nothing here is
+ * learned from raw chat text.
+ */
+export function buildLearnerProfile(
+  progress: {
+    weakPoints?: WeakPoint[];
+    testHistory?: TestEvaluation[];
+    reviewCards?: ReviewCard[];
+  } | null | undefined,
+  now: Date = new Date(),
+): LearnerProfile {
+  const weakPoints = progress?.weakPoints ?? [];
+  const history = progress?.testHistory ?? [];
+  const cards = progress?.reviewCards ?? [];
+
+  // Only the topics we have an actual measurement for. Anything weaker than the
+  // threshold is not "strong" — it is simply not a problem, and calling it
+  // strong would invite the tutor to skip a concept the student has never been
+  // asked about.
+  const weak = weakPoints
+    .filter((point) => point.strength < WEAK_POINT_THRESHOLD)
+    .sort((a, b) => a.strength - b.strength)
+    .map((point) => point.topic);
+  const strong = weakPoints
+    .filter((point) => point.strength >= WEAK_POINT_THRESHOLD)
+    .map((point) => point.topic);
+
+  // A misconception is worth telling the tutor about if we are *confident* about
+  // it, not only if the student has repeated it verbatim.
+  //
+  // Requiring two identical strings looks rigorous and is useless in practice:
+  // the grader phrased the same underlying belief two different ways in the
+  // live run ("backprop is just trial and error" / "backprop is a loop that
+  // tries different weights"), so a repeat counter found nothing and the tutor
+  // was told the student had no known misconception at all — while we were
+  // holding two of them.
+  //
+  // So: repeats rank first, because a belief that survives two sittings is
+  // certainly real, and the most recent misconception on each weak topic
+  // follows. Weak topic + a specific wrong idea is directly actionable; the
+  // absence of an exact repeat is not evidence of absence.
+  const counts = new Map<string, { text: string; count: number; at: number }>();
+  history.forEach((evaluation, index) => {
+    for (const item of evaluation.misconceptions ?? []) {
+      const text = item.trim();
+      if (!text) continue;
+      const key = text.toLowerCase();
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count += 1;
+        existing.text = text;
+        existing.at = index;
+      } else {
+        counts.set(key, { text, count: 1, at: index });
+      }
+    }
+  });
+
+  const weakSet = new Set(weak.map((topic) => topic.toLowerCase()));
+  const ranked = [...counts.values()]
+    .map((entry) => ({
+      entry,
+      // A misconception on a topic we have measured as weak is worth more than
+      // the same text on a topic we have no signal for.
+      onWeakTopic: weakSet.has(history[entry.at]?.topic?.toLowerCase() ?? ""),
+    }))
+    .sort((a, b) => {
+      if (a.entry.count !== b.entry.count) return b.entry.count - a.entry.count;
+      if (a.onWeakTopic !== b.onWeakTopic) return a.onWeakTopic ? -1 : 1;
+      return b.entry.at - a.entry.at;
+    });
+
+  const recurring = ranked
+    .slice(0, MAX_MISCONCEPTIONS)
+    .map(({ entry }) => entry.text);
+
+  const due = dueCards(cards, now).map((card) => card.topic);
+  const hasAssessmentSignal = history.length >= MIN_ASSESSMENTS_FOR_PROFILE;
+
+  return {
+    weakTopics: weak.slice(0, MAX_PROFILE_TOPICS),
+    strongTopics: strong.slice(0, MAX_PROFILE_TOPICS),
+    recurringMisconceptions: recurring,
+    isWellCalibrated: hasAssessmentSignal,
+    // "Struggling" is a claim about a person, so it needs more than one data
+    // point. One bad test is a bad test.
+    overallStruggling: hasAssessmentSignal && weak.length >= 2,
+    hasAssessmentSignal,
+    dueTopics: due.slice(0, MAX_PROFILE_TOPICS),
+  };
+}
+
+/**
+ * Render the profile as a short briefing for the tutor's system prompt.
+ *
+ * Returns "" for a student we know nothing about yet. An empty briefing is
+ * genuinely different from an empty-looking one: "no data" must never be
+ * mistaken for "no weak points", or the tutor will confidently tell a brand-new
+ * student they're doing great.
+ *
+ * Plain lines rather than JSON: the model reads prose about a person far better
+ * than it reads a record, and a long JSON blob of telemetry is exactly the
+ * thing that gets a model to behave like a database.
+ */
+export function renderLearnerBriefing(profile: LearnerProfile): string {
+  if (!profile.hasAssessmentSignal) return "";
+
+  const lines: string[] = [];
+  lines.push("What you already know about this student:");
+  if (profile.weakTopics.length) {
+    lines.push(`- Shaky so far: ${profile.weakTopics.join(", ")}.`);
+  }
+  if (profile.strongTopics.length) {
+    lines.push(`- Solid on: ${profile.strongTopics.join(", ")}. Do not re-explain these from scratch.`);
+  }
+  if (profile.recurringMisconceptions.length) {
+    lines.push(
+      "- They have repeatedly shown this wrong thinking. Address it directly, by name: " +
+        `${profile.recurringMisconceptions.join("; ")}.`,
+    );
+  }
+  if (profile.dueTopics.length) {
+    lines.push(
+      `- These came up in review and are due again: ${profile.dueTopics.join(", ")}.`,
+    );
+  }
+  if (profile.overallStruggling) {
+    lines.push(
+      "- They are struggling across several topics. Slow down, use a concrete example before any formula, and check understanding early rather than explaining at length.",
+    );
+  }
+  lines.push(
+    "Use this to change *how* you teach them. Do not recite it back to them or mention that you are keeping notes.",
+  );
+  return lines.join("\n");
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
