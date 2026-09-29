@@ -46,7 +46,11 @@ function signAttempt(payload: AttemptPayload): string {
 }
 
 function verifyAttempt(token: string): AttemptPayload {
-  const decoded = jwt.verify(token, requireJwtSecret());
+  // Pin the algorithm, matching the auth middleware: only tokens we signed
+  // with HS256 are valid attempt tickets.
+  const decoded = jwt.verify(token, requireJwtSecret(), {
+    algorithms: ["HS256"],
+  });
   if (typeof decoded === "string" || !decoded.topic || !decoded.question) {
     throw new Error("Malformed assessment attempt.");
   }
