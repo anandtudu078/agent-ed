@@ -1,5 +1,6 @@
 import { io, type Socket } from "socket.io-client";
 import { createMascot, type MascotStatus, type TutorMode } from "./components/mascot";
+import { visualStepCount, type VisualSpec } from "./components/diagrams";
 import {
   createDashboard,
   type CourseInfo,
@@ -409,7 +410,7 @@ let conversationEpoch = 0;
 let responseEpoch = 0;
 
 /** Shared handler so tests can drive the exact same client path (DEV only). */
-function handleSocraticResponse(payload: { response: string }): void {
+function handleSocraticResponse(payload: { response: string; visual?: VisualSpec | null }): void {
   // Drop a reply that was already in flight when the student started a new
   // chat: it belongs to a conversation they deliberately discarded.
   if (conversationEpoch !== responseEpoch) return;
@@ -418,8 +419,16 @@ function handleSocraticResponse(payload: { response: string }): void {
   setAiStatus("speaking");
   // The owl is the visual teacher: it shows the guidance on its display…
   mascot.setMessage(payload.response);
-  // …and speaks it aloud when voice mode is on.
-  if (voiceEnabled) speakOwlMessage(payload.response);
+  // …draws a diagram for the topic when the tutor sent one…
+  mascot.setVisual(payload.visual ?? null);
+  // …and explains it aloud. Speaking is on by default; the microphone stays
+  // opt-in, because listening is a permission prompt the student should choose.
+  if (speakingEnabled) {
+    speakOwlMessage(payload.response, payload.visual ?? null);
+  } else {
+    // Still walk the diagram so the visuals read as a sequence, not a poster.
+    playSilentVisualWalkthrough(payload.visual ?? null);
+  }
 }
 
 function disconnectSocket(): void {
@@ -805,8 +814,8 @@ function resumeMicAfterSpeech(): void {
   }
 }
 
-/** The Wise Owl reads its guidance aloud (voice mode). */
-function speakOwlMessage(text: string): void {
+/** The Wise Owl reads its guidance aloud, walking the diagram as it goes. */
+function speakOwlMessage(text: string, visual: VisualSpec | null = null): void {
   const synth = window.speechSynthesis;
   if (!synth) {
     voiceHintEl.textContent =
@@ -817,7 +826,7 @@ function speakOwlMessage(text: string): void {
   if (!text.trim()) return;
 
   stopOwlSpeech();
-  micSuspendedForSpeech = voiceEnabled && recognition !== null;
+  micSuspendedForSpeech = listeningEnabled && recognition !== null;
   if (micSuspendedForSpeech) {
     try {
       recognition?.stop();
@@ -825,6 +834,8 @@ function speakOwlMessage(text: string): void {
       // Mic already stopped — ignore.
     }
   }
+
+  const total = visualStepCount(visual);
 
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "en-US";
@@ -837,16 +848,59 @@ function speakOwlMessage(text: string): void {
     if (currentUtterance !== utterance) return;
     currentUtterance = null;
     mascot.setSpeaking(false);
+    stopVisualWalk();
     resumeMicAfterSpeech();
   };
   utterance.onerror = () => {
     if (currentUtterance !== utterance) return;
     currentUtterance = null;
     mascot.setSpeaking(false);
+    stopVisualWalk();
     resumeMicAfterSpeech();
   };
   currentUtterance = utterance;
+
+  // Drive the highlight from a timer rather than onboundary: boundary events
+  // are unsupported in Safari and inconsistent elsewhere, and a uniformly paced
+  // walkthrough beats no highlight at all.
+  if (total > 0) startVisualWalk(total, Math.max(1400, (text.length / total) * 55));
+
   synth.speak(utterance);
+}
+
+let visualWalkTimer: number | null = null;
+let visualWalkIndex = 0;
+
+function startVisualWalk(total: number, intervalMs: number): void {
+  stopVisualWalk();
+  visualWalkIndex = 0;
+  visualWalkTimer = window.setInterval(() => {
+    visualWalkIndex += 1;
+    if (visualWalkIndex >= total) {
+      stopVisualWalk();
+      return;
+    }
+    mascot.setVisualStep(visualWalkIndex);
+  }, intervalMs);
+}
+
+/**
+ * Step through a diagram without audio, so the visuals still read as a
+ * sequence when the student has muted the owl.
+ */
+function playSilentVisualWalkthrough(visual: VisualSpec | null): void {
+  const total = visualStepCount(visual);
+  if (total <= 1) return;
+  startVisualWalk(total, 1800);
+}
+
+function stopVisualWalk(): void {
+  if (visualWalkTimer !== null) {
+    window.clearInterval(visualWalkTimer);
+    visualWalkTimer = null;
+  }
+  visualWalkIndex = 0;
+  mascot.setVisualStep(-1);
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +928,16 @@ type SpeechWindow = Window & {
 };
 
 let voiceEnabled = false;
+/**
+ * Speaking and listening are now separate concerns.
+ *
+ * The owl *speaking* is the product working as intended, so it defaults on.
+ * The microphone is a permission prompt and a privacy consideration, so it
+ * stays opt-in behind the existing voice toggle. Bundling them meant students
+ * either got silence or an unprompted mic — neither is right.
+ */
+let speakingEnabled = true;
+let listeningEnabled = false;
 let recognition: SpeechRecognitionLike | null = null;
 
 function getRecognition(): SpeechRecognitionLike | null {
@@ -922,8 +986,14 @@ function getRecognition(): SpeechRecognitionLike | null {
   return instance;
 }
 
+/**
+ * The voice toggle now controls only the MICROPHONE. The owl's own speaking
+ * is on by default and independent, so a student gets the spoken explanation
+ * without being pushed into a permission prompt they didn't ask for.
+ */
 function setVoiceMode(enabled: boolean): void {
   voiceEnabled = enabled;
+  listeningEnabled = enabled;
   micSuspendedForSpeech = false;
   voiceToggleEl.setAttribute("aria-pressed", String(enabled));
 
@@ -931,9 +1001,10 @@ function setVoiceMode(enabled: boolean): void {
     recognition = getRecognition();
     if (!recognition) {
       voiceHintEl.textContent =
-        "Voice mode isn't supported in this browser (requires Chrome or Edge).";
+        "Voice input isn't supported in this browser (requires Chrome or Edge). The owl will still read answers aloud.";
       voiceHintEl.classList.remove("hidden");
       voiceEnabled = false;
+      listeningEnabled = false;
       voiceToggleEl.setAttribute("aria-pressed", "false");
       return;
     }
@@ -941,7 +1012,7 @@ function setVoiceMode(enabled: boolean): void {
       "rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500 active:scale-95";
     voiceToggleEl.innerHTML = '🎙️ <span>Listening…</span>';
     voiceHintEl.textContent =
-      "Voice mode on — speak your question, and the owl will answer out loud.";
+      "Microphone on — speak your question. The owl will read its answer aloud.";
     voiceHintEl.classList.remove("hidden");
     try {
       recognition.start();
@@ -954,10 +1025,10 @@ function setVoiceMode(enabled: boolean): void {
       "rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95";
     voiceToggleEl.innerHTML = '🎤 <span>Voice Mode</span>';
     voiceHintEl.classList.add("hidden");
-    stopOwlSpeech();
-    micSuspendedForSpeech = false;
+    // Muting the mic must not mute the owl — only stop what it is saying now.
     recognition?.stop();
     recognition = null;
+    micSuspendedForSpeech = false;
   }
 }
 
@@ -1000,6 +1071,10 @@ if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__agentedTest = {
     speakOwlMessage,
     setMessage: (text: string) => mascot.setMessage(text),
+    // Drives a topic diagram onto the board without depending on the tutor
+    // happening to choose one, so the rendering is always covered.
+    setVisual: (spec: VisualSpec | null) => mascot.setVisual(spec),
+    setVisualStep: (index: number) => mascot.setVisualStep(index),
     // Drives the real socratic-response handler (used when live AI providers
     // are down so the suite still covers the client reply path).
     simulateReply: (text: string) => handleSocraticResponse({ response: text }),

@@ -9,6 +9,8 @@
 // + its current line + expand chevron) so it doesn't eat the chat's vertical
 // space; the chevron toggles the full classroom display.
 
+import { renderVisual, visualStepCount, type VisualSpec } from "./diagrams";
+
 export type MascotStatus = "idle" | "thinking" | "speaking";
 
 /**
@@ -225,6 +227,12 @@ export function createMascot(
   setMode: (m: TutorMode) => void;
   getMode: () => TutorMode;
   setSpeaking: (on: boolean) => void;
+  /** Show a topic diagram on the lesson board. */
+  setVisual: (spec: VisualSpec | null) => void;
+  /** Move the highlight, so the board tracks what the owl is saying. */
+  setVisualStep: (index: number) => void;
+  /** How many highlightable elements the current diagram has. */
+  visualStepCount: () => number;
 } {
   host.innerHTML = `
     <style>
@@ -308,6 +316,10 @@ export function createMascot(
   /** True while the owl is actually delivering a line (mouth moving). */
   let talking = false;
   let revealTimer: number | null = null;
+  /** Topic diagram for the board, when the tutor is explaining one. */
+  let topicVisual: VisualSpec | null = null;
+  /** Which element of the diagram the owl is currently on. */
+  let visualStep = -1;
   // Mobile-first: the display starts collapsed on small screens, expanded on
   // desktop (>= sm, where the toggle button is hidden anyway).
   let collapsed = window.innerWidth < 640;
@@ -368,7 +380,12 @@ export function createMascot(
     // Animate the *visible* state so the owl's motion always matches the
     // chrome around it (pill, board, bubble).
     visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(vis)}`;
-    boardArt.innerHTML = boardSvg(boardKind);
+    // A real topic diagram takes the board whenever the tutor is explaining
+    // one — it's the whole point of the visual teacher. The state sketches
+    // are the fallback when there's nothing specific to show.
+    const diagram = topicVisual ? renderVisual(topicVisual, visualStep) : "";
+    boardArt.innerHTML = diagram || boardSvg(boardKind);
+    boardArt.classList.toggle("owl-board-visual", Boolean(diagram));
     display.classList.toggle("owl-talking", talking);
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
@@ -459,6 +476,10 @@ export function createMascot(
   function clearMessage(): void {
     customMessage = null;
     talking = false;
+    // The old diagram belonged to the previous topic; leaving it up would show
+    // a picture of something the student is no longer asking about.
+    topicVisual = null;
+    visualStep = -1;
     stopReveal();
     render();
   }
@@ -468,6 +489,20 @@ export function createMascot(
     setMode(next);
     onModeChange(next);
   });
+
+  /** Put a topic diagram on the board, or take it away. */
+  function setVisual(spec: VisualSpec | null): void {
+    topicVisual = spec;
+    visualStep = -1;
+    render();
+  }
+
+  /** Move the highlight. Re-renders only when the step actually changes. */
+  function setVisualStep(index: number): void {
+    if (index === visualStep || !topicVisual) return;
+    visualStep = index;
+    render();
+  }
 
   toggleButton.addEventListener("click", () => {
     collapsed = !collapsed;
@@ -487,5 +522,15 @@ export function createMascot(
   });
 
   setStatus("idle");
-  return { setStatus, setMessage, clearMessage, setMode, getMode, setSpeaking };
+  return {
+    setStatus,
+    setMessage,
+    clearMessage,
+    setMode,
+    getMode,
+    setSpeaking,
+    setVisual,
+    setVisualStep,
+    visualStepCount: () => visualStepCount(topicVisual),
+  };
 }

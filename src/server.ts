@@ -15,6 +15,7 @@ import {
 } from "./services/aiService";
 import { recordLearningSignal } from "./services/progressService";
 import { refreshEnrollments } from "./services/courseService";
+import { generateVisual, type VisualSpec } from "./services/visualService";
 import authRouter from "./routes/auth";
 import assessmentRouter from "./routes/assessment";
 import coursesRouter from "./routes/courses";
@@ -106,6 +107,8 @@ interface ChatResult {
   response: string;
   analysis: string;
   mode: TutorMode;
+  /** Diagram for the lesson board, or null when none fits. */
+  visual: VisualSpec | null;
   session: {
     studentId: string;
     activeTopic: string;
@@ -230,6 +233,12 @@ async function processStudentMessage(
     throw new Error("Unable to save the tutoring session.");
   }
 
+  // Teach mode is where a diagram earns its place: the owl is explaining a
+  // concept, not posing a question. Socratic replies get the question board.
+  // Best-effort — a missing diagram must never cost the student their answer.
+  const visual =
+    mode === "teach" ? await generateVisual(activeTopic, response) : null;
+
   // Feed the dashboard. Best-effort: a progress write must never fail a reply
   // the student is already waiting on.
   try {
@@ -255,6 +264,7 @@ async function processStudentMessage(
     response,
     analysis: JSON.stringify(analysis),
     mode,
+    visual,
     session: {
       studentId: session.studentId,
       activeTopic: session.activeTopic,
