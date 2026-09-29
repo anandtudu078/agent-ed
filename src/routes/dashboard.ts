@@ -161,10 +161,15 @@ router.get(
       // dashboard is correct even after a failed background write.
       await refreshEnrollments(authUser.username);
 
-      // First visit: create a blank progress record for this student.
-      const progress =
-        (await Progress.findOne({ studentId }).lean()) ??
-        (await Progress.create({ studentId }).then((doc) => doc.toObject()));
+      // First visit: atomically create the blank progress record. An
+      // upsert instead of findOne-then-create, so two concurrent first
+      // requests can't both try to insert and turn the unique index violation
+      // into a spurious 500.
+      const progress = await Progress.findOneAndUpdate(
+        { studentId },
+        { $setOnInsert: { studentId } },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      ).lean();
 
       const courses = await Course.find().sort({ createdAt: 1 }).lean();
 
