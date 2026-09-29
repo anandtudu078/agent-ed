@@ -282,6 +282,30 @@ try {
     "learning speed card renders",
     ((await page.locator(".dash-speed").textContent()) ?? "").trim().length > 0,
   );
+  // The dashboard's whole simplification is that it says ONE clear thing to do
+  // next, in words, before anything else.
+  const nextHeadline = ((await page.locator(".dash-next-headline").textContent()) ?? "").trim();
+  check(
+    "dashboard leads with one clear next step",
+    nextHeadline.length > 5 && !nextHeadline.includes("…"),
+    nextHeadline,
+  );
+  check(
+    "next-step button says what it will do",
+    ((await page.locator(".dash-start-test").textContent()) ?? "").trim().length > 3,
+    ((await page.locator(".dash-start-test").textContent()) ?? "").trim(),
+  );
+  check(
+    "pace is described in words, not a bare number",
+    // "Building momentum" rather than an unusable "7 concepts / week".
+    ((await page.locator(".dash-speed").textContent()) ?? "").trim().length > 3,
+    ((await page.locator(".dash-speed").textContent()) ?? "").trim(),
+  );
+  check(
+    "focus areas are capped at 3 for readability",
+    (await page.locator(".dash-weakpoint").count()) <= 3,
+    `${await page.locator(".dash-weakpoint").count()} shown`,
+  );
   check(
     "weak points + AI feedback cards render",
     (await page.locator(".dash-weakpoints-body").isVisible()) && (await page.locator(".dash-feedback-body").isVisible()),

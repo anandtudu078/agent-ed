@@ -72,45 +72,53 @@ export function createDashboard(
   let destroyed = false;
   host.innerHTML = `
     <div class="h-full overflow-y-auto px-4 py-6 scroll-smooth">
-      <div class="mx-auto w-full max-w-4xl space-y-6">
-        <!-- Header: title + dynamic learning speed -->
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">
-              Learning <span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">Dashboard</span>
-            </h1>
-            <p class="mt-1 text-sm text-slate-400">
-              Your progress, weak points, and next best steps.
-            </p>
+      <div class="mx-auto w-full max-w-3xl space-y-4">
+        <!-- Header: plain language, no jargon box -->
+        <div>
+          <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">
+            Your <span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">learning</span>
+          </h1>
+          <p class="dash-pace-line mt-1 text-sm text-slate-400">Loading…</p>
+        </div>
+
+        <!-- THE one thing to do next. Everything else is secondary. -->
+        <section class="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/60 to-violet-950/40 p-5">
+          <p class="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/80">What to do next</p>
+          <h2 class="dash-next-headline mt-1.5 text-lg font-bold leading-snug text-slate-50">…</h2>
+          <p class="dash-next-detail mt-1.5 text-sm leading-relaxed text-slate-300"></p>
+          <button
+            type="button"
+            class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+          >…</button>
+        </section>
+
+        <!-- At a glance: three numbers, each in plain words -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Pace</p>
+            <p class="dash-speed mt-1 text-sm font-bold leading-tight text-indigo-300">…</p>
           </div>
-          <div class="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-right">
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Learning speed</p>
-            <p class="dash-speed text-xl font-bold text-indigo-300 sm:text-2xl">…</p>
-            <p class="text-[10px] text-slate-500">concepts / week</p>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Focus areas</p>
+            <p class="dash-focus-count mt-1 text-sm font-bold leading-tight text-amber-300">…</p>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Last check</p>
+            <p class="dash-last-score mt-1 text-sm font-bold leading-tight text-slate-200">…</p>
           </div>
         </div>
 
-        <!-- Analytics overview -->
-        <div class="grid gap-4 sm:grid-cols-2">
-          <!-- Weak points -->
-          <div class="dash-weakpoints rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Weak points</h2>
-            <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">Loading…</p>
-          </div>
-          <!-- AI test feedback -->
-          <div class="dash-feedback rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">AI test feedback</h2>
-            <p class="dash-feedback-body mt-3 text-sm text-slate-400">Loading…</p>
-          </div>
+        <!-- Focus areas: only the few that matter, in plain words -->
+        <div class="dash-weakpoints rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Focus areas</h2>
+          <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">Loading…</p>
         </div>
 
-        <!-- Quick action: start an AI evaluation test -->
-        <button
-          type="button"
-          class="dash-start-test w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          🧪 Start AI evaluation test
-        </button>
+        <!-- Latest result, condensed to what the student can act on -->
+        <div class="dash-feedback rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Your last check</h2>
+          <p class="dash-feedback-body mt-3 text-sm text-slate-400">Loading…</p>
+        </div>
 
         <!-- AI evaluation panel (opened by the quick action above) -->
         <section
@@ -165,13 +173,20 @@ export function createDashboard(
         <!-- Course catalog -->
         <div class="rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Course catalog</h2>
+            <div>
+              <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">
+                Your courses
+              </h2>
+              <p class="mt-0.5 text-xs text-slate-500">
+                You're learning these. Pick up where you left off.
+              </p>
+            </div>
             <label class="relative block">
               <span class="sr-only">Search courses</span>
               <input
                 type="search"
-                class="dash-search w-56 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-                placeholder="Search courses…"
+                class="dash-search w-48 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                placeholder="Search…"
               />
             </label>
           </div>
@@ -184,6 +199,13 @@ export function createDashboard(
 
   const statusEl = host.querySelector<HTMLElement>(".dash-status")!;
   const speedEl = host.querySelector<HTMLElement>(".dash-speed")!;
+  const paceLineEl = host.querySelector<HTMLElement>(".dash-pace-line")!;
+  const focusCountEl = host.querySelector<HTMLElement>(".dash-focus-count")!;
+  const lastScoreEl = host.querySelector<HTMLElement>(".dash-last-score")!;
+  const nextHeadlineEl = host.querySelector<HTMLElement>(".dash-next-headline")!;
+  const nextDetailEl = host.querySelector<HTMLElement>(".dash-next-detail")!;
+  /** The current recommendation, so the button knows what it is proposing. */
+  let nextStep: NextStep | null = null;
   const weakEl = host.querySelector<HTMLElement>(".dash-weakpoints-body")!;
   const feedbackEl = host.querySelector<HTMLElement>(".dash-feedback-body")!;
   const coursesEl = host.querySelector<HTMLElement>(".dash-courses")!;
@@ -411,15 +433,104 @@ export function createDashboard(
   }
 
   function describeSpeed(speed: number): string {
-    if (!speed) return "Just getting started";
+    if (!speed) return "Just starting";
     if (speed < 2) return "Steady start";
     if (speed < 5) return "Building momentum";
-    return "Fast learner";
+    return "Moving fast";
+  }
+
+  /** Turn a 0–100 strength number into words a student can act on. */
+  function describeStrength(strength: number): string {
+    if (strength < 40) return "Needs work";
+    if (strength < 60) return "Getting there";
+    return "Almost there";
+  }
+
+  type NextAction =
+    | { kind: "test"; label: string }
+    | { kind: "test-topic"; topic: string; label: string }
+    | { kind: "course"; course: CourseInfo; label: string };
+
+  interface NextStep {
+    headline: string;
+    detail: string;
+    action: NextAction;
+  }
+
+  /**
+   * The single most useful thing this student can do right now.
+   *
+   * Ordered by leverage rather than by recency: a first check is worth more
+   * than any course, an unresolved weak point beats resuming a course, and a
+   * course only surfaces once there is nothing more valuable to do.
+   */
+  function computeNextStep(): NextStep {
+    const progress = data?.progress;
+    const weak = progress?.weakPoints ?? [];
+    const enrolled = progress?.enrolledCourses ?? [];
+    const lastTest = progress?.testHistory.at(-1);
+
+    if (!lastTest) {
+      return {
+        headline: "Find out what to work on",
+        detail:
+          "One short question shows you what you know and what to focus on next. It takes about two minutes.",
+        action: { kind: "test", label: "Start my first check" },
+      };
+    }
+
+    const weakest = weak[0];
+    if (weakest) {
+      return {
+        headline: `Work on ${weakest.topic}`,
+        detail: `This is your weakest area right now — ${describeStrength(weakest.strength).toLowerCase()}. A quick check will tell you if it's improving.`,
+        action: {
+          kind: "test-topic",
+          topic: weakest.topic,
+          label: `Practise ${weakest.topic}`,
+        },
+      };
+    }
+
+    const inProgress = enrolled.find((item) => item.progressPercent < 100);
+    const course = inProgress
+      ? data?.courses.find((item) => item._id === inProgress.courseId)
+      : undefined;
+    if (inProgress && course) {
+      const done = new Set(inProgress.completedModules ?? []);
+      const nextModule = (course.modules ?? []).find(
+        (module) => !done.has(module.title),
+      );
+      return {
+        headline: `Continue ${course.title}`,
+        detail: nextModule
+          ? `You're partway through. Next up: ${nextModule.title}.`
+          : "You're nearly finished with this one.",
+        action: { kind: "course", course, label: "Continue learning" },
+      };
+    }
+
+    return {
+      headline: "You're on track",
+      detail:
+        "No weak areas right now. Take another check to be sure, or pick something new below.",
+      action: { kind: "test", label: "Take another check" },
+    };
+  }
+
+  /** Enrolled courses first — the ones the student is actually working on. */
+  function sortEnrolledFirst(list: CourseInfo[]): CourseInfo[] {
+    const enrolledIds = new Set(
+      (data?.progress.enrolledCourses ?? []).map((item) => item.courseId),
+    );
+    return [...list].sort(
+      (a, b) => Number(enrolledIds.has(b._id)) - Number(enrolledIds.has(a._id)),
+    );
   }
 
   function renderCourses(filter: string): void {
     const query = filter.trim().toLowerCase();
-    const list = (data?.courses ?? []).filter((course) => {
+    const matched = (data?.courses ?? []).filter((course) => {
       if (!query) return true;
       return (
         course.title.toLowerCase().includes(query) ||
@@ -427,6 +538,7 @@ export function createDashboard(
         course.description.toLowerCase().includes(query)
       );
     });
+    const list = sortEnrolledFirst(matched);
 
     if (!list.length) {
       coursesEl.innerHTML = `<p class="col-span-full rounded-xl border border-dashed border-slate-700 px-4 py-6 text-center text-sm text-slate-500">No courses match “${esc(filter)}”.</p>`;
@@ -450,20 +562,20 @@ export function createDashboard(
             <h3 class="text-sm font-semibold text-slate-100">${esc(course.title)}</h3>
             <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${LEVEL_STYLES[course.level]}">${esc(course.level)}</span>
           </div>
-          <p class="text-xs leading-relaxed text-slate-400">${esc(course.description)} <span class="text-slate-500">· ${esc(course.category)}</span></p>
+          <p class="text-xs leading-relaxed text-slate-400">${esc(course.description)}</p>
           ${
             enrollment
               ? `<div class="mt-1">
                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
                      <div class="h-full rounded-full bg-indigo-500 transition-[width] duration-500" style="width:${percent}%"></div>
                    </div>
-                   <p class="mt-1 text-[10px] text-slate-500">${Math.round(percent)}% · ${done.size}/${modules.length} modules${
-                     enrollment.lastTopic ? ` · last topic: ${esc(enrollment.lastTopic)}` : ""
+                   <p class="mt-1 text-[11px] text-slate-400">${done.size} of ${modules.length} done${
+                     nextModule ? ` · next: ${esc(nextModule.title)}` : " · finished"
                    }</p>
-                 </div>`
-              : ""
+                 </div>
+                 <ul class="dash-modules flex flex-col gap-0.5 text-[11px] text-slate-500">`
+              : `<ul class="dash-modules hidden">`
           }
-          <ul class="dash-modules flex flex-col gap-0.5 text-[11px] text-slate-500">
             ${modules
               .map(
                 (module) => `
@@ -476,30 +588,25 @@ export function createDashboard(
               )
               .join("")}
           </ul>
-          <div class="mt-auto flex gap-2 pt-1">
+          <div class="mt-auto flex items-center gap-2 pt-1">
             <button
               type="button"
               data-course-id="${esc(course._id)}"
-              class="dash-continue flex-1 rounded-lg ${enrollment ? "bg-indigo-600 hover:bg-indigo-500" : "border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"} px-3 py-2 text-xs font-semibold transition active:scale-95"
+              class="dash-continue flex-1 rounded-lg ${enrollment ? "bg-indigo-600 text-white hover:bg-indigo-500" : "border border-slate-700 bg-slate-800/60 text-slate-200 hover:border-indigo-500/50 hover:text-white"} px-3 py-2.5 text-sm font-semibold transition active:scale-95"
             >
-              ${enrollment ? "Continue Learning" : "Start Learning"}
+              ${enrollment ? "Continue" : "Start learning"}
             </button>
             ${
               enrollment
                 ? `<button
                      type="button"
                      data-course-id="${esc(course._id)}"
-                     class="dash-leave rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-400 transition hover:border-rose-500/50 hover:text-rose-300"
+                     class="dash-leave shrink-0 rounded-lg px-2 py-2.5 text-xs font-medium text-slate-500 transition hover:text-rose-300"
                      title="Leave this course"
                    >Leave</button>`
                 : ""
             }
           </div>
-          ${
-            enrollment && nextModule
-              ? `<p class="text-[10px] text-slate-500">Next up: <span class="text-indigo-300">${esc(nextModule.title)}</span></p>`
-              : ""
-          }
         </div>`;
       })
       .join("");
@@ -507,41 +614,72 @@ export function createDashboard(
 
   function renderData(): void {
     if (!data) return;
-    speedEl.textContent = `${data.progress.learningSpeed}`;
-    speedEl.title = describeSpeed(data.progress.learningSpeed);
 
-    if (data.progress.weakPoints.length) {
-      weakEl.innerHTML = data.progress.weakPoints
+    // --- At a glance: words, not raw numbers ---
+    const pace = describeSpeed(data.progress.learningSpeed);
+    speedEl.textContent = pace;
+    paceLineEl.textContent =
+      data.progress.learningSpeed > 0
+        ? `${pace} — you're picking up new ideas steadily.`
+        : "Ask the owl a question to get started.";
+    focusCountEl.textContent =
+      data.progress.weakPoints.length === 0
+        ? "None right now"
+        : String(data.progress.weakPoints.length);
+    const lastScore = data.progress.testHistory.at(-1);
+    lastScoreEl.textContent = lastScore ? `${lastScore.score}%` : "Not yet";
+
+    // --- The one thing to do next ---
+    const next = computeNextStep();
+    nextHeadlineEl.textContent = next.headline;
+    nextDetailEl.textContent = next.detail;
+    startTestBtn.textContent = next.action.label;
+    nextStep = next;
+
+    // --- Focus areas: top 3 only, in words ---
+    // Capping at 3 is the point. The model keeps up to 25, and showing 25 grey
+    // pills is how you make someone stop looking at the page.
+    const focus = data.progress.weakPoints.slice(0, 3);
+    if (focus.length) {
+      weakEl.innerHTML = `${focus
         .map(
           (wp) =>
             `<button
                type="button"
                data-test-topic="${esc(wp.topic)}"
-               class="dash-weakpoint inline-block rounded-full border px-3 py-1 text-xs font-medium transition hover:brightness-125 ${
+               class="dash-weakpoint inline-block rounded-full border px-3 py-1.5 text-xs font-medium transition hover:brightness-125 ${
                  wp.strength < 40
                    ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
                    : "border-amber-500/40 bg-amber-500/10 text-amber-300"
                }"
-               title="Strength ${wp.strength}/100 — click to test this topic"
-             >${esc(wp.topic)} · ${wp.strength}</button>`,
+               title="Practise ${esc(wp.topic)}"
+             >${esc(wp.topic)} · ${describeStrength(wp.strength)}</button>`,
         )
-        .join(" ");
+        .join(" ")}${
+        data.progress.weakPoints.length > 3
+          ? `<span class="ml-1 text-xs text-slate-500">+${data.progress.weakPoints.length - 3} more</span>`
+          : ""
+      }`;
     } else {
       weakEl.textContent =
-        "No weak points identified yet — take an AI evaluation test to map them.";
+        "Nothing to work on right now. Take a check to find out what to learn next.";
     }
 
-    const lastTest = data.progress.testHistory.at(-1);
-    if (lastTest) {
+    // --- Last check: the score, and the one thing to do about it ---
+    if (lastScore) {
       feedbackEl.innerHTML = `
         <p class="text-sm text-slate-200">
-          <span class="font-semibold text-indigo-300">${esc(lastTest.topic)}</span> — ${lastTest.score}/100
+          <span class="font-semibold text-indigo-300">${esc(lastScore.topic)}</span> — ${lastScore.score}%
         </p>
-        <p class="mt-1 text-xs leading-relaxed text-slate-400">${esc(lastTest.feedback)}</p>
-        <p class="mt-2 text-xs text-amber-300">Recommended focus: ${esc(lastTest.recommendedFocus)}</p>`;
+        <p class="mt-1 text-xs leading-relaxed text-slate-400">${esc(lastScore.feedback)}</p>
+        ${
+          lastScore.recommendedFocus
+            ? `<p class="mt-2 text-xs text-amber-300">Practise: ${esc(lastScore.recommendedFocus)}</p>`
+            : ""
+        }`;
     } else {
       feedbackEl.textContent =
-        "No AI test results yet — run your first evaluation to get feedback and focus areas.";
+        "You haven't taken a check yet. The button above will show you what to focus on.";
     }
 
     renderCourses(searchEl.value);
@@ -599,8 +737,21 @@ export function createDashboard(
     if (course) void startCourse(course);
   });
 
+  // The primary button does whatever the dashboard currently recommends, so
+  // the student never has to decide which of several buttons to press.
   startTestBtn.addEventListener("click", () => {
-    void startAssessment();
+    const action = nextStep?.action;
+    if (!action) {
+      void startAssessment();
+      return;
+    }
+    if (action.kind === "test") {
+      void startAssessment();
+    } else if (action.kind === "test-topic") {
+      void startAssessment(action.topic);
+    } else {
+      void startCourse(action.course);
+    }
   });
 
   testSubmitBtn.addEventListener("click", () => {
@@ -631,8 +782,13 @@ export function createDashboard(
   // when live AI providers are drained, so the suite covers the UI contract
   // without depending on provider quotas. Stripped from production builds.
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__agentedTest = {
-      ...((window as unknown as Record<string, unknown>).__agentedTest ?? {}),
+    const hookHost = window as unknown as Record<string, unknown>;
+    const existing =
+      typeof hookHost.__agentedTest === "object" && hookHost.__agentedTest !== null
+        ? (hookHost.__agentedTest as Record<string, unknown>)
+        : {};
+    hookHost.__agentedTest = {
+      ...existing,
       showAssessmentQuestion: (questionTopic: string, question: string) => {
         testPanelEl.classList.remove("hidden");
         testTopicEl.textContent = `Topic: ${questionTopic}`;
