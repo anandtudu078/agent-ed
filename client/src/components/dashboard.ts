@@ -65,6 +65,12 @@ export function createDashboard(
   ) => void,
   /** Sends the student back to the tutor on a topic the test just flagged. */
   onDiscussTopic?: (topic: string) => void,
+  /**
+   * Fired when an answer is graded, with the score. The owl uses this to react
+   * — a character that congratulates you but never acknowledges a wrong answer
+   * feels like it's not actually watching.
+   */
+  onGraded?: (score: number) => void,
 ): { refresh: () => Promise<void>; destroy: () => void } {
   let data: DashboardData | null = null;
   let loading = false;
@@ -358,6 +364,7 @@ export function createDashboard(
       }
       attemptToken = "";
       renderTestResult(body.evaluation);
+      onGraded?.(body.evaluation.score);
       // Pull fresh analytics so the weak-points and speed cards reflect the test.
       await refresh();
     } catch (error) {

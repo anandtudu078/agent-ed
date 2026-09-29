@@ -1,32 +1,42 @@
-feat: bilingual teaching in Hindi and English
+feat: expressive reactive owl + AI/ML course track
 
-Students can now choose the language the owl teaches in, and the choice is
-stored on the user so it follows them to another device.
+The owl now reacts to how the student is actually doing, and the catalog
+covers artificial intelligence end to end.
 
-What changed
-- User.language (en | hi), persisted in MongoDB, returned by register/login.
-- PATCH /api/auth/language persists the preference and re-issues the token,
-  so the language in the JWT never goes stale.
-- Tutor prompts take a language clause; the Groq fallback was dropping it,
-  which meant Hindi students silently got English whenever Gemini was out
-  of quota - which, on the free tier, is most of the time.
-- Diagram labels follow the same code-switching rule as the prose.
-- The owl's own idle/thinking/speaking lines are localised.
-- Noto Sans Devanagari added to the font stack.
+The owl
+Mood is separate from status on purpose. Status is the lifecycle (idle /
+thinking / speaking); mood is the personality. An owl that is *speaking* can
+be excited, curious, or supportive - folding those into one enum would
+multiply into a mess. The expressive work is in the geometry, not the colour:
+brows, closed happy arcs, an open supportive palm, and blush/sparkles that
+appear only on warm moods, because a permanent sparkle is just noise.
 
-Code-switching, not translation
-Hindi teaching keeps technical terms in English ("recursion ek function hai
-jo apne aap ko call karta hai"). Transliterating the vocabulary into
-Devanagari would make it less recognisable, not more - and it keeps the text
-readable on devices with no Hindi support.
+- react() maps an outcome to a mood and speaks a matching line, alternating
+  between two phrasings so it never repeats itself
+- "close" and "wrong" are distinct reactions - being nearly right is a
+  different moment from missing entirely, and one "wrong" face would make the
+  owl look like it isn't paying attention
+- celebration plays a real hop with squash-and-stretch, plus sparkles
+- a gentle nod when the answer is wrong, rather than a shrug
+- reactions relax to neutral after 4.2s so the owl never looks stuck
+- breathing on the body, and the blink is randomised per render so it never
+  falls into a metronome the student can predict
 
-Speech degrades honestly
-Many machines have no hi-IN voice. Rather than read Devanagari through an
-English voice, which sounds like gibberish, the client detects the missing
-voice, says so, and falls back to a silent diagram walkthrough.
+Course catalog
+Five AI/ML tracks, 30 modules: machine learning fundamentals, neural networks
+(perceptron -> backpropagation -> CNN/RNN), transformers and LLMs (attention,
+tokenization, context windows, hallucination), prompting and RAG, and AI in
+practice (bias, drift, cost, safety, privacy). The seeder keys on title, so
+these appear on existing databases too.
 
-Verified: Hindi reply, code-switched diagram labels, 72/72 UI checks,
-13/13 security checks, both TS projects compile.
+Two bugs the tests caught
+- The mood class and .owl-visual are set on the same element, so the hop was
+  written as a descendant selector and silently never matched. Asserting the
+  computed animation-name is what found it.
+- react() originally set the owl's status directly, which would have left it
+  stuck in "speaking" with no timer to bring it back. main.ts owns the
+  lifecycle, so react() only touches mood now.
 
-Still open: assessments are graded on English-only prompts, and full UI
-i18n (dashboard, courses) is deliberately deferred.
+Verified: 79/79 UI checks (7 new), 13/13 security, both TS projects compile.
+Still not possible: true phoneme lip-sync. SpeechSynthesis has no reliable
+boundary events, so the beak flaps on a timer - convincing, not word-accurate.

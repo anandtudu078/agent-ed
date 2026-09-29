@@ -14,16 +14,34 @@ import { renderVisual, visualStepCount, type VisualSpec } from "./diagrams";
 export type MascotStatus = "idle" | "thinking" | "speaking";
 
 /**
- * Instructional mode. `socratic` asks and withholds; `teach` explains directly.
- * The owl is the on-screen teacher, so the mode is shown on its own display
- * rather than buried in a settings panel.
+ * How the owl *feels*, independent of what it is doing.
+ *
+ * Kept separate from `MascotStatus` on purpose. Status is the lifecycle (idle /
+ * thinking / speaking); mood is the personality. A Duolingo-style character
+ * comes alive from the gap between them — an owl that is *speaking* can be
+ * excited, curious, or gently supportive, and folding those into a single
+ * status enum would multiply into a combinatorial mess.
  */
-export type TutorMode = "socratic" | "teach";
+export type MascotMood =
+  | "neutral"
+  | "happy"
+  | "excited"
+  | "curious"
+  | "supportive"
+  | "proud";
 
-/** Teaching language. The owl's own phrases follow this too. */
-export type TeachLanguage = "en" | "hi";
+/** Moods that read as a reaction to the student, not the owl's own task. */
+const REACTION_MOODS: ReadonlySet<MascotMood> = new Set([
+  "excited",
+  "supportive",
+  "proud",
+]);
 
-/** The owl's own lines, in both languages. */
+/**
+ * The owl's own lines. Deliberately short and a little cheeky — a mascot that
+ * writes a paragraph stops being a character. The Hindi versions keep the same
+ * register rather than translating literally.
+ */
 const MESSAGES: Record<TeachLanguage, Record<MascotStatus, string>> = {
   en: {
     idle: "Hoo there! Ask me about any concept — I'll guide you with questions, not answers.",
@@ -37,6 +55,83 @@ const MESSAGES: Record<TeachLanguage, Record<MascotStatus, string>> = {
   },
 };
 
+/**
+ * Reaction lines, shown when the owl reacts to how the student is doing.
+ * These are the lines that make it feel like a companion rather than a widget.
+ */
+const REACTION_LINES: Record<
+  TeachLanguage,
+  Partial<Record<MascotMood, string[]>>
+> = {
+  en: {
+    excited: [
+      "Yes! That's it! You just got the idea on the first try. 🎉",
+      "That's the one! Hoo-good work — I'd high-five you if I had hands.",
+    ],
+    proud: [
+      "Look at you go. That's a real answer, not a guess. 🌟",
+      "Hoo! That reasoning is solid. Trust it next time too.",
+    ],
+    supportive: [
+      "Close! Not quite, but you're one step away — let's look again. 🦉",
+      "Nearly there. Wrong answers are how the brain files this away. Try once more?",
+    ],
+    happy: [
+      "Nice! Want to push a little further?",
+      "That's flowing now. Shall we go deeper?",
+    ],
+    curious: [
+      "Ooh, good question — let me think about that one.",
+      "Hmm, I like that. Give me a second…",
+    ],
+  },
+  hi: {
+    excited: [
+      "बिलकुल सही! तुमने पहली बार में समझ लिया! 🎉",
+      "वाह, एकदम सही! शाबाश।",
+    ],
+    proud: [
+      "देखो कैसे सोच रहे हो — ये असली समझ है। 🌟",
+      "बहुत बढ़िया! तुम्हारा तर्क मज़बूत है।",
+    ],
+    supportive: [
+      "लगभग सही! बस एक कदम दूर — चलो फिर से देखते हैं। 🦉",
+      "गलती से ही सीख बनती है। एक बार और कोशिश करो?",
+    ],
+    happy: [
+      "बढ़िया! और गहराई में जाना है?",
+      "अब तो आसान लग रहा है। आगे बढ़ें?",
+    ],
+    curious: [
+      "अरे, बहुत अच्छा सवाल — सोचने देता हूँ।",
+      "हम्म, ये अच्छा है। एक सेकंड…",
+    ],
+  },
+};
+
+/** Pick a reaction line, preferring the student's language. */
+export function reactionLine(
+  mood: MascotMood,
+  language: TeachLanguage,
+  index: number,
+): string | null {
+  const pool = REACTION_LINES[language][mood];
+  if (!pool || !pool.length) return null;
+  return pool[index % pool.length];
+}
+
+
+/**
+ * Instructional mode. `socratic` asks and withholds; `teach` explains directly.
+ * The owl is the on-screen teacher, so the mode is shown on its own display
+ * rather than buried in a settings panel.
+ */
+export type TutorMode = "socratic" | "teach";
+
+/** Teaching language. The owl's own phrases follow this too. */
+export type TeachLanguage = "en" | "hi";
+
+/** The owl's own lines, in both languages. */
 const MODE_IDLE_LINE: Record<TutorMode, string> = {
   socratic: "Hoo there! Ask me anything — I'll guide you with questions, not answers.",
   teach: "Teaching mode on. Name a topic and I'll explain it step by step.",
@@ -101,12 +196,14 @@ function owlAnimation(status: MascotStatus): string {
   }
 }
 
-/** Custom SVG: owl in a graduation cap with academic glasses; the right wing
- *  points at the lesson board while thinking/teaching (with a teacher's
- *  pointer stick while teaching). */
-function owlSvg(status: MascotStatus): string {
-  // Eye behaviour per state: idle = wide open, thinking = looking up at the board.
-  const pupilY = status === "thinking" ? 22 : 24;
+/**
+ * Eyes, brows and blush, all driven by mood.
+ *
+ * The brows and the eye *shape* carry most of the expression. A mascot that
+ * only changes colour reads as a status light; one that changes the actual
+ * geometry of its face reads as a character.
+ */
+function faceSvg(status: MascotStatus, mood: MascotMood): string {
   const glasses =
     status === "thinking"
       ? "stroke-indigo-300"
@@ -114,21 +211,78 @@ function owlSvg(status: MascotStatus): string {
         ? "stroke-amber-300"
         : "stroke-slate-400";
 
+  // Closed happy arcs (^^) for celebration, wide eyes for surprise/surprise-ish
+  // reaction, half-lidded for thinking, otherwise a normal round eye.
+  const eyeShape = (cx: number): string => {
+    if (mood === "excited" || mood === "proud" || mood === "happy") {
+      return `<path d="M${cx - 6} 25.5q6-7 12 0" stroke="#1e1b4b" stroke-width="2.2" stroke-linecap="round" fill="none"/>`;
+    }
+    if (status === "thinking") {
+      // Half-lidded, eyes drifting up toward the board.
+      return `<path d="M${cx - 6} 25q6 2.4 12 0" stroke="#1e1b4b" stroke-width="2.2" stroke-linecap="round" fill="none"/>`;
+    }
+    const r = mood === "supportive" ? 5.6 : 6.5;
+    return `<circle cx="${cx}" cy="24" r="${r}" fill="#fff"/><circle cx="${cx}" cy="24" r="2.6" fill="#1e1b4b"/><circle cx="${cx + 0.9}" cy="22.9" r="0.9" fill="#fff"/>`;
+  };
+
+  // Eyebrow angle: raised when curious, dipped when proud, flat when neutral.
+  const brow = (cx: number): string => {
+    const tilt =
+      mood === "curious" ? -2.2 : mood === "supportive" ? 1.6 : mood === "excited" ? -1.2 : 0;
+    if (mood === "excited" || mood === "proud") {
+      return `<path d="M${cx - 6.5} 15.5q6.5-3.4 13 0" stroke="#312e81" stroke-width="1.9" stroke-linecap="round" fill="none"/>`;
+    }
+    return `<path d="M${cx - 6.5} ${17 + tilt}q6.5 ${tilt ? -2.6 : -0.6} 13 0" stroke="#312e81" stroke-width="1.9" stroke-linecap="round" fill="none"/>`;
+  };
+
+  // Blush only on the warm moods — a permanent blush would just be decoration.
+  const blush =
+    mood === "excited" || mood === "happy" || mood === "proud"
+      ? `<ellipse cx="17.5" cy="29.5" rx="3.6" ry="2.3" fill="#fb7185" opacity="0.4"/><ellipse cx="46.5" cy="29.5" rx="3.6" ry="2.3" fill="#fb7185" opacity="0.4"/>`
+      : "";
+
+  return `
+  <g class="owl-eyes owl-blink" style="transform-origin:32px 24px">
+    ${eyeShape(24)}
+    ${eyeShape(40)}
+  </g>
+  <g class="owl-brows">${brow(24)}${brow(40)}</g>
+  ${blush}
+  <circle cx="24" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
+  <circle cx="40" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
+  <path d="M32 22.5v3" class="${glasses}" stroke-width="1.6"/>
+  <path d="M16 24H12" class="${glasses}" stroke-width="1.6"/>
+  <path d="M48 24h4" class="${glasses}" stroke-width="1.6"/>`;
+}
+
+/** The owl itself: a graduation-capped owl whose face and posture react. */
+function owlSvg(status: MascotStatus, mood: MascotMood): string {
+  // The right wing points at the lesson board while teaching and flaps when
+  // the owl celebrates; a supportive owl offers an open palm instead.
+  const rightWing =
+    status === "speaking" && mood !== "supportive"
+      ? '<path d="M47 43c4.5-.8 8.5-2.8 11.5-6l3.2 3c-3.6 4-8.4 6.4-13.7 7.4L47 43Z" fill="#4338ca"/><g class="owl-pointer"><path d="M60.5 38.5l3-7" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round"/><circle cx="63.9" cy="30" r="1.7" fill="#f59e0b"/></g>'
+      : mood === "excited" || mood === "proud"
+        ? // Wing thrown up mid-celebration.
+          '<path d="M46 41c4.5-1.5 8-4.5 10.5-8.5l4 2.4c-3 5-7.5 8.5-13 10.3L46 41Z" fill="#4338ca"/>'
+        : mood === "supportive"
+          ? // Open, gentle palm — "it's okay, try again".
+            '<path d="M47 42c5 0 9 1.6 12.2 4.6l-2.6 3.4c-3.4-2.4-7.2-3.6-11.4-3.8L47 42Z" fill="#4338ca" opacity="0.85"/>'
+          : status === "thinking"
+            ? '<path d="M46 41c4.5-1.5 8-4.5 10.5-8.5l4 2.4c-3 5-7.5 8.5-13 10.3L46 41Z" fill="#4338ca"/>'
+            : '<path d="M50 42c-2 8-7 14-12 16 6 0 11-3 13-8 1.4-3.2 1-6.4-1-8Z" fill="#4338ca" opacity="0.7"/>';
+
   const leftWing =
     '<path d="M14 42c2 8 7 14 12 16-6 0-11-3-13-8-1.4-3.2-1-6.4 1-8Z" fill="#4338ca" opacity="0.7"/>';
-  const rightWing =
-    status === "thinking"
-      ? // Wing raised, gesturing up at the board.
-        '<path d="M46 41c4.5-1.5 8-4.5 10.5-8.5l4 2.4c-3 5-7.5 8.5-13 10.3L46 41Z" fill="#4338ca"/>'
-      : status === "speaking"
-        ? // Wing extended with a teacher's pointer stick aimed at the board.
-          '<path d="M47 43c4.5-.8 8.5-2.8 11.5-6l3.2 3c-3.6 4-8.4 6.4-13.7 7.4L47 43Z" fill="#4338ca"/><g class="owl-pointer"><path d="M60.5 38.5l3-7" stroke="#f59e0b" stroke-width="2.4" stroke-linecap="round"/><circle cx="63.9" cy="30" r="1.7" fill="#f59e0b"/></g>'
-        : // Folded.
-          '<path d="M50 42c-2 8-7 14-12 16 6 0 11-3 13-8 1.4-3.2 1-6.4-1-8Z" fill="#4338ca" opacity="0.7"/>';
+
+  // Sparkles only while celebrating — a permanent sparkle would be noise.
+  const sparkles =
+    mood === "excited" || mood === "proud"
+      ? `<g class="owl-sparkles" fill="#fbbf24"><path d="M8 18l1.2 3 3 1.2-3 1.2L8 26.4 6.8 23.4 3.8 22.2l3-1.2L8 18Z"/><path d="M56 20l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9.9-2.3Z"/></g>`
+      : "";
 
   return `
 <svg viewBox="0 0 64 72" fill="none" xmlns="http://www.w3.org/2000/svg" class="h-full w-full" aria-hidden="true">
-  <!-- graduation cap -->
   <g class="owl-cap">
     <path d="M32 0.5L49 7 32 13.5 15 7 32 0.5Z" fill="#334155"/>
     <path d="M15 7L32 13.5 49 7 49 9.2 32 15.7 15 9.2 15 7Z" fill="#1e293b"/>
@@ -137,30 +291,17 @@ function owlSvg(status: MascotStatus): string {
     <circle cx="49" cy="16" r="1.8" fill="#f59e0b"/>
     <circle cx="32" cy="7" r="1.2" fill="#94a3b8"/>
   </g>
-  <!-- body -->
-  <path d="M32 14C20 14 12 24 12 38c0 14 9 24 20 24s20-10 20-24C52 24 44 14 32 14Z" fill="url(#owlBody)"/>
-  <!-- facial disc -->
-  <ellipse cx="32" cy="33" rx="17" ry="13" fill="#e0e7ff" opacity="0.95"/>
-  <!-- eyes — wrapped so the blink can squash them vertically -->
-  <g class="owl-eyes owl-blink" style="transform-origin:32px 24px">
-    <circle cx="24" cy="24" r="6.5" fill="#fff"/>
-    <circle cx="40" cy="24" r="6.5" fill="#fff"/>
-    <circle cx="24" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
-    <circle cx="40" cy="${pupilY}" r="2.6" fill="#1e1b4b"/>
+  <g class="owl-body-grp">
+    <path d="M32 14C20 14 12 24 12 38c0 14 9 24 20 24s20-10 20-24C52 24 44 14 32 14Z" fill="url(#owlBody)"/>
+    <ellipse cx="32" cy="33" rx="17" ry="13" fill="#e0e7ff" opacity="0.95"/>
+    ${faceSvg(status, mood)}
+    <g class="owl-beak" style="transform-origin:32px 31px">
+      <path d="M32 31l3.5 4.5c-1 1.4-2.4 2-3.5 2s-2.5-.6-3.5-2L32 31Z" fill="#f59e0b"/>
+    </g>
+    ${leftWing}
+    ${rightWing}
+    ${sparkles}
   </g>
-  <!-- academic glasses -->
-  <circle cx="24" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
-  <circle cx="40" cy="24" r="8" class="${glasses}" stroke-width="1.6"/>
-  <path d="M32 22.5v3" class="${glasses}" stroke-width="1.6"/>
-  <path d="M16 24H12" class="${glasses}" stroke-width="1.6"/>
-  <path d="M48 24h4" class="${glasses}" stroke-width="1.6"/>
-  <!-- beak — origin at the top hinge so scaleY opens and closes like a jaw -->
-  <g class="owl-beak" style="transform-origin:32px 31px">
-    <path d="M32 31l3.5 4.5c-1 1.4-2.4 2-3.5 2s-2.5-.6-3.5-2L32 31Z" fill="#f59e0b"/>
-  </g>
-  <!-- wings -->
-  ${leftWing}
-  ${rightWing}
   <defs>
     <linearGradient id="owlBody" x1="12" y1="14" x2="52" y2="62" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6366f1"/>
@@ -242,6 +383,18 @@ export function createMascot(
   setMode: (m: TutorMode) => void;
   getMode: () => TutorMode;
   setSpeaking: (on: boolean) => void;
+  /**
+   * Change the owl's mood. `sticky` moods (curious, happy) stay until changed;
+   * reaction moods auto-relax to neutral so the owl doesn't get stuck beaming.
+   */
+  setMood: (next: MascotMood, options?: { holdMs?: number }) => void;
+  /** The line currently on the owl's display, for handing off to speech. */
+  message: () => string;
+  /**
+   * React to how the student is doing, and speak a matching line.
+   * Returns false when the owl had nothing to say for that outcome.
+   */
+  react: (outcome: "correct" | "close" | "wrong" | "great") => boolean;
   /** Show a topic diagram on the lesson board. */
   setVisual: (spec: VisualSpec | null) => void;
   /** Move the highlight, so the board tracks what the owl is saying. */
@@ -253,14 +406,38 @@ export function createMascot(
 } {
   host.innerHTML = `
     <style>
-      /* Blink runs always — a still-eyed owl reads as a mascot, not a teacher. */
+      /* Blink runs always — a still-eyed owl reads as a mascot, not a teacher.
+         The delay is randomised per-render (see randomizeBlink) so the blink
+         never falls into a metronome the student can predict. */
       .owl-blink { animation: owlblink 5.4s ease-in-out infinite; }
-      /* The beak only moves while a line is being delivered, so the owl
-         doesn't chew on nothing. */
+      /* Breathing: a very small continuous scale on the body only. Kept subtle
+         on purpose — a large one makes a lesson feel seasick. */
+      .owl-body-grp { animation: owlbreathe 4.2s ease-in-out infinite; transform-origin:32px 62px; }
       .owl-beak { transform: scaleY(1); }
       .owl-talking .owl-beak { animation: owlbeak 0.42s steps(6, end) infinite; }
+      /* Celebration: a real hop, with the body squash-and-stretch underneath
+         so the landing reads as weight rather than a slide. The mood class and
+         .owl-visual sit on the SAME element, so this must be a compound
+         selector - a descendant selector would never match. */
+      .owl-visual.owl-mood-excited, .owl-visual.owl-mood-proud {
+        animation: owlhop 0.62s cubic-bezier(0.28, 0.84, 0.42, 1) 3;
+      }
+      .owl-mood-excited .owl-sparkles, .owl-mood-proud .owl-sparkles {
+        animation: owlsparkle 0.62s ease-out 3;
+        transform-origin:32px 22px;
+      }
+      .owl-visual.owl-mood-supportive { animation: owlnod 2.4s ease-in-out infinite; }
+      .owl-mood-curious .owl-brows { animation: owlbrowraise 2.6s ease-in-out infinite; }
+      @keyframes owlbreathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.012,1.022); } }
+      @keyframes owlhop { 0% { transform: translateY(0) scaleY(1); } 30% { transform: translateY(0) scaleY(0.9); } 55% { transform: translateY(-16px) scaleY(1.07); } 100% { transform: translateY(0) scaleY(1); } }
+      @keyframes owlsparkle { 0% { opacity: 0; transform: scale(0.4) rotate(0deg); } 40% { opacity: 1; transform: scale(1.15) rotate(22deg); } 100% { opacity: 0; transform: scale(0.7) rotate(45deg); } }
+      @keyframes owlnod { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(2.5deg); } }
+      @keyframes owlbrowraise { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1.4px); } }
       @media (prefers-reduced-motion: reduce) {
-        .owl-blink, .owl-talking .owl-beak { animation: none; }
+        .owl-blink, .owl-talking .owl-beak, .owl-body-grp,
+        .owl-visual.owl-mood-excited, .owl-visual.owl-mood-proud,
+        .owl-mood-excited .owl-sparkles, .owl-mood-proud .owl-sparkles,
+        .owl-visual.owl-mood-supportive, .owl-mood-curious .owl-brows { animation: none; }
       }
     </style>
     <div class="owl-display" data-state="idle">
@@ -339,6 +516,14 @@ export function createMascot(
   let visualStep = -1;
   /** Language for the owl's own phrases. */
   let language: TeachLanguage = "en";
+  /** How the owl currently feels. Drives the face, not the lifecycle. */
+  let mood: MascotMood = "neutral";
+  /** Timer that relaxes a reaction mood back to neutral. */
+  let moodTimer: number | null = null;
+  /** Rotates through a mood's line variants so reactions don't repeat. */
+  let reactionCount = 0;
+  /** The line last painted onto the display; read back via message(). */
+  let currentLine = "";
   // Mobile-first: the display starts collapsed on small screens, expanded on
   // desktop (>= sm, where the toggle button is hidden anyway).
   let collapsed = window.innerWidth < 640;
@@ -400,10 +585,17 @@ export function createMascot(
           : MODE_IDLE_LINE[mode]
         : MESSAGES[language][status]);
 
-    visual.innerHTML = owlSvg(status);
+    visual.innerHTML = owlSvg(status, mood);
+    // Irregular blink: a fixed-delay blink reads as mechanical. A negative
+    // delay lands the animation partway into its own cycle, so consecutive
+    // renders blink at different phases.
+    const blinkEl = visual.querySelector<SVGElement>(".owl-blink");
+    if (blinkEl) {
+      blinkEl.style.animationDelay = `${(-Math.random() * 5.4).toFixed(2)}s`;
+    }
     // Animate the *visible* state so the owl's motion always matches the
     // chrome around it (pill, board, bubble).
-    visual.className = `owl-visual shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(vis)}`;
+    visual.className = `owl-visual owl-mood-${mood} shrink-0 ${collapsed ? "h-11 w-11" : "h-28 w-28 sm:h-36 sm:w-36"} ${owlAnimation(vis)}`;
     // A real topic diagram takes the board whenever the tutor is explaining
     // one — it's the whole point of the visual teacher. The state sketches
     // are the fallback when there's nothing specific to show.
@@ -442,6 +634,7 @@ export function createMascot(
     }
     message.title = customMessage ?? "";
     message.setAttribute("aria-label", line);
+    currentLine = line;
     message.className = `owl-message text-sm font-medium leading-relaxed sm:text-base ${MESSAGE_STYLES[vis]}`;
 
     modeButton.textContent = MODE_PILL[mode];
@@ -556,6 +749,56 @@ export function createMascot(
     render();
   }
 
+  /**
+   * React to the student's answer.
+   *
+   * "close" and "wrong" are deliberately different: being nearly right is a
+   * different emotional moment from missing entirely, and collapsing them into
+   * one "wrong" reaction would make the owl feel like it isn't paying
+   * attention. Nothing is said on a run of wrong answers beyond a gentle
+   * nudge — a mascot that lectures is worse than one that's briefly warm.
+   */
+  function react(outcome: "correct" | "close" | "wrong" | "great"): boolean {
+    const moodFor: Record<typeof outcome, MascotMood> = {
+      great: "proud",
+      correct: "excited",
+      close: "happy",
+      wrong: "supportive",
+    };
+    const next = moodFor[outcome];
+    reactionCount += 1;
+    const line = reactionLine(next, language, reactionCount);
+    if (!line) return false;
+    customMessage = line;
+    // Deliberately does NOT touch `status`: main.ts owns the lifecycle (and
+    // owns the 4s revert timer). Setting it here would leave the owl showing
+    // "speaking" with nothing to ever bring it back.
+    setMood(next, { holdMs: 4200 });
+    render();
+    return true;
+  }
+
+  function setMood(next: MascotMood, options?: { holdMs?: number }): void {
+    if (moodTimer !== null) {
+      window.clearTimeout(moodTimer);
+      moodTimer = null;
+    }
+    mood = next;
+    if (options?.holdMs && REACTION_MOODS.has(next)) {
+      moodTimer = window.setTimeout(() => {
+        mood = "neutral";
+        moodTimer = null;
+        // Fall back to the idle line once the celebration is over, otherwise
+        // the reaction line stays on screen looking like a stuck state.
+        if (customMessage && reactionLine(next, language, reactionCount) === customMessage) {
+          customMessage = null;
+        }
+        render();
+      }, options.holdMs);
+    }
+    render();
+  }
+
   return {
     setStatus,
     setMessage,
@@ -563,6 +806,9 @@ export function createMascot(
     setMode,
     getMode,
     setSpeaking,
+    setMood,
+    message: () => currentLine,
+    react,
     setVisual,
     setVisualStep,
     visualStepCount: () => visualStepCount(topicVisual),

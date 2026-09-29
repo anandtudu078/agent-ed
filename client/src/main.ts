@@ -333,6 +333,17 @@ function setDashboardVisible(visible: boolean): void {
           studentMessage: prompt,
         });
       },
+      // The owl reacts to the grade. Score bands are deliberately generous at
+      // the bottom: a beginner getting 40 has understood plenty, and an owl
+      // that shrugs at 40 teaches them to give up.
+      (score: number) => {
+        const outcome =
+          score >= 90 ? "great" : score >= 70 ? "correct" : score >= 40 ? "close" : "wrong";
+        if (mascot.react(outcome)) {
+          setAiStatus("speaking");
+          speakOwlMessage(mascot.message() ?? "");
+        }
+      },
     );
   }
 }
@@ -1181,6 +1192,9 @@ if (import.meta.env.DEV) {
     // Drives the real socratic-response handler (used when live AI providers
     // are down so the suite still covers the client reply path).
     simulateReply: (text: string) => handleSocraticResponse({ response: text }),
+    // Drives the owl's reaction directly, so the expression + animation
+    // behaviour is covered without depending on a graded answer landing.
+    react: (outcome: "correct" | "close" | "wrong" | "great") => mascot.react(outcome),
   };
 }
 

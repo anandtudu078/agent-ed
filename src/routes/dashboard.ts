@@ -92,6 +92,65 @@ const STARTER_COURSES = [
       { title: "Everyday AI", topic: "everyday applications of ai" },
     ],
   },
+  {
+    title: "Neural Networks Explained",
+    category: "AI & ML",
+    description:
+      "How a network learns: neurons, layers, weights, and why training actually works.",
+    level: "advanced" as const,
+    modules: [
+      { title: "The perceptron", topic: "perceptrons and artificial neurons" },
+      { title: "Layers and activation", topic: "layers and activation functions" },
+      { title: "Weights and bias", topic: "weights and bias in neural networks" },
+      { title: "Backpropagation", topic: "backpropagation and gradient descent" },
+      { title: "Training a network", topic: "training a neural network from scratch" },
+      { title: "Common architectures", topic: "cnn and rnn architectures" },
+    ],
+  },
+  {
+    title: "Transformers & Large Language Models",
+    category: "AI & ML",
+    description:
+      "Attention, tokens, and how models like this one actually generate text.",
+    level: "advanced" as const,
+    modules: [
+      { title: "Tokens and vocabulary", topic: "tokens and tokenization" },
+      { title: "Attention mechanism", topic: "self attention mechanism" },
+      { title: "Query key value", topic: "query key and value in attention" },
+      { title: "Positional encoding", topic: "positional encoding in transformers" },
+      { title: "Pretraining and fine-tuning", topic: "pretraining and fine tuning" },
+      { title: "Context windows", topic: "context window and token limits" },
+      { title: "Hallucination", topic: "llm hallucination and why it happens" },
+    ],
+  },
+  {
+    title: "Prompting & Retrieval",
+    category: "AI & ML",
+    description: "Getting better answers from a model, and giving it your own data.",
+    level: "intermediate" as const,
+    modules: [
+      { title: "Anatomy of a prompt", topic: "prompt engineering basics" },
+      { title: "Few-shot examples", topic: "few shot prompting" },
+      { title: "Chain of thought", topic: "chain of thought prompting" },
+      { title: "Embeddings", topic: "vector embeddings and similarity" },
+      { title: "Retrieval augmented generation", topic: "retrieval augmented generation rag" },
+      { title: "Vector databases", topic: "vector databases and indexing" },
+    ],
+  },
+  {
+    title: "AI in Practice",
+    category: "AI & ML",
+    description: "Ethics, bias, cost, and where AI is actually worth using.",
+    level: "intermediate" as const,
+    modules: [
+      { title: "Bias in datasets", topic: "bias and fairness in ai" },
+      { title: "Overfitting in production", topic: "model drift and monitoring" },
+      { title: "Cost and latency", topic: "inference cost and latency" },
+      { title: "AI safety basics", topic: "ai safety and alignment" },
+      { title: "Privacy and data", topic: "data privacy in machine learning" },
+      { title: "Choosing a model", topic: "choosing the right model for a task" },
+    ],
+  },
 ];
 
 /**
