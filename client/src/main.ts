@@ -101,7 +101,8 @@ function setAiStatus(next: AiStatus): void {
   aiStatus = next;
   mascot.setStatus(next);
 
-  // "speaking" is a momentary celebration: return to idle after 4 seconds.
+  // "speaking" is a momentary celebration: the owl calms down after 4 s, but
+  // the tutor's guidance stays on its classroom display (see setMessage).
   if (next === "speaking") {
     if (speakingRevertTimer) clearTimeout(speakingRevertTimer);
     speakingRevertTimer = setTimeout(() => setAiStatus("idle"), 4000);
@@ -153,11 +154,16 @@ function connectSocket(): void {
     appendMessage("tutor", payload.response);
     setBusy(false);
     setAiStatus("speaking");
+    // The owl is the visual teacher: it shows the guidance on its display…
+    mascot.setMessage(payload.response);
+    // …and speaks it aloud when voice mode is on.
+    if (voiceEnabled) speakOwlMessage(payload.response);
   });
 
   socket.on("ai-error", (payload: { message: string }) => {
     appendMessage("system", `Something went wrong: ${payload.message}`);
     setBusy(false);
+    mascot.clearMessage();
     setAiStatus("idle");
   });
 }
@@ -210,6 +216,9 @@ function signOut(message?: string): void {
   clearStoredAuth();
   currentAuth = null;
   messagesEl.replaceChildren();
+  stopOwlSpeech();
+  micSuspendedForSpeech = false;
+  mascot.clearMessage();
   setAiStatus("idle");
   if (message) appendAuthError(message);
   showAuth();
@@ -362,6 +371,9 @@ formEl.addEventListener("submit", (event) => {
   appendMessage("student", studentMessage);
   inputEl.value = "";
   setBusy(true);
+  mascot.clearMessage();
+  stopOwlSpeech();
+  resumeMicAfterSpeech();
   setAiStatus("thinking");
 
   socket.emit("student-message", {
@@ -370,6 +382,71 @@ formEl.addEventListener("submit", (event) => {
     studentMessage,
   });
 });
+
+// ---------------------------------------------------------------------------
+// Voice playback (speech synthesis) — in voice mode the owl TALKS: it reads
+// its Socratic guidance aloud, pausing the microphone so it doesn't transcribe
+// its own voice.
+// ---------------------------------------------------------------------------
+
+let currentUtterance: SpeechSynthesisUtterance | null = null;
+let micSuspendedForSpeech = false;
+
+/** Stop any guidance the owl is currently reading aloud. */
+function stopOwlSpeech(): void {
+  currentUtterance = null;
+  window.speechSynthesis?.cancel();
+}
+
+/** Restart the microphone once the owl finishes speaking (voice mode only). */
+function resumeMicAfterSpeech(): void {
+  if (!micSuspendedForSpeech) return;
+  micSuspendedForSpeech = false;
+  if (voiceEnabled && recognition) {
+    try {
+      recognition.start();
+    } catch {
+      // Already starting — harmless.
+    }
+  }
+}
+
+/** The Wise Owl reads its guidance aloud (voice mode). */
+function speakOwlMessage(text: string): void {
+  const synth = window.speechSynthesis;
+  if (!synth) {
+    voiceHintEl.textContent =
+      "Speech playback isn't supported in this browser — the owl will stay quiet.";
+    voiceHintEl.classList.remove("hidden");
+    return;
+  }
+  if (!text.trim()) return;
+
+  stopOwlSpeech();
+  micSuspendedForSpeech = voiceEnabled && recognition !== null;
+  if (micSuspendedForSpeech) {
+    try {
+      recognition?.stop();
+    } catch {
+      // Mic already stopped — ignore.
+    }
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  utterance.rate = 1;
+  utterance.pitch = 1.05;
+  utterance.onend = () => {
+    if (currentUtterance === utterance) currentUtterance = null;
+    resumeMicAfterSpeech();
+  };
+  utterance.onerror = () => {
+    if (currentUtterance === utterance) currentUtterance = null;
+    resumeMicAfterSpeech();
+  };
+  currentUtterance = utterance;
+  synth.speak(utterance);
+}
 
 // ---------------------------------------------------------------------------
 // Voice mode (Web Speech API — speech recognition)
@@ -413,6 +490,8 @@ function getRecognition(): SpeechRecognitionLike | null {
     if (!transcript) return;
     if (!socket?.connected || requestInFlight) return;
     appendMessage("student", transcript);
+    mascot.clearMessage();
+    stopOwlSpeech();
 
     socket.emit("student-message", {
       studentId: getStudentId(),
@@ -425,6 +504,8 @@ function getRecognition(): SpeechRecognitionLike | null {
 
   instance.onend = () => {
     // Chrome stops recognition after silence; restart while voice mode is on.
+    // While the owl is speaking we keep the mic paused so it doesn't hear itself.
+    if (micSuspendedForSpeech) return;
     if (voiceEnabled && recognition === instance) recognition.start();
   };
 
@@ -440,6 +521,7 @@ function getRecognition(): SpeechRecognitionLike | null {
 
 function setVoiceMode(enabled: boolean): void {
   voiceEnabled = enabled;
+  micSuspendedForSpeech = false;
   voiceToggleEl.setAttribute("aria-pressed", String(enabled));
 
   if (enabled) {
@@ -455,7 +537,8 @@ function setVoiceMode(enabled: boolean): void {
     voiceToggleEl.className =
       "rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500 active:scale-95";
     voiceToggleEl.innerHTML = '🎙️ <span class="hidden sm:inline">Listening…</span>';
-    voiceHintEl.textContent = "Voice mode on — speak, and your words become messages.";
+    voiceHintEl.textContent =
+      "Voice mode on — speak your question, and the owl will answer out loud.";
     voiceHintEl.classList.remove("hidden");
     try {
       recognition.start();
@@ -468,6 +551,8 @@ function setVoiceMode(enabled: boolean): void {
       "rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-slate-600 hover:text-white active:scale-95";
     voiceToggleEl.innerHTML = '🎤 <span class="hidden sm:inline">Voice Mode</span>';
     voiceHintEl.classList.add("hidden");
+    stopOwlSpeech();
+    micSuspendedForSpeech = false;
     recognition?.stop();
     recognition = null;
   }
@@ -478,6 +563,16 @@ voiceToggleEl.addEventListener("click", () => setVoiceMode(!voiceEnabled));
 // ---------------------------------------------------------------------------
 // Boot: show the right view for the stored auth state
 // ---------------------------------------------------------------------------
+
+// Dev-only hook so automated UI tests can exercise the owl teacher (speech
+// bubble + TTS) without waiting for a live AI reply. Stripped from production
+// builds by Vite.
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__agentedTest = {
+    speakOwlMessage,
+    setMessage: (text: string) => mascot.setMessage(text),
+  };
+}
 
 if (currentAuth) {
   showApp();
