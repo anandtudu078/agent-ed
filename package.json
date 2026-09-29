@@ -17,13 +17,16 @@
     "dev": "ts-node src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "test": "npm run test:parse && npm run test:review && npm run test:profile && npm run test:difficulty && npm run test:prereqs && npm run test:flow && npm run test:return",
     "test:parse": "ts-node scripts/visual-parse-test.ts",
     "test:review": "ts-node scripts/review-test.ts",
     "test:profile": "ts-node scripts/profile-test.ts",
     "test:difficulty": "ts-node scripts/difficulty-test.ts",
     "test:prereqs": "ts-node scripts/prereq-test.ts",
     "test:flow": "ts-node scripts/flow-test.ts",
-    "test:return": "ts-node scripts/return-test.ts"
+    "test:return": "ts-node scripts/return-test.ts",
+    "test:ui": "node client/scripts/ui-test.mjs",
+    "test:security": "node client/scripts/security-test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
