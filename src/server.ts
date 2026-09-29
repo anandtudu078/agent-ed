@@ -250,6 +250,40 @@ app.get("/api/sessions/:studentId", requireAuth, async (request, response) => {
   }
 });
 
+/**
+ * DELETE /api/sessions/:studentId
+ *
+ * Clears the conversation. Without this, restoring history is a one-way door:
+ * a student would be stuck replaying the same thread forever, with no way to
+ * start a clean one. Own conversation only.
+ */
+app.delete("/api/sessions/:studentId", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser;
+    const studentId = String(request.params.studentId ?? "").trim();
+    if (!studentId) {
+      response.status(400).json({ error: "studentId is required." });
+      return;
+    }
+    if (!authUser || authUser.username !== studentId) {
+      response.status(403).json({ error: "You can only clear your own session." });
+      return;
+    }
+
+    // Keep topicsVisited: those are the student's learning record, not chat
+    // history. Clearing them would reset learning speed and course progress.
+    const result = await Session.updateOne(
+      { studentId },
+      { $set: { conversationHistory: [] } },
+    );
+
+    response.json({ cleared: result.modifiedCount > 0 });
+  } catch (error) {
+    console.error("Failed to clear session.", error);
+    response.status(500).json({ error: "Unable to clear the conversation." });
+  }
+});
+
 app.post("/api/chat", requireAuth, chatRateLimit, async (request, response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser;
