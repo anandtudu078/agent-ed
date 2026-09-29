@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { createMascot, type MascotStatus, type TutorMode } from "./components/mascot";
+import { createMascot, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
 import { visualStepCount, type VisualSpec } from "./components/diagrams";
 import {
   createDashboard,
@@ -21,6 +21,7 @@ interface StoredUser {
   id: string;
   username: string;
   displayName: string;
+  language?: "en" | "hi";
 }
 
 interface AuthResponse {
@@ -83,6 +84,8 @@ const signOutButtonEl =
   document.querySelector<HTMLButtonElement>("#sign-out-button")!;
 const newChatButtonEl =
   document.querySelector<HTMLButtonElement>("#new-chat-button")!;
+const languageToggleEl =
+  document.querySelector<HTMLButtonElement>("#language-toggle")!;
 const userBadgeEl = document.querySelector<HTMLSpanElement>("#user-badge")!;
 
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
@@ -529,6 +532,12 @@ function showApp(): void {
   appViewEl.classList.remove("hidden");
   if (currentAuth) {
     userBadgeEl.textContent = `👤 ${currentAuth.user.displayName}`;
+    // The stored preference wins on boot, so the owl greets a returning
+    // student in the language they chose rather than resetting to English.
+    teachLanguage = currentAuth.user.language === "hi" ? "hi" : "en";
+    mascot.setLanguage(teachLanguage);
+    languageToggleEl.setAttribute("aria-pressed", String(teachLanguage === "hi"));
+    languageToggleEl.textContent = teachLanguage === "hi" ? "हिंदी" : "EN";
   }
   setDashboardVisible(false);
   connectSocket();
@@ -814,8 +823,53 @@ function resumeMicAfterSpeech(): void {
   }
 }
 
+/**
+ * Find a voice for the given language, if the device has one.
+ *
+ * This is the whole reason Hindi speech needs care. Plenty of machines — stock
+ * macOS, most Linux desktops — have no hi-IN voice at all. Handing Devanagari
+ * text to an English voice produces something that sounds like gibberish, which
+ * is worse than staying quiet, so we detect and refuse instead of faking it.
+ */
+let cachedVoices: SpeechSynthesisVoice[] | null = null;
+
+function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+  const synth = window.speechSynthesis;
+  if (!synth) return Promise.resolve([]);
+  if (cachedVoices) return Promise.resolve(cachedVoices);
+
+  return new Promise((resolve) => {
+    const existing = synth.getVoices();
+    if (existing.length) {
+      cachedVoices = existing;
+      resolve(existing);
+      return;
+    }
+    // Chrome populates the list asynchronously.
+    const timer = window.setTimeout(() => {
+      synth.removeEventListener("voiceschanged", onChange);
+      cachedVoices = synth.getVoices();
+      resolve(cachedVoices);
+    }, 1200);
+    const onChange = () => {
+      window.clearTimeout(timer);
+      cachedVoices = synth.getVoices();
+      resolve(cachedVoices);
+    };
+    synth.addEventListener("voiceschanged", onChange, { once: true });
+  });
+}
+
+/** Does this device have a voice that can actually speak this language? */
+async function hasVoiceFor(language: TeachLanguage): Promise<boolean> {
+  const voices = await loadVoices();
+  if (!voices.length) return false;
+  const prefix = language === "hi" ? "hi" : "en";
+  return voices.some((voice) => voice.lang?.toLowerCase().startsWith(prefix));
+}
+
 /** The Wise Owl reads its guidance aloud, walking the diagram as it goes. */
-function speakOwlMessage(text: string, visual: VisualSpec | null = null): void {
+async function speakOwlMessage(text: string, visual: VisualSpec | null = null): Promise<void> {
   const synth = window.speechSynthesis;
   if (!synth) {
     voiceHintEl.textContent =
@@ -824,6 +878,15 @@ function speakOwlMessage(text: string, visual: VisualSpec | null = null): void {
     return;
   }
   if (!text.trim()) return;
+
+  // Refuse rather than mangle: an English voice reading Devanagari is gibberish.
+  if (teachLanguage === "hi" && !(await hasVoiceFor("hi"))) {
+    voiceHintEl.textContent =
+      "इस device पर Hindi voice उपलब्ध नहीं है — उत्तर पढ़ा नहीं जा रहा, पर पढ़ा जा सकता है। (No Hindi voice on this device, so the owl shows the answer instead of reading it.)";
+    voiceHintEl.classList.remove("hidden");
+    playSilentVisualWalkthrough(visual);
+    return;
+  }
 
   stopOwlSpeech();
   micSuspendedForSpeech = listeningEnabled && recognition !== null;
@@ -938,7 +1001,47 @@ let voiceEnabled = false;
  */
 let speakingEnabled = true;
 let listeningEnabled = false;
+/** Teaching language, mirrored from the token so the UI can render immediately. */
+let teachLanguage: TeachLanguage = "en";
 let recognition: SpeechRecognitionLike | null = null;
+
+/** Persist the language and re-apply it to the owl. */
+async function setTeachLanguage(next: TeachLanguage): Promise<void> {
+  if (next === teachLanguage) return;
+  teachLanguage = next;
+  mascot.setLanguage(next);
+  languageToggleEl.setAttribute("aria-pressed", String(next === "hi"));
+  languageToggleEl.textContent = next === "hi" ? "हिंदी" : "EN";
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/language`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}`,
+      },
+      body: JSON.stringify({ language: next }),
+    });
+    if (!res.ok) throw new Error("Could not save the language.");
+    const body = (await res.json()) as { token?: string; user?: StoredUser };
+    // The server re-issues the token so the new language is in the JWT; keep
+    // the stored copy in step or the next reply would come back in the old one.
+    if (body.token) localStorage.setItem("agented:token", body.token);
+    if (body.user) {
+      localStorage.setItem("agented:user", JSON.stringify(body.user));
+      currentAuth = { token: body.token ?? currentAuth?.token ?? "", user: body.user };
+    }
+  } catch (error) {
+    teachLanguage = next === "hi" ? "en" : "hi";
+    mascot.setLanguage(teachLanguage);
+    voiceHintEl.textContent =
+      error instanceof Error ? error.message : "Could not change the language.";
+    voiceHintEl.classList.remove("hidden");
+  }
+}
+
+languageToggleEl.addEventListener("click", () => {
+  void setTeachLanguage(teachLanguage === "hi" ? "en" : "hi");
+});
 
 function getRecognition(): SpeechRecognitionLike | null {
   const w = window as SpeechWindow;

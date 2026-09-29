@@ -7,6 +7,13 @@ export interface AuthUser {
   id: string;
   username: string;
   displayName: string;
+  /**
+   * Teaching language carried in the token. A language change re-issues the
+   * token (see PATCH /api/auth/language) so this never goes stale — which is
+   * why it is safe to read on the hot chat path instead of hitting the DB on
+   * every message.
+   */
+  language: "en" | "hi";
 }
 
 export interface AuthenticatedRequest extends Request {

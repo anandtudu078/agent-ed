@@ -162,6 +162,15 @@ const VISUAL_SYSTEM_PROMPT =
 
 const VISUAL_MODEL = "openai/gpt-oss-20b";
 
+/** Diagram labels follow the teaching language, including the code-switch rule. */
+const VISUAL_LANGUAGE_CLAUSE: Record<string, string> = {
+  en: "",
+  hi:
+    " Write all labels in Hindi (Devanagari) mixed with English. Keep technical " +
+    'terms in English — write "array", "loop", "tree", never a transliteration. ' +
+    "Labels must be at most 3 words.",
+};
+
 /**
  * Ask for a diagram that suits this explanation. Returns null on any failure.
  *
@@ -171,10 +180,12 @@ const VISUAL_MODEL = "openai/gpt-oss-20b";
 export async function generateVisual(
   topic: string,
   explanation: string,
+  language: string = "en",
 ): Promise<VisualSpec | null> {
   try {
+    const clause = VISUAL_LANGUAGE_CLAUSE[language] ?? "";
     const raw = await completeJson<Record<string, unknown>>(
-      VISUAL_SYSTEM_PROMPT,
+      VISUAL_SYSTEM_PROMPT + clause,
       `Topic: ${topic}\n\nExplanation the student just read:\n${explanation.slice(0, 1200)}\n\nChoose the diagram that best helps here.`,
       { model: VISUAL_MODEL, temperature: 0.2 },
     );

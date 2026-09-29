@@ -250,6 +250,48 @@ try {
     clearedBoard.includes("<svg") && !clearedBoard.includes("Loop back"),
   );
 
+  // 7b-4. Language: the owl's own phrases switch, and the choice persists to
+  // the server so it follows the student to another device.
+  const langBtn = page.locator("#language-toggle");
+  check("language toggle is present", await langBtn.isVisible());
+  // Assert the button state rather than the owl's line: earlier steps leave the
+  // owl showing a tutor reply, so the spoken line is not the idle line here.
+  check(
+    "starts in English",
+    (await langBtn.getAttribute("aria-pressed")) === "false",
+    await langBtn.getAttribute("aria-pressed"),
+  );
+  await langBtn.click();
+  await page.waitForTimeout(700);
+  const hindiLine = (
+    (await page.locator("#owl-stage .owl-message").textContent()) ?? ""
+  ).trim();
+  check("owl switches its own phrases to Hindi", /[ऀ-ॿ]/.test(hindiLine), hindiLine.slice(0, 40));
+  // It must survive a reload — that is the whole point of storing it.
+  // Assert the stored preference, not the owl's line: the session history
+  // restored on boot holds replies from *before* the switch, and we do not
+  // retroactively translate them, so the owl may legitimately be showing an
+  // older English message.
+  await page.reload();
+  await page.locator("#app-view").waitFor({ state: "visible" });
+  await page.waitForTimeout(1500);
+  const restoredLanguage = await page.evaluate(() => {
+    const raw = localStorage.getItem("agented:user");
+    try {
+      return JSON.parse(raw ?? "{}").language ?? null;
+    } catch {
+      return null;
+    }
+  });
+  check("Hindi choice survives a reload", restoredLanguage === "hi", String(restoredLanguage));
+  check(
+    "language toggle shows Hindi after reload",
+    (await langBtn.getAttribute("aria-pressed")) === "true",
+  );
+  // Put it back so the remaining checks run in the default language.
+  await langBtn.click();
+  await page.waitForTimeout(700);
+
   // 7c. Voice mode TTS: run a second page (same session) with speechSynthesis
   // stubbed, then verify the owl TALKS — speaks the guidance and stops speech
   // on voice-off.

@@ -12,6 +12,7 @@ import {
   analyzeStudentInput,
   generateTutorResponse,
   type TutorMode,
+  type TeachLanguage,
 } from "./services/aiService";
 import { recordLearningSignal } from "./services/progressService";
 import { refreshEnrollments } from "./services/courseService";
@@ -184,12 +185,16 @@ async function processStudentMessage(
 
   const priorMessages: ConversationMessage[] = prior?.conversationHistory ?? [];
   const mode = parseMode(payload.mode);
+  // Language comes from the token, not the request body: the client must not be
+  // able to set it per-message and desync from the stored preference.
+  const language: TeachLanguage = authUser.language === "hi" ? "hi" : "en";
   const analysis = await analyzeStudentInput(studentMessage, priorMessages);
   const response = await generateTutorResponse(
     analysis,
     studentMessage,
     priorMessages,
     mode,
+    language,
   );
 
   // The model names the topic far better than the client's first 60 characters
@@ -237,7 +242,7 @@ async function processStudentMessage(
   // concept, not posing a question. Socratic replies get the question board.
   // Best-effort — a missing diagram must never cost the student their answer.
   const visual =
-    mode === "teach" ? await generateVisual(activeTopic, response) : null;
+    mode === "teach" ? await generateVisual(activeTopic, response, language) : null;
 
   // Feed the dashboard. Best-effort: a progress write must never fail a reply
   // the student is already waiting on.

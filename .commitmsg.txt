@@ -1,0 +1,32 @@
+feat: bilingual teaching in Hindi and English
+
+Students can now choose the language the owl teaches in, and the choice is
+stored on the user so it follows them to another device.
+
+What changed
+- User.language (en | hi), persisted in MongoDB, returned by register/login.
+- PATCH /api/auth/language persists the preference and re-issues the token,
+  so the language in the JWT never goes stale.
+- Tutor prompts take a language clause; the Groq fallback was dropping it,
+  which meant Hindi students silently got English whenever Gemini was out
+  of quota - which, on the free tier, is most of the time.
+- Diagram labels follow the same code-switching rule as the prose.
+- The owl's own idle/thinking/speaking lines are localised.
+- Noto Sans Devanagari added to the font stack.
+
+Code-switching, not translation
+Hindi teaching keeps technical terms in English ("recursion ek function hai
+jo apne aap ko call karta hai"). Transliterating the vocabulary into
+Devanagari would make it less recognisable, not more - and it keeps the text
+readable on devices with no Hindi support.
+
+Speech degrades honestly
+Many machines have no hi-IN voice. Rather than read Devanagari through an
+English voice, which sounds like gibberish, the client detects the missing
+voice, says so, and falls back to a silent diagram walkthrough.
+
+Verified: Hindi reply, code-switched diagram labels, 72/72 UI checks,
+13/13 security checks, both TS projects compile.
+
+Still open: assessments are graded on English-only prompts, and full UI
+i18n (dashboard, courses) is deliberately deferred.

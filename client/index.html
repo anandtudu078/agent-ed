@@ -12,13 +12,27 @@
       content="AgentEd — a Socratic AI mentor that teaches with questions, never answers."
     />
     <title>AgentEd — Socratic AI Mentor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ["Inter", "system-ui", "sans-serif"],
+              // Devanagari is listed explicitly rather than left to the
+              // system-ui fallback: Hindi teaching is a first-class mode now,
+              // and an unlisted script renders as boxes on some systems.
+              sans: [
+                "Inter",
+                "Noto Sans Devanagari",
+                "system-ui",
+                "sans-serif",
+              ],
             },
             animation: {
               bob: "bob 3.5s ease-in-out infinite",
@@ -271,6 +285,15 @@
             <span id="status-text">Connecting…</span>
           </span>
           <div class="flex items-center gap-1.5">
+            <button
+              id="language-toggle"
+              type="button"
+              title="Switch teaching language (English / हिन्दी)"
+              aria-pressed="false"
+              class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-indigo-500/60 hover:text-indigo-300"
+            >
+              EN
+            </button>
             <button
               id="new-chat-button"
               type="button"
