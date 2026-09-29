@@ -418,7 +418,62 @@ try {
   await page.locator("#dashboard-view").waitFor({ state: "visible" });
   check("header toggle shows dashboard", true);
   await page.locator(".dash-courses .dash-course").first().waitFor();
-  check("course catalog renders seeded courses", (await page.locator(".dash-courses .dash-course").count()) >= 4);
+  check(
+    "course catalog renders seeded courses",
+    (await page.locator(".dash-courses .dash-course").count()) >= 4,
+  );
+
+  // The AI curriculum is the point of the catalog, so pin its shape: every
+  // major branch present, and no course left with a syllabus too thin to teach.
+  const curriculum = await page.evaluate(async () => {
+    const user = JSON.parse(localStorage.getItem("agented:user") ?? "{}");
+    const res = await fetch(
+      `http://localhost:3000/api/dashboard/${encodeURIComponent(user.username)}`,
+      { headers: { Authorization: `Bearer ${localStorage.getItem("agented:token")}` } },
+    );
+    const body = await res.json();
+    return body.courses.map((c) => ({
+      title: c.title,
+      category: c.category,
+      modules: (c.modules ?? []).length,
+    }));
+  });
+  const aiBranches = [
+    "AI Foundations",
+    "Machine Learning",
+    "Deep Learning",
+    "Generative AI",
+    "Natural Language",
+    "Computer Vision",
+    "Speech & Audio",
+    "Robotics",
+    "Responsible AI",
+  ];
+  const presentCategories = new Set(curriculum.map((c) => c.category));
+  const missingBranches = aiBranches.filter((b) => !presentCategories.has(b));
+  check(
+    "every AI branch is represented in the catalog",
+    missingBranches.length === 0,
+    missingBranches.join(", ") || `${aiBranches.length} branches`,
+  );
+  const aiCourses = curriculum.filter((c) => aiBranches.includes(c.category));
+  check(
+    "AI courses cover the full branch set",
+    aiCourses.length >= 20,
+    `${aiCourses.length} AI courses`,
+  );
+  const thinCourses = aiCourses.filter((c) => c.modules < 5);
+  check(
+    "no AI course is too thin to be a real track",
+    thinCourses.length === 0,
+    thinCourses.map((c) => `${c.title}(${c.modules})`).join(", ") || "all >= 5 modules",
+  );
+  const aiModuleCount = aiCourses.reduce((sum, c) => sum + c.modules, 0);
+  check(
+    "AI syllabus has real depth",
+    aiModuleCount >= 120,
+    `${aiModuleCount} modules`,
+  );
   check(
     "learning speed card renders",
     ((await page.locator(".dash-speed").textContent()) ?? "").trim().length > 0,

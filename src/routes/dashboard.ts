@@ -8,166 +8,36 @@ import {
   requireAuth,
 } from "../middleware/auth";
 import { refreshEnrollments } from "../services/courseService";
+import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
 
 const router = Router();
 
-// Starter catalog seeded once so the dashboard's course list isn't empty on
-// first load. Safe to run on every boot: it only inserts what's missing.
-const STARTER_COURSES = [
-  {
-    title: "Introduction to Programming",
-    category: "Programming",
-    description: "Variables, loops, functions, and how code actually runs.",
-    level: "beginner" as const,
-    modules: [
-      { title: "Variables and types", topic: "variables and data types" },
-      { title: "Conditionals", topic: "if statements and conditionals" },
-      { title: "Loops", topic: "loops and iteration" },
-      { title: "Functions", topic: "functions and parameters" },
-      { title: "Debugging", topic: "debugging and reading errors" },
-    ],
-  },
-  {
-    title: "Web Development Basics",
-    category: "Web Development",
-    description: "HTML, CSS, and JavaScript — build your first web page.",
-    level: "beginner" as const,
-    modules: [
-      { title: "HTML structure", topic: "html structure and elements" },
-      { title: "CSS styling", topic: "css styling and layout" },
-      { title: "Responsive design", topic: "responsive web design" },
-      { title: "DOM manipulation", topic: "dom manipulation" },
-      { title: "Events", topic: "javascript events and handlers" },
-    ],
-  },
-  {
-    title: "Data Structures Fundamentals",
-    category: "Computer Science",
-    description: "Arrays, lists, stacks, queues, and when to reach for each.",
-    level: "intermediate" as const,
-    modules: [
-      { title: "Arrays", topic: "arrays and indexing" },
-      { title: "Linked lists", topic: "linked lists" },
-      { title: "Stacks and queues", topic: "stacks and queues" },
-      { title: "Hash tables", topic: "hash tables and dictionaries" },
-      { title: "Trees", topic: "trees and binary search trees" },
-    ],
-  },
-  {
-    title: "Algorithms Step by Step",
-    category: "Computer Science",
-    description: "Sorting, searching, and thinking about efficiency.",
-    level: "intermediate" as const,
-    modules: [
-      { title: "Big O notation", topic: "big o notation and time complexity" },
-      { title: "Searching", topic: "searching algorithms" },
-      { title: "Sorting", topic: "sorting algorithms" },
-      { title: "Recursion", topic: "recursion" },
-      { title: "Greedy and dynamic programming", topic: "dynamic programming" },
-    ],
-  },
-  {
-    title: "Databases & MongoDB",
-    category: "Databases",
-    description: "How data is stored, queried, and modelled in documents.",
-    level: "intermediate" as const,
-    modules: [
-      { title: "Data modelling", topic: "data modelling and schemas" },
-      { title: "CRUD operations", topic: "crud operations" },
-      { title: "Indexing", topic: "database indexing" },
-      { title: "Aggregation", topic: "aggregation pipelines" },
-      { title: "Transactions", topic: "database transactions" },
-    ],
-  },
-  {
-    title: "Machine Learning Concepts",
-    category: "AI & ML",
-    description: "What models are, how they learn, and where AI shows up daily.",
-    level: "advanced" as const,
-    modules: [
-      { title: "What is a model", topic: "machine learning models" },
-      { title: "Training data", topic: "training data and features" },
-      { title: "Overfitting", topic: "overfitting and underfitting" },
-      { title: "Evaluation", topic: "model evaluation and metrics" },
-      { title: "Everyday AI", topic: "everyday applications of ai" },
-    ],
-  },
-  {
-    title: "Neural Networks Explained",
-    category: "AI & ML",
-    description:
-      "How a network learns: neurons, layers, weights, and why training actually works.",
-    level: "advanced" as const,
-    modules: [
-      { title: "The perceptron", topic: "perceptrons and artificial neurons" },
-      { title: "Layers and activation", topic: "layers and activation functions" },
-      { title: "Weights and bias", topic: "weights and bias in neural networks" },
-      { title: "Backpropagation", topic: "backpropagation and gradient descent" },
-      { title: "Training a network", topic: "training a neural network from scratch" },
-      { title: "Common architectures", topic: "cnn and rnn architectures" },
-    ],
-  },
-  {
-    title: "Transformers & Large Language Models",
-    category: "AI & ML",
-    description:
-      "Attention, tokens, and how models like this one actually generate text.",
-    level: "advanced" as const,
-    modules: [
-      { title: "Tokens and vocabulary", topic: "tokens and tokenization" },
-      { title: "Attention mechanism", topic: "self attention mechanism" },
-      { title: "Query key value", topic: "query key and value in attention" },
-      { title: "Positional encoding", topic: "positional encoding in transformers" },
-      { title: "Pretraining and fine-tuning", topic: "pretraining and fine tuning" },
-      { title: "Context windows", topic: "context window and token limits" },
-      { title: "Hallucination", topic: "llm hallucination and why it happens" },
-    ],
-  },
-  {
-    title: "Prompting & Retrieval",
-    category: "AI & ML",
-    description: "Getting better answers from a model, and giving it your own data.",
-    level: "intermediate" as const,
-    modules: [
-      { title: "Anatomy of a prompt", topic: "prompt engineering basics" },
-      { title: "Few-shot examples", topic: "few shot prompting" },
-      { title: "Chain of thought", topic: "chain of thought prompting" },
-      { title: "Embeddings", topic: "vector embeddings and similarity" },
-      { title: "Retrieval augmented generation", topic: "retrieval augmented generation rag" },
-      { title: "Vector databases", topic: "vector databases and indexing" },
-    ],
-  },
-  {
-    title: "AI in Practice",
-    category: "AI & ML",
-    description: "Ethics, bias, cost, and where AI is actually worth using.",
-    level: "intermediate" as const,
-    modules: [
-      { title: "Bias in datasets", topic: "bias and fairness in ai" },
-      { title: "Overfitting in production", topic: "model drift and monitoring" },
-      { title: "Cost and latency", topic: "inference cost and latency" },
-      { title: "AI safety basics", topic: "ai safety and alignment" },
-      { title: "Privacy and data", topic: "data privacy in machine learning" },
-      { title: "Choosing a model", topic: "choosing the right model for a task" },
-    ],
-  },
-];
-
 /**
- * Seed the catalog, and backfill `modules` onto any course created before the
- * syllabus existed. Without the backfill an existing dev database keeps
- * module-less courses forever, and progress silently stays at 0% because
- * there's no denominator to divide by.
+ * Seed the catalog, and sync every starter course's content on boot.
+ *
+ * The sync is what makes editing the curriculum safe: without it, a renamed
+ * category or an extended syllabus only ever reaches a brand-new database, and
+ * existing installs silently keep serving the old version. Progress depends on
+ * `modules` being present (it's the denominator for "how far through am I"),
+ * so a stale syllabus isn't cosmetic — it quietly corrupts percentages.
  */
 async function ensureStarterCourses(): Promise<void> {
-  const titles = new Set(STARTER_COURSES.map((course) => course.title));
+  const titles = new Set(CURRICULUM.map((course) => course.title));
 
-  // Backfill: any starter course that exists but has no syllabus yet.
+  // Sync the authored content. Student-owned fields (enrolment, progress) are
+  // deliberately untouched.
   await Course.bulkWrite(
-    STARTER_COURSES.map((course) => ({
+    CURRICULUM.map((course) => ({
       updateOne: {
         filter: { title: course.title },
-        update: { $set: { modules: course.modules } },
+        update: {
+          $set: {
+            category: course.category,
+            description: course.description,
+            level: course.level,
+            modules: course.modules,
+          },
+        },
       },
     })),
   );
@@ -179,12 +49,57 @@ async function ensureStarterCourses(): Promise<void> {
         .lean()
     ).map((course) => course.title),
   );
-  const toInsert = STARTER_COURSES.filter(
+  const toInsert = CURRICULUM.filter(
     (course) => !existingTitles.has(course.title),
   );
   if (toInsert.length) {
     await Course.insertMany(toInsert);
     console.log(`Seeded ${toInsert.length} starter course(s).`);
+  }
+
+  await pruneRetiredCourses();
+}
+
+/**
+ * Remove explicitly-retired starter courses, but never one a student is
+ * enrolled in.
+ *
+ * A student's enrolment stores the courseId inline, so deleting a course they
+ * are working through would silently orphan their progress. Losing a module of
+ * history is a much better failure than an enrolment pointing at nothing.
+ */
+async function pruneRetiredCourses(): Promise<void> {
+  const retired = [...RETIRED_COURSE_TITLES];
+  if (!retired.length) return;
+
+  const doomed = await Course.find({ title: { $in: retired } })
+    .select({ _id: 1, title: 1 })
+    .lean();
+  if (!doomed.length) return;
+
+  const enrolledIds = new Set(
+    (
+      await Progress.find({
+        "enrolledCourses.courseId": { $in: doomed.map((c) => String(c._id)) },
+      })
+        .select({ "enrolledCourses.courseId": 1 })
+        .lean()
+    ).flatMap((p) => (p.enrolledCourses ?? []).map((c) => c.courseId)),
+  );
+
+  const removable = doomed.filter((c) => !enrolledIds.has(String(c._id)));
+  const kept = doomed.filter((c) => enrolledIds.has(String(c._id)));
+
+  if (removable.length) {
+    await Course.deleteMany({ _id: { $in: removable.map((c) => c._id) } });
+    console.log(
+      `Retired ${removable.length} course(s): ${removable.map((c) => c.title).join(", ")}`,
+    );
+  }
+  if (kept.length) {
+    console.log(
+      `Kept retired course(s) still in use: ${kept.map((c) => c.title).join(", ")}`,
+    );
   }
 }
 
