@@ -1,6 +1,7 @@
 import Groq from "groq-sdk";
 
 import { ConversationMessage } from "../models/Session";
+import { completeText, GROQ_TEXT_MODELS } from "./groqClient";
 
 /** Structured read of the student's turn, returned by the analysis call. */
 export interface StudentAnalysis {
@@ -137,6 +138,51 @@ interface GeminiCredential {
   apiKey: string;
 }
 
+/**
+ * Circuit breaker for Gemini.
+ *
+ * Without this, every request pays the full retry ladder — three models times
+ * each configured key, each honouring its own backoff — before reaching the
+ * fallback. Measured at 8s and 40s on consecutive requests while the quota was
+ * exhausted, which is long enough that the student has given up.
+ *
+ * So: count consecutive total failures, and once there have been enough, stop
+ * trying for a cooldown window and go straight to the fallback. A success
+ * closes the breaker immediately, so a restored quota is picked up again
+ * without waiting out the cooldown.
+ */
+const GEMINI_FAILURE_THRESHOLD = 3;
+const GEMINI_COOLDOWN_MS = 10 * 60 * 1000;
+
+let geminiConsecutiveFailures = 0;
+let geminiDisabledUntil = 0;
+
+function isGeminiSuppressed(now = Date.now()): boolean {
+  return now < geminiDisabledUntil;
+}
+
+function recordGeminiSuccess(): void {
+  geminiConsecutiveFailures = 0;
+  geminiDisabledUntil = 0;
+}
+
+function recordGeminiFailure(now = Date.now()): void {
+  geminiConsecutiveFailures += 1;
+  if (geminiConsecutiveFailures >= GEMINI_FAILURE_THRESHOLD) {
+    geminiDisabledUntil = now + GEMINI_COOLDOWN_MS;
+    console.warn(
+      `Gemini failed ${geminiConsecutiveFailures} times in a row; skipping it for ` +
+        `${GEMINI_COOLDOWN_MS / 1000}s and using the Groq fallback directly.`,
+    );
+  }
+}
+
+/** Test seam: force the breaker closed. */
+export function __resetGeminiBreaker(): void {
+  geminiConsecutiveFailures = 0;
+  geminiDisabledUntil = 0;
+}
+
 function loadGeminiCredentials(): GeminiCredential[] {
   const credentials: GeminiCredential[] = [];
   const primary = process.env.GEMINI_API_KEY;
@@ -216,45 +262,81 @@ export async function generateTutorResponse(
 
   const credentials = loadGeminiCredentials();
   if (credentials.length === 0) {
-    throw new Error("GEMINI_API_KEY is not configured.");
+    // Not fatal: the Groq fallback below doesn't need a Gemini key at all.
+    console.warn("GEMINI_API_KEY is not configured; using the Groq fallback.");
   }
 
   let lastError: unknown;
   // Outer loop: credentials (keys), inner loop: models. Every key gets a
   // fresh set of per-model free quotas, so rotation multiplies capacity.
-  for (const credential of credentials) {
-    const googleGenAI = new (await import("@google/genai")).GoogleGenAI({
-      apiKey: credential.apiKey,
-    });
+  // Skipped entirely while the breaker is open — that ladder is the slow part.
+  // Skipped entirely while the breaker is open — that ladder is the slow part.
+  const geminiSkipped = isGeminiSuppressed() || credentials.length === 0;
+  if (!geminiSkipped) {
+    for (const credential of credentials) {
+      const googleGenAI = new (await import("@google/genai")).GoogleGenAI({
+        apiKey: credential.apiKey,
+      });
 
-    for (const model of GEMINI_MODELS) {
-      try {
-        const response = await googleGenAI.models.generateContent({
-          model,
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: promptText }],
+      for (const model of GEMINI_MODELS) {
+        try {
+          const response = await googleGenAI.models.generateContent({
+            model,
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: promptText }],
+              },
+            ],
+            config: {
+              systemInstruction: systemPromptFor(mode),
             },
-          ],
-          config: {
-            systemInstruction: systemPromptFor(mode),
-          },
-        });
+          });
 
-        const text = response.text?.trim();
-        if (text) {
-          return text;
+          const text = response.text?.trim();
+          if (text) {
+            recordGeminiSuccess();
+            return text;
+          }
+          lastError = new Error("Gemini returned an empty tutor response.");
+        } catch (error) {
+          lastError = error;
         }
-        lastError = new Error("Gemini returned an empty Socratic response.");
-      } catch (error) {
-        lastError = error;
       }
     }
+    // Every key and model is exhausted — the whole ladder failed.
+    recordGeminiFailure();
+  } else {
+    lastError = new Error(
+      isGeminiSuppressed()
+        ? "Gemini skipped by the circuit breaker."
+        : "Gemini is not configured.",
+    );
+  }
+
+  // Gemini is unusable (out of quota, or a free-tier quota stuck at zero that
+  // never resets). Fall back to Groq rather than failing the student's turn: a
+  // dead tutor is not merely a missing reply — this same call is what records
+  // the topic visit, the weak point and the course progress, so throwing here
+  // silently discards the learning loop too.
+  console.warn(
+    geminiSkipped
+      ? "Gemini skipped (breaker open or unconfigured); using the Groq fallback."
+      : "Gemini unavailable; using the Groq fallback.",
+    { cause: (lastError as Error)?.message },
+  );
+  try {
+    return await completeText(systemPromptFor(mode), promptText, {
+      models: [...GROQ_TEXT_MODELS],
+      temperature: 0.6,
+      maxTokens: 900,
+    });
+  } catch (groqError) {
+    lastError = groqError;
   }
 
   throw new Error(
-    "All Gemini models are unavailable or out of quota. Please try again shortly.",
+    "All Gemini models are unavailable or out of quota, and the Groq fallback also failed. Please try again shortly.",
     { cause: lastError },
   );
 }

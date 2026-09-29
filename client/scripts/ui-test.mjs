@@ -102,7 +102,14 @@ try {
   }
   const convo = await page.locator("#messages").textContent();
   const gotReply = (convo?.length ?? 0) > 60;
-  check("tutor reply (or sanitized error) arrives", gotReply, `source=${replyFrom}`);
+  // An ai-error pill is also the third child, so "source=live" on its own can
+  // mean the provider failed. Say which actually happened.
+  const hadProviderError = convo?.includes("Something went wrong") ?? false;
+  check(
+    "tutor reply (or sanitized error) arrives",
+    gotReply,
+    `source=${replyFrom}${hadProviderError ? " +provider-error" : ""}`,
+  );
 
   // 7b. Owl presents the reply: teaching pose, lesson diagram, and the tutor's
   // text in its speech bubble. If the AI replied with an error (e.g. exhausted
@@ -321,21 +328,10 @@ try {
     weakChipCount > 0 || weakBody.length > 0,
     `${weakChipCount} chip(s)`,
   );
-  if (weakChipCount > 0) {
-    // Chips are shortcuts into a test for that exact topic.
-    await page.locator(".dash-weakpoint").first().click();
-    await page
-      .locator(".dash-test-question")
-      .filter({ hasText: /\S/ })
-      .waitFor({ timeout: 45000 });
-    check(
-      "clicking a weak point starts a test on that topic",
-      ((await page.locator(".dash-test-topic").textContent()) ?? "").length > 0,
-      ((await page.locator(".dash-test-topic").textContent()) ?? "").trim(),
-    );
-    await page.locator(".dash-test-close").click();
-    await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
-  }
+  // NB: the follow-up button lives INSIDE the graded result panel, so it has
+  // to be asserted before anything below opens a fresh, ungraded question and
+  // closes the panel. Getting this order wrong only showed up once grading
+  // started producing weak points, so the chip block became non-empty.
   check(
     "graded result offers a follow-up with the tutor",
     await page.locator(".dash-test-discuss").isVisible(),
@@ -343,6 +339,30 @@ try {
   await page.locator(".dash-test-close").click();
   await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
   check("closing the panel hides it again", true);
+
+  if (weakChipCount > 0) {
+    // Chips are shortcuts into a test for that exact topic.
+    await page.locator(".dash-weakpoint").first().click();
+    const questionArrived = await page
+      .locator(".dash-test-question")
+      .filter({ hasText: /\S/ })
+      .waitFor({ timeout: 20000 })
+      .then(() => true)
+      .catch(() => false);
+    // Surface the app's own error text: a bare timeout here would hide whether
+    // this was a rate limit, a provider outage, or a real UI bug.
+    check(
+      "clicking a weak point starts a test on that topic",
+      questionArrived,
+      questionArrived
+        ? ((await page.locator(".dash-test-topic").textContent()) ?? "").trim()
+        : `status: ${((await page.locator(".dash-status").textContent()) ?? "").trim() || "(none)"}`,
+    );
+    if (questionArrived) {
+      await page.locator(".dash-test-close").click();
+      await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
+    }
+  }
 
   // Enrollment: the catalog used to render a "Start Learning" button that
   // never enrolled anyone, so progress stayed at 0% forever.
@@ -453,7 +473,7 @@ try {
     );
   } else {
     console.log(
-      "SKIP  restore checks — no conversation was stored (tutor provider unavailable)",
+      `SKIP  restore checks — ${storedHistory ?? "no"} stored message(s) for this run`,
     );
   }
 

@@ -1,6 +1,23 @@
 import Groq from "groq-sdk";
 
 /**
+ * Models tried, in order, for a long-form prose reply.
+ *
+ * Verified against this account's live model list rather than assumed: Groq
+ * currently serves no Llama models here, so the commonly-recommended
+ * `llama-3.3-70b-versatile` would have 404'd. gpt-oss-120b is the largest
+ * general model available and is the best fallback for teaching prose; the
+ * others are progressively smaller stand-ins.
+ */
+export const GROQ_TEXT_MODELS = [
+  "openai/gpt-oss-120b",
+  "qwen/qwen3.8-27b",
+  "openai/gpt-oss-20b",
+] as const;
+
+const DEFAULT_TEXT_MODEL = GROQ_TEXT_MODELS[0];
+
+/**
  * Shared Groq client factory.
  *
  * The SDK's bundled node-fetch@2 fails with "Premature close" on modern Node
@@ -43,6 +60,50 @@ export async function completeJson<T>(
     throw new Error("Groq returned an empty response.");
   }
   return parseJsonLoose<T>(content);
+}
+
+/**
+ * General-purpose text completion (no JSON mode), for prose replies.
+ *
+ * Tries each model in turn and returns the first non-empty completion, so a
+ * single unavailable model doesn't take the request down. Throws only when
+ * every candidate fails, carrying the last error.
+ */
+export async function completeText(
+  systemPrompt: string,
+  userPrompt: string,
+  options: {
+    models?: string[];
+    temperature?: number;
+    maxTokens?: number;
+  } = {},
+): Promise<string> {
+  const models = options.models?.length ? options.models : [DEFAULT_TEXT_MODEL];
+  const groq = createGroqClient();
+  let lastError: unknown;
+
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: options.temperature ?? 0.6,
+        max_tokens: options.maxTokens ?? 900,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const content = completion.choices[0]?.message.content?.trim();
+      if (content) return content;
+      lastError = new Error(`Groq model ${model} returned an empty completion.`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error("Every Groq model failed for a text completion.", {
+    cause: lastError,
+  });
 }
 
 /** Parse JSON that may be fenced or wrapped in prose. */
