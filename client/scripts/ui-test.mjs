@@ -364,11 +364,76 @@ try {
   await page.locator("#dashboard-toggle").click();
   await page.locator("#chat-container").waitFor({ state: "visible" });
 
-  // 8. Reload — still signed in (token persisted)
+  // 8. Reload — still signed in, and the conversation comes back from the
+  // server. The previous version of this check only asserted the user badge,
+  // so it passed while the transcript was silently dropped on every reload.
+  // Whether anything was *stored* depends on the tutor provider being up, so
+  // ask the API first and only assert restoration when there is something to
+  // restore. Skipping loudly beats a green check that proves nothing.
+  const storedHistory = await page.evaluate(async () => {
+    const username = JSON.parse(localStorage.getItem("agented:user") ?? "{}").username ?? "";
+    const res = await fetch(`http://localhost:3000/api/sessions/${encodeURIComponent(username)}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()).conversationHistory?.length ?? 0;
+  });
+
   await page.reload();
   await page.locator("#app-view").waitFor({ state: "visible" });
   const badgeAfterReload = await page.locator("#user-badge").textContent();
-  check("session persists across reload", badgeAfterReload?.includes(NAME) ?? false);
+  check("auth persists across reload", badgeAfterReload?.includes(NAME) ?? false);
+
+  if (storedHistory && storedHistory > 0) {
+    await page
+      .waitForFunction(
+        () => document.querySelector("#messages")?.textContent?.includes("Picking up"),
+        { timeout: 20000 },
+      )
+      .catch(() => {});
+    const restored = (await page.locator("#messages").textContent()) ?? "";
+    check(
+      "conversation is restored from the server after reload",
+      restored.includes("Picking up"),
+      `${storedHistory} stored message(s)`,
+    );
+    check(
+      "restored transcript keeps both speakers",
+      (await page.locator("#messages .justify-end").count()) > 0 &&
+        (await page.locator("#messages .justify-start").count()) > 0,
+    );
+  } else {
+    console.log(
+      "SKIP  restore checks — no conversation was stored (tutor provider unavailable)",
+    );
+  }
+
+  // 8b. New chat clears the thread on both sides. Always checked: the reset
+  // path has to work whether or not there was history to begin with.
+  await page.locator("#new-chat-button").click();
+  await page
+    .waitForFunction(
+      () =>
+        document.querySelector("#messages")?.textContent?.includes("New conversation started") ===
+        true,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+  const afterReset = (await page.locator("#messages").textContent()) ?? "";
+  check(
+    "new chat clears the visible transcript",
+    !afterReset.includes("Picking up") && afterReset.includes("New conversation started"),
+  );
+  // A reload must NOT bring the cleared history back.
+  await page.reload();
+  await page.locator("#app-view").waitFor({ state: "visible" });
+  await page.waitForTimeout(1500);
+  const afterResetReload = (await page.locator("#messages").textContent()) ?? "";
+  check(
+    "cleared history does not come back after reload",
+    !afterResetReload.includes("Picking up"),
+    afterResetReload.slice(0, 60).replace(/\s+/g, " "),
+  );
 
   // 9. Sign out returns to auth view and clears storage
   await page.locator("#sign-out-button").click();

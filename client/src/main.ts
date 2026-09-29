@@ -49,6 +49,8 @@ function clearStoredAuth(): void {
   localStorage.removeItem("agented:token");
   localStorage.removeItem("agented:user");
   localStorage.removeItem("agented:studentId");
+  // The next sign-in may be a different student, so allow a fresh restore.
+  historyRestoreStarted = false;
 }
 
 let currentAuth: { token: string; user: StoredUser } | null = loadStoredAuth();
@@ -78,6 +80,8 @@ const passwordInputEl = document.querySelector<HTMLInputElement>("#password-inpu
 const authErrorEl = document.querySelector<HTMLParagraphElement>("#auth-error")!;
 const signOutButtonEl =
   document.querySelector<HTMLButtonElement>("#sign-out-button")!;
+const newChatButtonEl =
+  document.querySelector<HTMLButtonElement>("#new-chat-button")!;
 const userBadgeEl = document.querySelector<HTMLSpanElement>("#user-badge")!;
 
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
@@ -402,6 +406,86 @@ function disconnectSocket(): void {
 // Auth UI
 // ---------------------------------------------------------------------------
 
+/**
+ * Server-side transcript for the signed-in student. Roles come straight from
+ * the Session model: user / assistant / system.
+ */
+interface StoredConversationMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+const ROLE_TO_UI: Record<StoredConversationMessage["role"], "student" | "tutor" | "system"> = {
+  user: "student",
+  assistant: "tutor",
+  system: "system",
+};
+
+let historyRestoreStarted = false;
+
+function clearMessages(): void {
+  messagesEl.replaceChildren();
+}
+
+/**
+ * Replay the stored conversation into the chat.
+ *
+ * The server has been keeping this the whole time (capped at 200 messages) and
+ * exposes an owner-checked endpoint for it, but nothing ever called it — so a
+ * reload, or signing in from another device, showed an empty chat even though
+ * the tutor still had full memory of the student.
+ */
+async function restoreSessionHistory(): Promise<void> {
+  const studentId = getStudentId();
+  if (!studentId || historyRestoreStarted) return;
+  historyRestoreStarted = true;
+
+  try {
+    const res = await fetch(
+      `${SERVER_URL}/api/sessions/${encodeURIComponent(studentId)}`,
+      { headers: { Authorization: `Bearer ${currentAuth?.token ?? ""}` } },
+    );
+    // 404 just means this is a brand-new student with no session yet.
+    if (!res.ok) return;
+
+    const body = (await res.json()) as {
+      conversationHistory?: StoredConversationMessage[];
+    };
+    const history = body.conversationHistory ?? [];
+    if (!history.length) return;
+
+    // The student may have started a new message while this was in flight.
+    // Clobbering that would lose what they just typed, so stand down.
+    if (messagesEl.querySelector(".justify-end, .justify-start")) return;
+
+    clearMessages();
+    appendMessage("system", "Picking up where you left off:");
+    for (const message of history) {
+      appendMessage(ROLE_TO_UI[message.role] ?? "system", message.content);
+    }
+  } catch {
+    // History is a convenience, never a reason to block the app from loading.
+  }
+}
+
+/** Clear the server-side thread and start a fresh conversation. */
+async function startNewChat(): Promise<void> {
+  const studentId = getStudentId();
+  try {
+    await fetch(`${SERVER_URL}/api/sessions/${encodeURIComponent(studentId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${currentAuth?.token ?? ""}` },
+    });
+  } catch {
+    // Even if the reset fails, clear locally so the UI isn't stuck.
+  }
+  clearMessages();
+  setEmptyStateVisible(true);
+  appendMessage("system", "New conversation started.");
+  scrollToBottom();
+  inputEl.focus();
+}
+
 function showApp(): void {
   authViewEl.classList.add("hidden");
   appViewEl.classList.remove("hidden");
@@ -410,6 +494,8 @@ function showApp(): void {
   }
   setDashboardVisible(false);
   connectSocket();
+  // Non-blocking: the app is usable while this is in flight.
+  void restoreSessionHistory();
   inputEl.focus();
 }
 
@@ -466,6 +552,10 @@ function appendAuthError(text: string): void {
 authToggleLinkEl.addEventListener("click", () => setAuthMode(!isRegisterMode));
 
 signOutButtonEl.addEventListener("click", () => signOut());
+
+newChatButtonEl.addEventListener("click", () => {
+  void startNewChat();
+});
 
 // Mirror of the backend's rules (src/routes/auth.ts) so users get instant,
 // friendly feedback instead of discovering them via a 400 response.

@@ -44,7 +44,12 @@ const topicVisitSchema = new Schema<TopicVisit>(
 
 const sessionSchema = new Schema<SessionDocument>(
   {
-    studentId: { type: String, required: true, index: true },
+    // Unique, and not optional: every read/write path does
+    // findOne({studentId}) and findOneAndUpdate({studentId}, ..., {upsert}),
+    // which silently corrupt a student's history if two rows can exist. A
+    // duplicate would also make "the tutor remembers you" non-deterministic,
+    // since only one of the two rows would ever be read back.
+    studentId: { type: String, required: true, index: true, unique: true },
     activeTopic: { type: String, required: true },
     conversationHistory: {
       type: [conversationMessageSchema],
