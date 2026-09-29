@@ -46,7 +46,8 @@ Then edit `.env`. Three values matter:
 |---|---|---|
 | `MONGO_URI` | **yes** | `mongodb://127.0.0.1:27017/agented` works with local Mongo |
 | `JWT_SECRET` | **yes** | At least 16 characters. The server refuses to start without it. |
-| `GROQ_API_KEY` | **yes** | Everything AI — tutor, assessments, diagrams. Without it the app runs but cannot answer. || `GEMINI_API_KEY` | no | Tried first; Groq is the fallback when Gemini's quota is spent |
+| `GROQ_API_KEY` | **yes** | Everything AI — tutor, assessments, diagrams. Without it the app runs but cannot answer. |
+| `GEMINI_API_KEY` | no | Tried first; Groq is the fallback when Gemini's quota is spent |
 | `GEMINI_EXTRA_KEYS` | no | Comma-separated extra Gemini keys, rotated when the primary is exhausted |
 | `CLIENT_ORIGIN` | no | Already defaults to the dev client at `localhost:5173` |
 | `AI_DAILY_CALL_LIMIT` | no | Per-student daily AI budget. Defaults to 250 |
