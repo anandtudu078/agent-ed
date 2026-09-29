@@ -1,9 +1,49 @@
 import { completeJson } from "./groqClient";
+import type { TeachLanguage } from "./aiService";
 
 export interface AssessmentQuestion {
   topic: string;
   question: string;
 }
+
+/**
+ * Ask the question in the student's own language.
+ *
+ * Asking in English and then grading a Hindi answer fairly is self-defeating:
+ * the question becomes a reading test wearing a maths costume.
+ */
+const QUESTION_LANGUAGE: Record<TeachLanguage, string> = {
+  en: "",
+  hi:
+    " Write the question in Hindi (Devanagari) mixed with English, the way an " +
+    "Indian student actually learns. Keep technical terms in English — write " +
+    '"recursion" or "gradient", not a transliteration. Do not ask the student ' +
+    "to read more Devanagari than they must.",
+};
+
+/**
+ * The grading clause — this is the actual fix.
+ *
+ * The previous prompt told the model to judge understanding and not "polish or
+ * grammar" but never mentioned language, so a student who explained a concept
+ * correctly in Hindi was reliably marked down for their English. A bilingual
+ * student was being graded on the wrong subject entirely.
+ *
+ * The "never reduce the score" instruction is explicit and unconditional on
+ * purpose: this is precisely the kind of thing a grader silently violates when
+ * left to its own judgement.
+ */
+const GRADING_LANGUAGE: Record<TeachLanguage, string> = {
+  en: "",
+  hi:
+    " The student may answer in Hindi, English, or any mix of the two. Judge " +
+    "ONLY their conceptual understanding of the topic. NEVER reduce the score " +
+    "because the answer is written in Hindi rather than English, and never for " +
+    "grammar, spelling, or transliterated technical terms. An answer that is " +
+    "conceptually complete but written in Hinglish deserves full credit. " +
+    'Write your "feedback" and "recommendedFocus" in the same Hindi-and-English ' +
+    "mix, keeping technical terms in English.",
+};
 
 export interface AssessmentGrade {
   /** 0–100. */
@@ -43,6 +83,7 @@ function asStringList(value: unknown, maxItems: number): string[] {
 export async function generateAssessmentQuestion(
   topic: string,
   misconceptions: string[] = [],
+  language: TeachLanguage = "en",
 ): Promise<AssessmentQuestion> {
   const focus = misconceptions.length
     ? `Target these known sticking points: ${misconceptions
@@ -56,7 +97,8 @@ export async function generateAssessmentQuestion(
       "questions, avoid asking them to recall a definition verbatim, and avoid " +
       "multiple choice. Ask for one thing: an explanation, a prediction, a worked " +
       "step, or a 'what would change if' scenario. Keep it under 40 words. " +
-      "Return only JSON: {\"topic\": string, \"question\": string}.",
+      "Return only JSON: {\"topic\": string, \"question\": string}." +
+      QUESTION_LANGUAGE[language],
     `Topic: ${topic}\n${focus}\n\nWrite one diagnostic question about this topic.`,
     { temperature: 0.4 },
   );
@@ -78,6 +120,7 @@ export async function gradeAssessmentAnswer(
   question: string,
   answer: string,
   misconceptions: string[] = [],
+  language: TeachLanguage = "en",
 ): Promise<AssessmentGrade> {
   const focus = misconceptions.length
     ? `Previously observed sticking points: ${misconceptions.slice(0, 5).join("; ")}.`
@@ -94,7 +137,8 @@ export async function gradeAssessmentAnswer(
       "right and the specific gap), " +
       '"recommendedFocus" (a short noun phrase, the one concept to study next), ' +
       '"masteryEstimate" (integer 0-100, how well they understand the topic now), ' +
-      'and "misconceptions" (array of concise strings, empty if none).',
+      'and "misconceptions" (array of concise strings, empty if none).' +
+      GRADING_LANGUAGE[language],
     `Topic: ${topic}\n${focus}\n\nQuestion asked:\n${question}\n\nStudent's answer:\n${answer}`,
   );
 

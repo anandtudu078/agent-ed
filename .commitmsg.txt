@@ -1,43 +1,39 @@
-feat: full AI curriculum across every major branch
+fix: grade students in their own language; rate limit per student
 
-Catalog goes from 6 courses to 27 (178 modules), 22 of which are AI. The AI
-material was previously one flat "AI & ML" bucket; it is now split into nine
-branches so a student can actually see the shape of the field.
+Two defects that would have hurt real classrooms, both invisible in testing.
 
-  AI Foundations   (4)  what AI is, search, logic & knowledge representation,
-                        expert systems
-  Machine Learning (4)  foundations, supervised, unsupervised, reinforcement
-  Deep Learning    (3)  networks, architectures, training & optimisation
-  Generative AI    (3)  transformers/LLMs, generative models, prompting & RAG
-  Natural Language (1)  preprocessing through QA and translation
-  Computer Vision  (1)  classification, detection, segmentation, multimodal
-  Speech & Audio   (1)  ASR, TTS, speaker recognition, music
-  Robotics         (1)  perception, planning, control, SLAM, self-driving
-  Responsible AI   (4)  ethics & fairness, safety & alignment, production,
-                        applications by industry
+1. Assessments ignored the student's language
+   The question was always generated in English and graded in English. A Hindi
+   student could explain backpropagation correctly in Hindi and be marked down
+   for their English - graded on the wrong subject entirely, which made the
+   bilingual feature actively harmful for the students it was built for.
 
-Classical AI is deliberately included alongside the modern material. Search,
-logic, expert systems and knowledge graphs are real branches that a
-"machine-learning-only" catalog quietly drops, and they are also the parts
-students can reason about most easily.
+   The question is now asked in the student's language, and the grading prompt
+   says explicitly that an answer in Hindi must never be scored lower. That
+   instruction is unconditional and specific because it is exactly the kind of
+   thing a grader quietly violates when left to its own judgement - the old
+   prompt already said "don't judge polish or grammar" and it wasn't enough.
+   Language is read from the JWT, never the request body, so a client cannot
+   request a Hindi question and have it graded against English criteria.
 
-Structural changes
-- The catalog moved out of the route file into src/data/curriculum.ts. It is
-  content, not request handling, and it had outgrown the file it lived in.
-- Boot now syncs category/description/level, not just modules. Previously an
-  edited category or an extended syllabus only reached brand-new databases;
-  existing installs silently kept serving the old version. Since modules are
-  the denominator for a student's progress percentage, a stale syllabus
-  quietly corrupts numbers rather than just looking out of date.
+   Verified live: a correct Hinglish answer was graded on its substance
+   (spotting the genuinely missing chain-rule detail) and the feedback came
+   back in Hindi, with the score driven by the content and not the script.
 
-Retiring courses
-Renaming "AI in Practice" to "AI in Production" left the old course in the
-database forever, because the seeder only ever inserted by title. Retired
-titles are now an explicit allowlist, and a retired course is never deleted
-while a student is still enrolled in it - the enrolment stores the courseId
-inline, so deleting it would orphan real progress. Losing history is a better
-failure than an enrolment pointing at nothing.
+2. Rate limits were per-IP, which breaks a shared network
+   Schools put a whole classroom behind one public IP, so 12 chats/minute per
+   IP meant students throttling each other mid-lesson while the error blamed
+   whoever sent last. The AI budget is now keyed on the signed-in user, which
+   is the honest unit: one student's usage is one student's usage.
 
-Verified: 83/83 UI checks (4 new, pinning the branch set, course count, a
-minimum syllabus depth, and total module count), 13/13 security, both TS
-projects compile.
+   Auth limits get the same treatment for a different reason: 30 students
+   signing in one morning exhausted a shared 10-per-15-minutes budget. They are
+   now keyed on IP+username with successful logins not counted. Per-username
+   alone would hand a brute-forcer a fresh budget per guess, and per-IP alone
+   locks out a classroom, so it is both - with the trade-off documented at the
+   definition rather than left for someone to rediscover.
+
+   Verified live: one student exhausted their budget at exactly 12 requests
+   (then 429) while a second student on the same IP got clean 200s.
+
+83/83 UI checks, 13/13 security, both TS projects compile.
