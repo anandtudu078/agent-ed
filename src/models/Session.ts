@@ -7,10 +7,17 @@ export interface ConversationMessage {
   content: string;
 }
 
+/** A concept the student has worked on, and when they first reached it. */
+export interface TopicVisit {
+  topic: string;
+  firstSeenAt: Date;
+}
+
 export interface SessionDocument extends Document {
   studentId: string;
   activeTopic: string;
   conversationHistory: ConversationMessage[];
+  topicsVisited: TopicVisit[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,6 +34,14 @@ const conversationMessageSchema = new Schema<ConversationMessage>(
   { _id: false },
 );
 
+const topicVisitSchema = new Schema<TopicVisit>(
+  {
+    topic: { type: String, required: true },
+    firstSeenAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const sessionSchema = new Schema<SessionDocument>(
   {
     studentId: { type: String, required: true, index: true },
@@ -35,6 +50,8 @@ const sessionSchema = new Schema<SessionDocument>(
       type: [conversationMessageSchema],
       default: [],
     },
+    // Source data for the dashboard's "concepts per week" estimate.
+    topicsVisited: { type: [topicVisitSchema], default: [] },
   },
   { timestamps: true },
 );

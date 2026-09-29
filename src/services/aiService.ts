@@ -1,13 +1,47 @@
 import Groq from "groq-sdk";
 
-interface StudentAnalysis {
+import { ConversationMessage } from "../models/Session";
+
+/** Structured read of the student's turn, returned by the analysis call. */
+export interface StudentAnalysis {
   intent: string;
+  /** Short 2–5 word concept the turn is about, inferred by the model. */
+  topic: string;
+  /** 0–100 estimate of how well the student understands `topic` right now. */
+  masteryEstimate: number;
   coreMisunderstandings: string[];
+}
+
+/**
+ * How many earlier messages are replayed into each prompt. The tutor needs a
+ * thread to be a tutor, but replaying an entire session would blow the token
+ * budget and the latency budget with it. Tune here, not at the call sites.
+ */
+export const MAX_PROMPT_HISTORY_MESSAGES = 12;
+
+/** The most recent slice of the conversation to show the model. */
+export function selectHistoryWindow(
+  priorMessages: ConversationMessage[],
+): ConversationMessage[] {
+  return priorMessages.slice(-MAX_PROMPT_HISTORY_MESSAGES);
+}
+
+function renderTranscript(turns: ConversationMessage[]): string {
+  if (!turns.length) {
+    return "(none — this is the student's first message in this session)";
+  }
+  return turns
+    .map((turn) => {
+      const who = turn.role === "user" ? "Student" : "Tutor";
+      return `${who}: ${turn.content}`;
+    })
+    .join("\n");
 }
 
 export async function analyzeStudentInput(
   studentMessage: string,
-): Promise<string> {
+  priorMessages: ConversationMessage[] = [],
+): Promise<StudentAnalysis> {
   const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
     // Use Node's native fetch: the SDK's bundled node-fetch@2 fails with
@@ -17,6 +51,11 @@ export async function analyzeStudentInput(
     >["fetch"],
   });
 
+  const history = selectHistoryWindow(priorMessages);
+  const userContent = history.length
+    ? `Earlier conversation:\n${renderTranscript(history)}\n\nNew message:\n${studentMessage}`
+    : studentMessage;
+
   const completion = await groq.chat.completions.create({
     model: "openai/gpt-oss-20b",
     temperature: 0,
@@ -25,11 +64,17 @@ export async function analyzeStudentInput(
       {
         role: "system",
         content:
-          "Analyze the student's message for a Socratic tutor. Return only JSON with " +
-          'an "intent" string and a "coreMisunderstandings" array of concise strings. ' +
+          "Analyze the student's message for a Socratic tutor. Use the earlier " +
+          "conversation to resolve references and to judge whether the student is " +
+          "repeating a misconception. Return only JSON with: " +
+          '"intent" (string), ' +
+          '"topic" (a short 2-5 word name for the concept being discussed), ' +
+          '"masteryEstimate" (integer 0-100, how well the student understands ' +
+          "that topic right now, judged across the whole conversation), and " +
+          '"coreMisunderstandings" (array of concise strings). ' +
           "Do not solve the student's problem.",
       },
-      { role: "user", content: studentMessage },
+      { role: "user", content: userContent },
     ],
   });
 
@@ -38,23 +83,42 @@ export async function analyzeStudentInput(
     throw new Error("Groq returned an empty student analysis.");
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(content) as Partial<StudentAnalysis>;
-    if (
-      typeof parsed.intent !== "string" ||
-      !Array.isArray(parsed.coreMisunderstandings) ||
-      !parsed.coreMisunderstandings.every(
-        (item): item is string => typeof item === "string",
-      )
-    ) {
-      throw new Error("Groq returned an invalid analysis shape.");
-    }
-    return JSON.stringify(parsed);
+    parsed = JSON.parse(content);
   } catch (error) {
     throw new Error("Groq returned invalid JSON for student analysis.", {
       cause: error,
     });
   }
+
+  // Validate outside the parse try/catch: a *malformed* response is a different
+  // failure from *invalid JSON*, and squashing the two hides which one happened.
+  const candidate = parsed as Partial<StudentAnalysis>;
+  if (
+    !candidate ||
+    typeof candidate.intent !== "string" ||
+    typeof candidate.topic !== "string" ||
+    typeof candidate.masteryEstimate !== "number" ||
+    !Number.isFinite(candidate.masteryEstimate) ||
+    !Array.isArray(candidate.coreMisunderstandings) ||
+    !candidate.coreMisunderstandings.every(
+      (item): item is string => typeof item === "string",
+    )
+  ) {
+    throw new Error("Groq returned an invalid analysis shape.");
+  }
+
+  return {
+    intent: candidate.intent,
+    topic: candidate.topic.trim().slice(0, 60),
+    // Clamp: the model occasionally returns 0-1 or 0-10 scales.
+    masteryEstimate: Math.min(100, Math.max(0, Math.round(candidate.masteryEstimate))),
+    coreMisunderstandings: candidate.coreMisunderstandings
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 10),
+  };
 }
 
 // Flash models tried in order — each has its own free-tier quota, and
@@ -90,17 +154,17 @@ function loadGeminiCredentials(): GeminiCredential[] {
 }
 
 export async function generateSocraticResponse(
-  conceptContext: string,
+  analysis: StudentAnalysis,
   studentQuery: string,
+  priorMessages: ConversationMessage[] = [],
 ): Promise<string> {
-  const { GoogleGenAI } = await import("@google/genai");
-  const googleGenAI = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-  });
+  const history = selectHistoryWindow(priorMessages);
+  const transcript = renderTranscript(history);
 
   const promptText =
-    `Student analysis:\n${conceptContext}\n\n` +
-    `Student question:\n${studentQuery}`;
+    `Student analysis:\n${JSON.stringify(analysis)}\n\n` +
+    `Earlier conversation:\n${transcript}\n\n` +
+    `New message:\n${studentQuery}`;
 
   const credentials = loadGeminiCredentials();
   if (credentials.length === 0) {
@@ -130,7 +194,9 @@ export async function generateSocraticResponse(
               "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
               "with clear, encouraging questions. Never give a direct answer, complete a " +
               "solution, or reveal the final result. Ask one focused guiding question at a time. " +
-              "Use the student analysis to target their misunderstanding.",
+              "Use the student analysis to target their misunderstanding. The earlier " +
+              "conversation is your memory: build on it, never ask the same question twice, " +
+              "and notice when the student is repeating a misconception.",
           },
         });
 

@@ -6,11 +6,12 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 
 import { connectDB } from "./config/db";
-import { Session } from "./models/Session";
+import { ConversationMessage, Session, TopicVisit } from "./models/Session";
 import {
   analyzeStudentInput,
   generateSocraticResponse,
 } from "./services/aiService";
+import { recordLearningSignal } from "./services/progressService";
 import authRouter from "./routes/auth";
 import dashboardRouter from "./routes/dashboard";
 import {
@@ -33,6 +34,16 @@ const io = new Server(httpServer, {
 });
 
 const port = Number(process.env.PORT ?? 3000);
+
+/**
+ * Retention caps. `conversationHistory` lives inside a single document, and
+ * MongoDB rejects anything over 16 MB — without a cap, a long-running student
+ * silently loses the ability to chat at all once the array gets too big.
+ * The prompt only ever uses the most recent `MAX_PROMPT_HISTORY_MESSAGES`
+ * (see aiService), so trimming the tail costs the tutor nothing.
+ */
+const MAX_STORED_MESSAGES = 200; // ~100 exchange pairs
+const MAX_STORED_TOPIC_VISITS = 500;
 
 app.use(cors());
 app.use(express.json());
@@ -109,10 +120,35 @@ async function processStudentMessage(
   // Sessions are keyed by the authenticated username, so one student can
   // never read or write another student's conversation.
   const studentId = authUser.username;
-  const activeTopic = payload.activeTopic.trim();
   const studentMessage = payload.studentMessage.trim();
-  const analysis = await analyzeStudentInput(studentMessage);
-  const response = await generateSocraticResponse(analysis, studentMessage);
+
+  // Read the thread *before* generating, so the model can see what has already
+  // been said. Writing first would mean answering our own new message.
+  const prior = await Session.findOne({ studentId })
+    .select({ conversationHistory: 1, topicsVisited: 1, activeTopic: 1 })
+    .lean();
+
+  const priorMessages: ConversationMessage[] = prior?.conversationHistory ?? [];
+  const analysis = await analyzeStudentInput(studentMessage, priorMessages);
+  const response = await generateSocraticResponse(
+    analysis,
+    studentMessage,
+    priorMessages,
+  );
+
+  // The model names the topic far better than the client's first 60 characters
+  // of the message, so its reading wins when we have one.
+  const activeTopic =
+    analysis.topic || payload.activeTopic.trim() || "General";
+
+  // Record a topic the moment it's first reached; learning speed is measured
+  // from how long the student has been covering concepts.
+  const newTopicVisits: TopicVisit[] =
+    (prior?.topicsVisited ?? []).some(
+      (visit) => visit.topic.toLowerCase() === activeTopic.toLowerCase(),
+    )
+      ? []
+      : [{ topic: activeTopic, firstSeenAt: new Date() }];
 
   const session = await Session.findOneAndUpdate(
     { studentId },
@@ -124,6 +160,13 @@ async function processStudentMessage(
             { role: "user", content: studentMessage },
             { role: "assistant", content: response },
           ],
+          // Hard cap: a session document can only grow to MongoDB's 16 MB, and
+          // an uncapped array eventually fails every write for this student.
+          $slice: -MAX_STORED_MESSAGES,
+        },
+        topicsVisited: {
+          $each: newTopicVisits,
+          $slice: -MAX_STORED_TOPIC_VISITS,
         },
       },
     },
@@ -134,9 +177,22 @@ async function processStudentMessage(
     throw new Error("Unable to save the tutoring session.");
   }
 
+  // Feed the dashboard. Best-effort: a progress write must never fail a reply
+  // the student is already waiting on.
+  try {
+    await recordLearningSignal(
+      studentId,
+      activeTopic,
+      analysis.masteryEstimate,
+      session.topicsVisited ?? [],
+    );
+  } catch (error) {
+    console.error("Failed to record learning signal.", error);
+  }
+
   return {
     response,
-    analysis,
+    analysis: JSON.stringify(analysis),
     session: {
       studentId: session.studentId,
       activeTopic: session.activeTopic,
