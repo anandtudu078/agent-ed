@@ -209,6 +209,9 @@ function loadGeminiCredentials(): GeminiCredential[] {
  */
 export type TutorMode = "socratic" | "teach";
 
+/** Language the tutor teaches in. Stored per user. */
+export type TeachLanguage = "en" | "hi";
+
 const SOCRATIC_SYSTEM_PROMPT =
   "You are AgentEd, a Socratic AI tutor. Guide the student toward understanding " +
   "with clear, encouraging questions. Never give a direct answer, complete a " +
@@ -246,11 +249,39 @@ export function systemPromptFor(mode: TutorMode): string {
   return mode === "teach" ? TEACH_SYSTEM_PROMPT : SOCRATIC_SYSTEM_PROMPT;
 }
 
+/**
+ * The language clause appended to every prompt.
+ *
+ * The code-switching rule is the important part, and it is deliberate rather
+ * than a compromise. Indian students learn a technical concept by hearing the
+ * idea in Hindi while keeping the English term — "रिकर्शन एक function है जो
+ * अपने आप को call करता है". Transliterating the technical vocabulary into
+ * Devanagari would make it *less* recognisable, not more. It also has a
+ * practical payoff: Latin script still renders, and still sounds right, on a
+ * device with no Hindi support at all.
+ */
+export const LANGUAGE_CLAUSE: Record<TeachLanguage, string> = {
+  en: "",
+  hi:
+    "Write your entire reply in natural Hindi (Devanagari script) mixed with " +
+    "English, the way an Indian student actually learns. Keep technical " +
+    "terms in English — for example write \"recursion\" or \"array\", never a " +
+    "transliteration of them. Explain the idea in simple Hindi. Do NOT reply " +
+    "in English throughout, and do NOT transliterate technical words.",
+};
+
+/** Full system instruction for a mode + language pair. */
+export function systemInstructionFor(mode: TutorMode, language: TeachLanguage): string {
+  const clause = LANGUAGE_CLAUSE[language];
+  return clause ? `${systemPromptFor(mode)}\n\n${clause}` : systemPromptFor(mode);
+}
+
 export async function generateTutorResponse(
   analysis: StudentAnalysis,
   studentQuery: string,
   priorMessages: ConversationMessage[] = [],
   mode: TutorMode = "socratic",
+  language: TeachLanguage = "en",
 ): Promise<string> {
   const history = selectHistoryWindow(priorMessages);
   const transcript = renderTranscript(history);
@@ -289,7 +320,7 @@ export async function generateTutorResponse(
               },
             ],
             config: {
-              systemInstruction: systemPromptFor(mode),
+              systemInstruction: systemInstructionFor(mode, language),
             },
           });
 
@@ -326,7 +357,11 @@ export async function generateTutorResponse(
     { cause: (lastError as Error)?.message },
   );
   try {
-    return await completeText(systemPromptFor(mode), promptText, {
+    // Must be the same instruction the Gemini path uses. Passing the
+    // mode-only prompt here silently dropped the language clause, so a Hindi
+    // student got an English explanation whenever Gemini was out of quota —
+    // which, given the free tier, is most of the time.
+    return await completeText(systemInstructionFor(mode, language), promptText, {
       models: [...GROQ_TEXT_MODELS],
       temperature: 0.6,
       maxTokens: 900,

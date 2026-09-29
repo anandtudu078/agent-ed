@@ -20,16 +20,31 @@ export type MascotStatus = "idle" | "thinking" | "speaking";
  */
 export type TutorMode = "socratic" | "teach";
 
-const DEFAULT_MESSAGE: Record<MascotStatus, string> = {
-  idle: "Hoo there! Ask me about any concept — I'll guide you with questions, not answers.",
-  thinking: "Analyzing your question & sketching a step-by-step path…",
-  speaking: "Hoo-hoo! Here is a guiding question for you!",
+/** Teaching language. The owl's own phrases follow this too. */
+export type TeachLanguage = "en" | "hi";
+
+/** The owl's own lines, in both languages. */
+const MESSAGES: Record<TeachLanguage, Record<MascotStatus, string>> = {
+  en: {
+    idle: "Hoo there! Ask me about any concept — I'll guide you with questions, not answers.",
+    thinking: "Analyzing your question & sketching a step-by-step path…",
+    speaking: "Hoo-hoo! Here is a guiding question for you!",
+  },
+  hi: {
+    idle: "नमस्ते! कोई भी topic पूछो — मैं सवालों से समझने में मदद करूँगा।",
+    thinking: "आपका सवाल समझ रहा हूँ और step-by-step तैयार कर रहा हूँ…",
+    speaking: "यह लो, एक सवाल तुम्हें सोचने में मदद करेगा!",
+  },
 };
 
-/** Idle line per mode, so the owl advertises what it's about to do. */
 const MODE_IDLE_LINE: Record<TutorMode, string> = {
   socratic: "Hoo there! Ask me anything — I'll guide you with questions, not answers.",
   teach: "Teaching mode on. Name a topic and I'll explain it step by step.",
+};
+
+const MODE_IDLE_LINE_HI: Record<TutorMode, string> = {
+  socratic: "नमस्ते! कुछ भी पूछो — मैं सवालों के ज़रिए समझाऊँगा, सीधा जवाब नहीं दूँगा।",
+  teach: "Teaching mode चालू है। कोई भी topic बताओ, मैं step-by-step समझाऊँगा।",
 };
 
 const MODE_PILL: Record<TutorMode, string> = {
@@ -233,6 +248,8 @@ export function createMascot(
   setVisualStep: (index: number) => void;
   /** How many highlightable elements the current diagram has. */
   visualStepCount: () => number;
+  /** Switch the owl's own language. */
+  setLanguage: (language: TeachLanguage) => void;
 } {
   host.innerHTML = `
     <style>
@@ -320,6 +337,8 @@ export function createMascot(
   let topicVisual: VisualSpec | null = null;
   /** Which element of the diagram the owl is currently on. */
   let visualStep = -1;
+  /** Language for the owl's own phrases. */
+  let language: TeachLanguage = "en";
   // Mobile-first: the display starts collapsed on small screens, expanded on
   // desktop (>= sm, where the toggle button is hidden anyway).
   let collapsed = window.innerWidth < 640;
@@ -374,7 +393,12 @@ export function createMascot(
     const boardKind =
       vis === "speaking" ? (mode === "teach" ? "explaining" : "teaching") : vis;
     const line =
-      customMessage ?? (status === "idle" ? MODE_IDLE_LINE[mode] : DEFAULT_MESSAGE[status]);
+      customMessage ??
+      (status === "idle"
+        ? language === "hi"
+          ? MODE_IDLE_LINE_HI[mode]
+          : MODE_IDLE_LINE[mode]
+        : MESSAGES[language][status]);
 
     visual.innerHTML = owlSvg(status);
     // Animate the *visible* state so the owl's motion always matches the
@@ -522,6 +546,16 @@ export function createMascot(
   });
 
   setStatus("idle");
+  /** Switch the owl's own language. */
+  function setLanguage(next: TeachLanguage): void {
+    if (next === language) return;
+    language = next;
+    // Drop the old line so the new language shows immediately rather than
+    // waiting for the next reply.
+    customMessage = null;
+    render();
+  }
+
   return {
     setStatus,
     setMessage,
@@ -532,5 +566,6 @@ export function createMascot(
     setVisual,
     setVisualStep,
     visualStepCount: () => visualStepCount(topicVisual),
+    setLanguage,
   };
 }

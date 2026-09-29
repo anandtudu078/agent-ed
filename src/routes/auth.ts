@@ -2,7 +2,12 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
 
 import { User } from "../models/User";
-import { signAuthToken } from "../middleware/auth";
+import {
+  AuthenticatedRequest,
+  AuthUser,
+  requireAuth,
+  signAuthToken,
+} from "../middleware/auth";
 import { authRateLimit } from "../middleware/rateLimit";
 
 const router = Router();
@@ -68,6 +73,7 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
       id: String(user._id),
       username: user.username,
       displayName: user.displayName,
+      language: user.language ?? "en",
     });
 
     response.status(201).json({
@@ -76,6 +82,7 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
         id: String(user._id),
         username: user.username,
         displayName: user.displayName,
+        language: user.language ?? "en",
       },
     });
   } catch (error) {
@@ -118,6 +125,7 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
       id: String(user._id),
       username: user.username,
       displayName: user.displayName,
+      language: user.language ?? "en",
     });
 
     response.json({
@@ -126,11 +134,52 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
         id: String(user._id),
         username: user.username,
         displayName: user.displayName,
+        language: user.language ?? "en",
       },
     });
   } catch (error) {
     console.error("Login failed.", error);
     response.status(500).json({ error: "Unable to sign in right now." });
+  }
+});
+
+/**
+ * PATCH /api/auth/language
+ * Body: { language: "en" | "hi" }
+ *
+ * Persists the teaching preference and re-issues the token. The re-issue is
+ * what keeps the language in the JWT honest — without it the next reply would
+ * come back in the old language until the student signed in again.
+ */
+router.patch("/language", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    const requested = (request.body as { language?: unknown } | undefined)?.language;
+    if (requested !== "en" && requested !== "hi") {
+      response.status(400).json({ error: 'language must be "en" or "hi".' });
+      return;
+    }
+
+    const user = await User.findByIdAndUpdate(
+      authUser.id,
+      { $set: { language: requested } },
+      { new: true },
+    ).lean();
+    if (!user) {
+      response.status(404).json({ error: "User not found." });
+      return;
+    }
+
+    const identity = {
+      id: String(user._id),
+      username: user.username,
+      displayName: user.displayName,
+      language: user.language,
+    };
+    response.json({ token: signAuthToken(identity), user: identity });
+  } catch (error) {
+    console.error("Language change failed.", error);
+    response.status(500).json({ error: "Unable to change language right now." });
   }
 });
 
