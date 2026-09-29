@@ -254,7 +254,7 @@
     </div>
 
     <!-- Chat app view -->
-    <div id="app-view" class="relative hidden h-full flex-col">
+    <div id="app-view" class="relative hidden h-full flex flex-col">
     <div class="flex h-full flex-col">
       <!-- Header -->
       <header
@@ -347,7 +347,7 @@
       </section>
 
       <!-- Chat area -->
-      <div class="relative flex min-h-0 flex-1 flex-col">
+      <div id="chat-wrapper" class="relative flex min-h-0 flex-1 flex-col">
         <main
           id="chat-container"
           class="scroll-smooth flex-1 overflow-y-auto px-4 py-6"
@@ -459,7 +459,10 @@
       </div>
 
       <!-- Control bar -->
-      <footer class="border-t border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur">
+      <footer
+        id="control-bar"
+        class="border-t border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur"
+      >
         <form id="chat-form" class="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
           <label for="message-input" class="sr-only">Your question</label>
           <div class="relative min-w-0 flex-1">
