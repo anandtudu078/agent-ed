@@ -1,5 +1,9 @@
 import { io, type Socket } from "socket.io-client";
 import { createMascot, type MascotStatus } from "./components/mascot";
+import {
+  createDashboard,
+  type CourseInfo,
+} from "./components/dashboard";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -89,12 +93,209 @@ const mascotHostEl = document.querySelector<HTMLDivElement>("#mascot-host")!;
 const mascot = createMascot(mascotHostEl);
 
 // ---------------------------------------------------------------------------
+// Additional UI elements
+// ---------------------------------------------------------------------------
+
+const authSubmitLabelEl =
+  document.querySelector<HTMLSpanElement>("#auth-submit-label")!;
+const authSpinnerEl = document.querySelector<HTMLSpanElement>("#auth-spinner")!;
+const passwordToggleEl =
+  document.querySelector<HTMLButtonElement>("#password-toggle")!;
+const passwordStrengthEl =
+  document.querySelector<HTMLDivElement>("#password-strength")!;
+const passwordStrengthLabelEl =
+  document.querySelector<HTMLParagraphElement>("#password-strength-label")!;
+const strengthBars = Array.from(
+  document.querySelectorAll<HTMLSpanElement>("#password-strength .strength-bar"),
+);
+
+const emptyStateEl = document.querySelector<HTMLElement>("#empty-state")!;
+const typingIndicatorEl =
+  document.querySelector<HTMLDivElement>("#typing-indicator")!;
+const scrollBottomEl =
+  document.querySelector<HTMLButtonElement>("#scroll-bottom")!;
+const sendLabelEl = document.querySelector<HTMLSpanElement>("#send-label")!;
+const sendSpinnerEl = document.querySelector<HTMLSpanElement>("#send-spinner")!;
+const charCountEl = document.querySelector<HTMLSpanElement>("#char-count")!;
+const suggestionChips = Array.from(
+  document.querySelectorAll<HTMLButtonElement>(".suggestion-chip"),
+);
+
+const MAX_MESSAGE_LENGTH = 2000;
+const SCROLL_FAB_THRESHOLD = 48;
+
+function isScrolledToBottom(): boolean {
+  const { scrollTop, scrollHeight, clientHeight } = chatContainerEl;
+  return scrollHeight - scrollTop - clientHeight < SCROLL_FAB_THRESHOLD;
+}
+
+function scrollToBottom(behavior: ScrollBehavior = "smooth"): void {
+  chatContainerEl.scrollTo({ top: chatContainerEl.scrollHeight, behavior });
+}
+
+/** Show the "jump to latest" button only when the user has scrolled away. */
+function updateScrollButton(): void {
+  const show = !isScrolledToBottom() && messagesEl.childElementCount > 0;
+  scrollBottomEl.classList.toggle("hidden", !show);
+  scrollBottomEl.classList.toggle("flex", show);
+}
+
+/** "The owl is thinking" indicator (lives outside #messages). */
+function setTyping(visible: boolean): void {
+  typingIndicatorEl.classList.toggle("hidden", !visible);
+  typingIndicatorEl.classList.toggle("flex", visible);
+  if (visible) scrollToBottom();
+}
+
+function setEmptyStateVisible(visible: boolean): void {
+  emptyStateEl.classList.toggle("hidden", !visible);
+  emptyStateEl.classList.toggle("flex", visible);
+  if (!visible) updateScrollButton();
+}
+
+const CHAR_COUNT_BASE_CLASS =
+  "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] tabular-nums transition-colors ";
+
+function updateCharCount(): void {
+  const length = inputEl.value.length;
+  if (length === 0) {
+    charCountEl.textContent = "";
+    charCountEl.className = `${CHAR_COUNT_BASE_CLASS}text-slate-600`;
+    return;
+  }
+  const remaining = MAX_MESSAGE_LENGTH - length;
+  charCountEl.textContent = String(remaining);
+  // Draw attention as the student approaches the limit.
+  charCountEl.className =
+    CHAR_COUNT_BASE_CLASS + (remaining <= 200 ? "text-amber-400" : "text-slate-600");
+}
+
+function setAuthLoading(loading: boolean): void {
+  authSubmitEl.disabled = loading;
+  authSpinnerEl.classList.toggle("hidden", !loading);
+  authSubmitLabelEl.textContent = loading
+    ? isRegisterMode
+      ? "Creating account…"
+      : "Signing in…"
+    : isRegisterMode
+      ? "Sign Up"
+      : "Sign In";
+}
+const dashboardToggleEl = document.querySelector<HTMLButtonElement>("#dashboard-toggle")!;
+const dashboardViewEl = document.querySelector<HTMLElement>("#dashboard-view")!;
+const dashboardHostEl = document.querySelector<HTMLDivElement>("#dashboard-host")!;
+const owlStageEl = document.querySelector<HTMLElement>("#owl-stage")!;
+
+// ---------------------------------------------------------------------------
+// Password affordances (reveal toggle + strength meter)
+// ---------------------------------------------------------------------------
+
+/** Rough 0–4 strength score: length, variety, and character-class mixing. */
+function scorePassword(password: string): number {
+  if (!password) return 0;
+  let score = 0;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
+  if (/\d/.test(password) || /[^\w\s]/.test(password)) score += 1;
+  return Math.min(score, 4);
+}
+
+const STRENGTH_COLORS = [
+  "bg-slate-700",
+  "bg-rose-500",
+  "bg-amber-500",
+  "bg-sky-500",
+  "bg-emerald-500",
+];
+
+const STRENGTH_LABELS = [
+  "Use 8+ characters — mix letters, numbers and symbols.",
+  "Weak — a few more characters would help.",
+  "Fair — mix in numbers or symbols.",
+  "Good — a little longer would be better.",
+  "Strong password.",
+];
+
+function updatePasswordStrength(): void {
+  // Only meaningful while registering; hide entirely in sign-in mode.
+  if (!isRegisterMode) {
+    passwordStrengthEl.classList.add("hidden");
+    return;
+  }
+  passwordStrengthEl.classList.remove("hidden");
+
+  const score = scorePassword(passwordInputEl.value);
+  strengthBars.forEach((bar, index) => {
+    bar.className = `strength-bar h-1 flex-1 rounded-full transition-colors ${
+      index < score ? STRENGTH_COLORS[score] : "bg-slate-700"
+    }`;
+  });
+  passwordStrengthLabelEl.textContent = STRENGTH_LABELS[score];
+  passwordStrengthLabelEl.className =
+    "text-[11px] " +
+    (score >= 4 ? "text-emerald-400" : score >= 3 ? "text-sky-400" : "text-slate-500");
+}
+
+function initPasswordAffordances(): void {
+  passwordToggleEl.addEventListener("click", () => {
+    const reveal = passwordInputEl.type === "password";
+    passwordInputEl.type = reveal ? "text" : "password";
+    const label = reveal ? "Hide password" : "Show password";
+    passwordToggleEl.title = label;
+    passwordToggleEl.setAttribute("aria-label", label);
+    passwordInputEl.focus();
+  });
+  passwordInputEl.addEventListener("input", updatePasswordStrength);
+}
+
+// ---------------------------------------------------------------------------
 // AI status (drives the Wise Owl mascot)
 // ---------------------------------------------------------------------------
 
 type AiStatus = MascotStatus;
 let aiStatus: AiStatus = "idle";
 let speakingRevertTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ---------------------------------------------------------------------------
+// Dashboard view (lazy; toggled from the header)
+// ---------------------------------------------------------------------------
+
+let dashboard: ReturnType<typeof createDashboard> | null = null;
+let dashboardVisible = false;
+
+function setDashboardVisible(visible: boolean): void {
+  dashboardVisible = visible;
+  dashboardViewEl.classList.toggle("hidden", !visible);
+  owlStageEl.classList.toggle("hidden", visible);
+  chatContainerEl.classList.toggle("hidden", visible);
+  dashboardToggleEl.setAttribute("aria-pressed", String(visible));
+  dashboardToggleEl.classList.toggle("border-indigo-500/60", visible);
+  dashboardToggleEl.classList.toggle("text-indigo-300", visible);
+  if (visible && currentAuth && !dashboard) {
+    dashboard = createDashboard(
+      dashboardHostEl,
+      currentAuth.user.username,
+      (course: CourseInfo) => {
+        // "Continue Learning" → jump into a Socratic chat on that course's topic.
+        setDashboardVisible(false);
+        if (!socket?.connected) return;
+        const prompt = `I want to learn about ${course.title} (${course.category}). Can you start with ${course.level} level questions?`;
+        appendMessage("student", prompt);
+        setBusy(true);
+        mascot.clearMessage();
+        stopOwlSpeech();
+        resumeMicAfterSpeech();
+        setAiStatus("thinking");
+        socket.emit("student-message", {
+          studentId: getStudentId(),
+          activeTopic: course.title.slice(0, 60),
+          studentMessage: prompt,
+        });
+      },
+    );
+  }
+}
 
 function setAiStatus(next: AiStatus): void {
   if (aiStatus === next) return;
@@ -150,15 +351,7 @@ function connectSocket(): void {
     setConnectionStatus("error");
   });
 
-  socket.on("socratic-response", (payload: { response: string }) => {
-    appendMessage("tutor", payload.response);
-    setBusy(false);
-    setAiStatus("speaking");
-    // The owl is the visual teacher: it shows the guidance on its display…
-    mascot.setMessage(payload.response);
-    // …and speaks it aloud when voice mode is on.
-    if (voiceEnabled) speakOwlMessage(payload.response);
-  });
+  socket.on("socratic-response", handleSocraticResponse);
 
   socket.on("ai-error", (payload: { message: string }) => {
     appendMessage("system", `Something went wrong: ${payload.message}`);
@@ -166,6 +359,17 @@ function connectSocket(): void {
     mascot.clearMessage();
     setAiStatus("idle");
   });
+}
+
+/** Shared handler so tests can drive the exact same client path (DEV only). */
+function handleSocraticResponse(payload: { response: string }): void {
+  appendMessage("tutor", payload.response);
+  setBusy(false);
+  setAiStatus("speaking");
+  // The owl is the visual teacher: it shows the guidance on its display…
+  mascot.setMessage(payload.response);
+  // …and speaks it aloud when voice mode is on.
+  if (voiceEnabled) speakOwlMessage(payload.response);
 }
 
 function disconnectSocket(): void {
@@ -184,6 +388,7 @@ function showApp(): void {
   if (currentAuth) {
     userBadgeEl.textContent = `👤 ${currentAuth.user.displayName}`;
   }
+  setDashboardVisible(false);
   connectSocket();
   inputEl.focus();
 }
@@ -197,7 +402,9 @@ function showAuth(): void {
 function setAuthMode(register: boolean): void {
   isRegisterMode = register;
   authTitleEl.textContent = register ? "Create your account" : "Welcome back";
-  authSubmitEl.textContent = register ? "Sign Up" : "Sign In";
+  // NB: write to the label span — assigning to the button's textContent would
+  // wipe out the spinner element.
+  authSubmitLabelEl.textContent = register ? "Sign Up" : "Sign In";
   authToggleLabelEl.textContent = register
     ? "Already have an account?"
     : "New to AgentEd?";
@@ -209,6 +416,7 @@ function setAuthMode(register: boolean): void {
     : "Password";
   passwordInputEl.autocomplete = register ? "new-password" : "current-password";
   authErrorEl.textContent = "";
+  updatePasswordStrength();
 }
 
 function signOut(message?: string): void {
@@ -216,10 +424,17 @@ function signOut(message?: string): void {
   clearStoredAuth();
   currentAuth = null;
   messagesEl.replaceChildren();
+  setEmptyStateVisible(true);
+  inputEl.value = "";
+  updateCharCount();
+  updateScrollButton();
   stopOwlSpeech();
   micSuspendedForSpeech = false;
   mascot.clearMessage();
   setAiStatus("idle");
+  dashboard?.destroy();
+  dashboard = null;
+  setDashboardVisible(false);
   if (message) appendAuthError(message);
   showAuth();
 }
@@ -266,7 +481,7 @@ authFormEl.addEventListener("submit", async (event) => {
     ? { username, password, displayName: displayNameInputEl.value.trim() || username }
     : { username, password };
 
-  authSubmitEl.disabled = true;
+  setAuthLoading(true);
   try {
     const response = await fetch(`${SERVER_URL}${endpoint}`, {
       method: "POST",
@@ -287,7 +502,7 @@ authFormEl.addEventListener("submit", async (event) => {
   } catch {
     appendAuthError("Could not reach the server. Is the backend running?");
   } finally {
-    authSubmitEl.disabled = false;
+    setAuthLoading(false);
   }
 });
 
@@ -307,6 +522,11 @@ function setConnectionStatus(state: "connected" | "disconnected" | "error") {
     state === "connected" ? "Online" : state === "error" ? "Offline" : "Reconnecting…";
 }
 
+/** "14:32" — a compact, locale-aware timestamp for message bubbles. */
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function appendMessage(
   role: "student" | "tutor" | "system",
   text: string,
@@ -316,7 +536,7 @@ function appendMessage(
   const wrapper = document.createElement("div");
 
   if (role === "system") {
-    wrapper.className = "mx-auto max-w-md text-center";
+    wrapper.className = "animate-fadeup mx-auto max-w-md text-center";
     const notice = document.createElement("p");
     notice.className =
       "rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1 text-xs text-slate-400";
@@ -324,7 +544,9 @@ function appendMessage(
     wrapper.appendChild(notice);
   } else {
     const isStudent = role === "student";
-    wrapper.className = `flex ${isStudent ? "justify-end" : "justify-start"}`;
+    // NB: the UI test asserts on `.flex.justify-end` for student bubbles —
+    // keep those class names intact.
+    wrapper.className = `animate-fadeup flex ${isStudent ? "justify-end" : "justify-start"}`;
     const bubble = document.createElement("div");
     bubble.className = [
       "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
@@ -333,10 +555,20 @@ function appendMessage(
         : "rounded-bl-sm bg-slate-800 text-slate-100 border border-slate-700/60",
     ].join(" ");
 
+    const meta = document.createElement("div");
+    meta.className = `mb-1 flex items-center gap-2 ${isStudent ? "justify-end" : "justify-start"}`;
+
     const author = document.createElement("p");
-    author.className = `mb-1 text-[11px] font-semibold uppercase tracking-wide ${isStudent ? "text-indigo-200" : "text-violet-300"}`;
+    author.className = `text-[11px] font-semibold uppercase tracking-wide ${isStudent ? "text-indigo-200" : "text-violet-300"}`;
     author.textContent = isStudent ? "You" : "AgentEd";
-    bubble.appendChild(author);
+
+    const time = document.createElement("time");
+    // Needs a lighter tone on the indigo student bubble to stay legible.
+    time.className = `text-[10px] tabular-nums ${isStudent ? "text-indigo-200/70" : "text-slate-500"}`;
+    time.textContent = formatTime(new Date());
+
+    meta.append(author, time);
+    bubble.appendChild(meta);
 
     const body = document.createElement("p");
     body.textContent = text;
@@ -346,7 +578,12 @@ function appendMessage(
   }
 
   messagesEl.appendChild(wrapper);
-  chatContainerEl.scrollTo({ top: chatContainerEl.scrollHeight, behavior: "smooth" });
+  // Keep the starter prompts up until the student actually says something —
+  // the "connected" system notice shouldn't dismiss them.
+  if (role !== "system") setEmptyStateVisible(false);
+  scrollToBottom();
+  // Re-check after layout settles so the jump-to-latest button is accurate.
+  requestAnimationFrame(updateScrollButton);
 }
 
 let requestInFlight = false;
@@ -354,8 +591,12 @@ let requestInFlight = false;
 function setBusy(busy: boolean): void {
   requestInFlight = busy;
   sendButtonEl.disabled = busy;
-  sendButtonEl.textContent = busy ? "Thinking…" : "Send";
+  // Write to the label span so the spinner survives; the UI test reads the
+  // button's textContent and expects it to mention "Thinking".
+  sendLabelEl.textContent = busy ? "Thinking…" : "Send";
+  sendSpinnerEl.classList.toggle("hidden", !busy);
   sendButtonEl.setAttribute("aria-busy", String(busy));
+  setTyping(busy);
 }
 
 formEl.addEventListener("submit", (event) => {
@@ -370,6 +611,7 @@ formEl.addEventListener("submit", (event) => {
 
   appendMessage("student", studentMessage);
   inputEl.value = "";
+  updateCharCount();
   setBusy(true);
   mascot.clearMessage();
   stopOwlSpeech();
@@ -437,11 +679,15 @@ function speakOwlMessage(text: string): void {
   utterance.rate = 1;
   utterance.pitch = 1.05;
   utterance.onend = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
+    // Only resume the mic if this is still the current utterance. A cancelled
+    // one (stopOwlSpeech nulls currentUtterance) must not restart the mic.
+    if (currentUtterance !== utterance) return;
+    currentUtterance = null;
     resumeMicAfterSpeech();
   };
   utterance.onerror = () => {
-    if (currentUtterance === utterance) currentUtterance = null;
+    if (currentUtterance !== utterance) return;
+    currentUtterance = null;
     resumeMicAfterSpeech();
   };
   currentUtterance = utterance;
@@ -560,6 +806,32 @@ function setVoiceMode(enabled: boolean): void {
 
 voiceToggleEl.addEventListener("click", () => setVoiceMode(!voiceEnabled));
 
+dashboardToggleEl.addEventListener("click", () =>
+  setDashboardVisible(!dashboardVisible),
+);
+
+// ---------------------------------------------------------------------------
+// UI initialization
+// ---------------------------------------------------------------------------
+
+initPasswordAffordances();
+chatContainerEl.addEventListener("scroll", updateScrollButton, { passive: true });
+scrollBottomEl.addEventListener("click", () => scrollToBottom());
+inputEl.addEventListener("input", updateCharCount);
+updateCharCount();
+
+// Starter prompts: drop the prompt into the composer and send it.
+for (const chip of suggestionChips) {
+  chip.addEventListener("click", () => {
+    const prompt = chip.dataset.prompt;
+    if (!prompt) return;
+    inputEl.value = prompt;
+    updateCharCount();
+    inputEl.focus();
+    formEl.requestSubmit();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Boot: show the right view for the stored auth state
 // ---------------------------------------------------------------------------
@@ -571,6 +843,9 @@ if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__agentedTest = {
     speakOwlMessage,
     setMessage: (text: string) => mascot.setMessage(text),
+    // Drives the real socratic-response handler (used when live AI providers
+    // are down so the suite still covers the client reply path).
+    simulateReply: (text: string) => handleSocraticResponse({ response: text }),
   };
 }
 

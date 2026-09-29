@@ -12,6 +12,7 @@ import {
   generateSocraticResponse,
 } from "./services/aiService";
 import authRouter from "./routes/auth";
+import dashboardRouter from "./routes/dashboard";
 import {
   AuthenticatedRequest,
   AuthUser,
@@ -37,6 +38,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRouter);
+app.use("/api/dashboard", dashboardRouter);
 
 interface StudentMessagePayload {
   studentId: string;

@@ -7,6 +7,10 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="AgentEd — a Socratic AI mentor that teaches with questions, never answers."
+    />
     <title>AgentEd — Socratic AI Mentor</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -20,6 +24,11 @@
               bob: "bob 3.5s ease-in-out infinite",
               wiggle: "wiggle 1.1s ease-in-out infinite",
               mascotbounce: "mascotbounce 0.9s ease-in-out infinite",
+              // UI motion (kept separate from the owl's own animations).
+              fadeup: "fadeup 0.34s cubic-bezier(0.22, 1, 0.36, 1) both",
+              popin: "popin 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both",
+              floaty: "floaty 6s ease-in-out infinite",
+              ripple: "ripple 1.4s ease-in-out infinite",
             },
             keyframes: {
               bob: {
@@ -36,6 +45,22 @@
                 "35%": { transform: "translateY(-6px) scale(1.06)" },
                 "60%": { transform: "translateY(0) scale(0.98)" },
               },
+              fadeup: {
+                "0%": { opacity: "0", transform: "translateY(12px)" },
+                "100%": { opacity: "1", transform: "translateY(0)" },
+              },
+              popin: {
+                "0%": { opacity: "0", transform: "scale(0.88)" },
+                "100%": { opacity: "1", transform: "scale(1)" },
+              },
+              floaty: {
+                "0%, 100%": { transform: "translateY(0)" },
+                "50%": { transform: "translateY(-10px)" },
+              },
+              ripple: {
+                "0%, 100%": { opacity: "0.25", transform: "translateY(0)" },
+                "50%": { opacity: "1", transform: "translateY(-3px)" },
+              },
             },
           },
         },
@@ -48,16 +73,20 @@
       class="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(99,102,241,0.15),transparent_60%)]"
       aria-hidden="true"
     ></div>
+    <div
+      class="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_bottom_right,rgba(168,85,247,0.10),transparent_55%)]"
+      aria-hidden="true"
+    ></div>
 
     <!-- Auth view (sign in / sign up) -->
     <div
       id="auth-view"
-      class="relative flex h-full flex-col items-center justify-center px-4"
+      class="relative flex h-full flex-col items-center justify-center px-4 py-10"
     >
       <div class="w-full max-w-sm">
-        <div class="mb-8 text-center">
+        <div class="mb-7 text-center">
           <div
-            class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl shadow-xl shadow-indigo-900/50 transition-transform hover:scale-105"
+            class="animate-floaty mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl shadow-xl shadow-indigo-900/50"
           >
             🎓
           </div>
@@ -68,11 +97,25 @@
             Your Socratic AI mentor — it teaches with questions,
             <span class="text-slate-300">never answers.</span>
           </p>
+          <div class="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <span
+              class="rounded-full border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+              >🎓 Socratic method</span
+            >
+            <span
+              class="rounded-full border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+              >🎙️ Voice ready</span
+            >
+            <span
+              class="rounded-full border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+              >🦉 Visual teacher</span
+            >
+          </div>
         </div>
 
         <form
           id="auth-form"
-          class="space-y-3 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur"
+          class="animate-fadeup space-y-3 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur"
         >
           <h2 id="auth-title" class="text-lg font-semibold">Welcome back</h2>
 
@@ -98,22 +141,67 @@
             3–32 characters: letters, numbers, dots, dashes, underscores — no spaces.
           </p>
           <label for="password-input" class="sr-only">Password</label>
-          <input
-            id="password-input"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Password (8+ characters)"
-            class="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-          />
+          <div class="relative">
+            <input
+              id="password-input"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Password (8+ characters)"
+              class="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-4 py-3 pr-11 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            />
+            <button
+              id="password-toggle"
+              type="button"
+              title="Show password"
+              aria-label="Show password"
+              class="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-700/60 hover:text-slate-300"
+            >
+              <svg
+                class="password-eye h-4 w-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
+          <!-- Password strength meter: register mode only -->
+          <div id="password-strength" class="hidden px-1">
+            <div class="mb-1.5 flex gap-1.5">
+              <span class="strength-bar h-1 flex-1 rounded-full bg-slate-700 transition-colors"></span>
+              <span class="strength-bar h-1 flex-1 rounded-full bg-slate-700 transition-colors"></span>
+              <span class="strength-bar h-1 flex-1 rounded-full bg-slate-700 transition-colors"></span>
+              <span class="strength-bar h-1 flex-1 rounded-full bg-slate-700 transition-colors"></span>
+            </div>
+            <p id="password-strength-label" class="text-[11px] text-slate-500">
+              Use 8+ characters — mix letters, numbers and symbols.
+            </p>
+          </div>
 
-          <p id="auth-error" class="min-h-[1.25rem] text-sm text-rose-400"></p>
+          <p
+            id="auth-error"
+            role="alert"
+            aria-live="polite"
+            class="min-h-[1.25rem] rounded-lg px-1 text-sm text-rose-400"
+          ></p>
 
           <button
             id="auth-submit"
             type="submit"
-            class="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            class="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Sign In
+            <span
+              id="auth-spinner"
+              class="hidden h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"
+              aria-hidden="true"
+            ></span>
+            <span id="auth-submit-label">Sign In</span>
           </button>
 
           <p id="auth-toggle-text" class="pt-1 text-center text-xs text-slate-400">
@@ -166,6 +254,14 @@
             <span id="status-text">Connecting…</span>
           </span>
           <div class="flex items-center gap-1.5">
+            <button
+              id="dashboard-toggle"
+              type="button"
+              title="Toggle learning dashboard"
+              class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-indigo-500/50 hover:text-indigo-300"
+            >
+              📊 <span class="hidden lg:inline">Dashboard</span>
+            </button>
             <span
               id="user-badge"
               class="flex items-center rounded-full bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300"
@@ -193,33 +289,156 @@
         <div id="mascot-host" class="mx-auto w-full max-w-3xl"></div>
       </section>
 
-      <!-- Chat area -->
-      <main
-        id="chat-container"
-        class="flex-1 overflow-y-auto px-4 py-6 scroll-smooth"
-        aria-label="Conversation with AgentEd"
-        aria-live="polite"
+      <!-- Student learning dashboard -->
+      <section
+        id="dashboard-view"
+        class="hidden flex-1 overflow-hidden"
+        aria-label="Student learning dashboard"
       >
-        <div id="messages" class="mx-auto flex w-full max-w-3xl flex-col gap-4"></div>
-      </main>
+        <div id="dashboard-host" class="h-full"></div>
+      </section>
+
+      <!-- Chat area -->
+      <div class="relative flex min-h-0 flex-1 flex-col">
+        <main
+          id="chat-container"
+          class="scroll-smooth flex-1 overflow-y-auto px-4 py-6"
+          aria-label="Conversation with AgentEd"
+          aria-live="polite"
+        >
+          <div class="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4">
+            <!-- Empty state / starter prompts.
+                 Deliberately a SIBLING of #messages: the UI test asserts on
+                 #messages > div:nth-child(3), so nothing may be inserted
+                 before the message list. -->
+            <section
+              id="empty-state"
+              class="flex flex-1 flex-col items-center justify-center py-8 text-center"
+            >
+              <div
+                class="animate-popin mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900/70 text-2xl shadow-lg shadow-black/30"
+              >
+                🦉
+              </div>
+              <h2 class="text-lg font-semibold text-slate-200 sm:text-xl">
+                What shall we explore today?
+              </h2>
+              <p class="mt-1.5 max-w-sm text-sm text-slate-500">
+                Pick a starting point, or ask the owl anything below. It will guide
+                you with questions — never hand you the answer.
+              </p>
+              <div class="mt-6 flex w-full flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  class="suggestion-chip rounded-full border border-slate-700/80 bg-slate-900/60 px-3.5 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-500/60 hover:bg-indigo-500/10 hover:text-indigo-200 active:scale-95"
+                  data-prompt="I keep mixing up derivatives and integrals. Can you help me see the difference?"
+                >
+                  🧮 Derivatives vs integrals
+                </button>
+                <button
+                  type="button"
+                  class="suggestion-chip rounded-full border border-slate-700/80 bg-slate-900/60 px-3.5 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-500/60 hover:bg-indigo-500/10 hover:text-indigo-200 active:scale-95"
+                  data-prompt="Why does the sky look blue? I want to understand it, not memorise it."
+                >
+                  🌤️ Why is the sky blue?
+                </button>
+                <button
+                  type="button"
+                  class="suggestion-chip rounded-full border border-slate-700/80 bg-slate-900/60 px-3.5 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-500/60 hover:bg-indigo-500/10 hover:text-indigo-200 active:scale-95"
+                  data-prompt="Explain recursion in the simplest way you can, then ask me what I don't get."
+                >
+                  ♻️ Explain recursion
+                </button>
+                <button
+                  type="button"
+                  class="suggestion-chip rounded-full border border-slate-700/80 bg-slate-900/60 px-3.5 py-2 text-xs font-medium text-slate-300 transition hover:border-indigo-500/60 hover:bg-indigo-500/10 hover:text-indigo-200 active:scale-95"
+                  data-prompt="How does a database index actually speed things up?"
+                >
+                  🗄️ How indexes work
+                </button>
+              </div>
+            </section>
+
+            <div id="messages" class="flex flex-col gap-4"></div>
+
+            <!-- "The owl is thinking" indicator (also a sibling of #messages) -->
+            <div id="typing-indicator" class="hidden items-center gap-2.5">
+              <div
+                class="flex w-9 shrink-0 items-center justify-center rounded-bl-sm border border-slate-700/60 bg-slate-800 text-base"
+                aria-hidden="true"
+              >
+                🦉
+              </div>
+              <div
+                class="flex items-center gap-1.5 rounded-2xl rounded-bl-sm border border-slate-700/60 bg-slate-800 px-4 py-3"
+              >
+                <span class="animate-ripple h-1.5 w-1.5 rounded-full bg-violet-300"></span>
+                <span
+                  class="animate-ripple h-1.5 w-1.5 rounded-full bg-violet-300"
+                  style="animation-delay: 0.18s"
+                ></span>
+                <span
+                  class="animate-ripple h-1.5 w-1.5 rounded-full bg-violet-300"
+                  style="animation-delay: 0.36s"
+                ></span>
+                <span class="sr-only">AgentEd is thinking…</span>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- Jump to the latest message (only shown when scrolled up) -->
+        <button
+          id="scroll-bottom"
+          type="button"
+          title="Jump to latest"
+          aria-label="Jump to latest message"
+          class="absolute bottom-4 left-1/2 hidden h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-slate-700 bg-slate-800/90 text-slate-300 shadow-lg shadow-black/40 backdrop-blur transition hover:border-indigo-500/60 hover:text-indigo-300"
+        >
+          <svg
+            class="h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
 
       <!-- Control bar -->
       <footer class="border-t border-slate-800 bg-slate-900/80 px-4 py-3 backdrop-blur">
         <form id="chat-form" class="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
           <label for="message-input" class="sr-only">Your question</label>
-          <input
-            id="message-input"
-            type="text"
-            autocomplete="off"
-            placeholder="Ask about any concept…"
-            class="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-          />
+          <div class="relative min-w-0 flex-1">
+            <input
+              id="message-input"
+              type="text"
+              maxlength="2000"
+              autocomplete="off"
+              placeholder="Ask about any concept…"
+              class="w-full rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 pr-16 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            />
+            <span
+              id="char-count"
+              class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] tabular-nums text-slate-600 transition-colors"
+            ></span>
+          </div>
           <button
             id="send-button"
             type="submit"
-            class="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+            class="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:bg-indigo-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Send
+            <span
+              id="send-spinner"
+              class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+              aria-hidden="true"
+            ></span>
+            <span id="send-label">Send</span>
           </button>
           <button
             id="voice-toggle"
@@ -232,6 +451,15 @@
           </button>
         </form>
         <p id="voice-hint" class="mx-auto mt-2 hidden max-w-3xl text-center text-xs text-slate-500"></p>
+        <p
+          class="mx-auto mt-2 hidden max-w-3xl text-center text-[11px] text-slate-600 sm:block"
+        >
+          <kbd
+            class="rounded border border-slate-700 bg-slate-800/80 px-1.5 py-0.5 font-sans text-slate-400"
+            >Enter</kbd
+          >
+          to send · the owl asks, you answer
+        </p>
       </footer>
     </div>
     </div>
