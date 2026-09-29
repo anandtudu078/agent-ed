@@ -276,11 +276,14 @@ function setDashboardVisible(visible: boolean): void {
     dashboard = createDashboard(
       dashboardHostEl,
       currentAuth.user.username,
-      (course: CourseInfo) => {
-        // "Continue Learning" → jump into a Socratic chat on that course's topic.
+      (course: CourseInfo, nextModule?: { title: string; topic: string } | null) => {
+        // "Continue Learning" → jump into a Socratic chat on the module the
+        // student hasn't reached yet, rather than a generic "tell me about it".
         setDashboardVisible(false);
         if (!socket?.connected) return;
-        const prompt = `I want to learn about ${course.title} (${course.category}). Can you start with ${course.level} level questions?`;
+        const prompt = nextModule
+          ? `I'm working through ${course.title} (${course.level}). Next module is "${nextModule.title}". Can you start with a question that gets me thinking about ${nextModule.topic}?`
+          : `I want to learn about ${course.title} (${course.category}). Can you start with ${course.level} level questions?`;
         appendMessage("student", prompt);
         setBusy(true);
         mascot.clearMessage();
@@ -289,7 +292,7 @@ function setDashboardVisible(visible: boolean): void {
         setAiStatus("thinking");
         socket.emit("student-message", {
           studentId: getStudentId(),
-          activeTopic: course.title.slice(0, 60),
+          activeTopic: (nextModule?.topic ?? course.title).slice(0, 60),
           studentMessage: prompt,
         });
       },

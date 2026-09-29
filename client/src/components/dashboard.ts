@@ -9,6 +9,7 @@ export interface CourseInfo {
   category: string;
   description: string;
   level: "beginner" | "intermediate" | "advanced";
+  modules: Array<{ title: string; topic: string }>;
 }
 
 export interface TestEvaluation {
@@ -25,6 +26,7 @@ export interface ProgressInfo {
     title: string;
     lastTopic: string;
     progressPercent: number;
+    completedModules: string[];
   }>;
   learningSpeed: number; // concepts/week
   weakPoints: Array<{ topic: string; strength: number }>;
@@ -57,12 +59,16 @@ function esc(text: string): string {
 export function createDashboard(
   host: HTMLElement,
   studentId: string,
-  onSelectCourse: (course: CourseInfo) => void,
+  onSelectCourse: (
+    course: CourseInfo,
+    nextModule?: CourseInfo["modules"][number] | null,
+  ) => void,
   /** Sends the student back to the tutor on a topic the test just flagged. */
   onDiscussTopic?: (topic: string) => void,
 ): { refresh: () => Promise<void>; destroy: () => void } {
   let data: DashboardData | null = null;
   let loading = false;
+  let refreshQueued = false;
   let destroyed = false;
   host.innerHTML = `
     <div class="h-full overflow-y-auto px-4 py-6 scroll-smooth">
@@ -341,6 +347,63 @@ export function createDashboard(
     }
   }
 
+  /** Enroll, then hand the course (and where to resume) back to main.ts. */
+  async function startCourse(course: CourseInfo): Promise<void> {
+    const enrolled = data?.progress.enrolledCourses.find(
+      (item) => item.courseId === course._id,
+    );
+
+    // Already enrolled: just resume the next incomplete module.
+    if (enrolled) {
+      const done = new Set(enrolled.completedModules ?? []);
+      const nextModule =
+        (course.modules ?? []).find((module) => !done.has(module.title)) ?? null;
+      onSelectCourse(course, nextModule);
+      return;
+    }
+
+    setTestStatus("");
+    try {
+      const res = await fetch(
+        `${SERVER_URL}/api/courses/${encodeURIComponent(course._id)}/enroll`,
+        { method: "POST", headers: authHeaders() },
+      );
+      const body = (await res.json()) as {
+        nextModule?: CourseInfo["modules"][number] | null;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(body.error ?? "Could not enroll in that course.");
+      }
+      // Reload so the card flips to its enrolled state, then start the lesson.
+      await refresh();
+      onSelectCourse(course, body.nextModule ?? null);
+    } catch (error) {
+      setTestStatus(
+        error instanceof Error ? error.message : "Could not enroll in that course.",
+      );
+    }
+  }
+
+  async function leaveCourse(courseId: string): Promise<void> {
+    setTestStatus("");
+    try {
+      const res = await fetch(
+        `${SERVER_URL}/api/courses/${encodeURIComponent(courseId)}/enroll`,
+        { method: "DELETE", headers: authHeaders() },
+      );
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Could not leave that course.");
+      }
+      await refresh();
+    } catch (error) {
+      setTestStatus(
+        error instanceof Error ? error.message : "Could not leave that course.",
+      );
+    }
+  }
+
   function closeTestPanel(): void {
     attemptToken = "";
     testPanelEl.classList.add("hidden");
@@ -375,8 +438,14 @@ export function createDashboard(
         const enrollment = data?.progress.enrolledCourses.find(
           (c) => c.courseId === course._id,
         );
+        const done = new Set(enrollment?.completedModules ?? []);
+        const modules = course.modules ?? [];
+        const percent = Math.min(100, Math.max(0, enrollment?.progressPercent ?? 0));
+        // Resume where the student left off rather than restarting the course.
+        const nextModule = modules.find((module) => !done.has(module.title));
+
         return `
-        <div class="dash-course flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-indigo-500/40">
+        <div class="dash-course flex flex-col gap-2 rounded-xl border ${enrollment ? "border-indigo-500/40" : "border-slate-800"} bg-slate-950/60 p-4 transition hover:border-indigo-500/40">
           <div class="flex items-start justify-between gap-2">
             <h3 class="text-sm font-semibold text-slate-100">${esc(course.title)}</h3>
             <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${LEVEL_STYLES[course.level]}">${esc(course.level)}</span>
@@ -386,19 +455,51 @@ export function createDashboard(
             enrollment
               ? `<div class="mt-1">
                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                     <div class="h-full rounded-full bg-indigo-500" style="width:${Math.min(100, Math.max(0, enrollment.progressPercent))}%"></div>
+                     <div class="h-full rounded-full bg-indigo-500 transition-[width] duration-500" style="width:${percent}%"></div>
                    </div>
-                   <p class="mt-1 text-[10px] text-slate-500">${Math.round(enrollment.progressPercent)}% · last topic: ${esc(enrollment.lastTopic || "—")}</p>
+                   <p class="mt-1 text-[10px] text-slate-500">${Math.round(percent)}% · ${done.size}/${modules.length} modules${
+                     enrollment.lastTopic ? ` · last topic: ${esc(enrollment.lastTopic)}` : ""
+                   }</p>
                  </div>`
               : ""
           }
-          <button
-            type="button"
-            data-course-id="${esc(course._id)}"
-            class="dash-continue mt-auto rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 active:scale-95"
-          >
-            ${enrollment ? "Continue Learning" : "Start Learning"}
-          </button>
+          <ul class="dash-modules flex flex-col gap-0.5 text-[11px] text-slate-500">
+            ${modules
+              .map(
+                (module) => `
+              <li class="flex items-center gap-1.5">
+                <span class="${done.has(module.title) ? "text-emerald-400" : "text-slate-600"}">${
+                  done.has(module.title) ? "✓" : "○"
+                }</span>
+                <span class="${done.has(module.title) ? "text-slate-400 line-through" : ""}">${esc(module.title)}</span>
+              </li>`,
+              )
+              .join("")}
+          </ul>
+          <div class="mt-auto flex gap-2 pt-1">
+            <button
+              type="button"
+              data-course-id="${esc(course._id)}"
+              class="dash-continue flex-1 rounded-lg ${enrollment ? "bg-indigo-600 hover:bg-indigo-500" : "border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"} px-3 py-2 text-xs font-semibold transition active:scale-95"
+            >
+              ${enrollment ? "Continue Learning" : "Start Learning"}
+            </button>
+            ${
+              enrollment
+                ? `<button
+                     type="button"
+                     data-course-id="${esc(course._id)}"
+                     class="dash-leave rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-400 transition hover:border-rose-500/50 hover:text-rose-300"
+                     title="Leave this course"
+                   >Leave</button>`
+                : ""
+            }
+          </div>
+          ${
+            enrollment && nextModule
+              ? `<p class="text-[10px] text-slate-500">Next up: <span class="text-indigo-300">${esc(nextModule.title)}</span></p>`
+              : ""
+          }
         </div>`;
       })
       .join("");
@@ -447,7 +548,13 @@ export function createDashboard(
   }
 
   async function refresh(): Promise<void> {
-    if (loading || destroyed) return;
+    if (destroyed) return;
+    // A refresh requested while one is already in flight must not be dropped —
+    // that's how a card fails to flip back to its post-enroll state. Queue it.
+    if (loading) {
+      refreshQueued = true;
+      return;
+    }
     loading = true;
     statusEl.textContent = "";
     try {
@@ -465,17 +572,31 @@ export function createDashboard(
         error instanceof Error ? error.message : "Unable to load dashboard.";
     } finally {
       loading = false;
+      if (refreshQueued) {
+        refreshQueued = false;
+        void refresh();
+      }
     }
   }
 
   searchEl.addEventListener("input", () => renderCourses(searchEl.value));
 
-  // Continue Learning → jump into a Socratic chat about that course.
+  // Continue Learning / Start Learning → enroll if needed, then jump into a
+  // Socratic chat aimed at the next incomplete module.
   coursesEl.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".dash-continue");
-    if (!button || !data) return;
+    const target = event.target as HTMLElement;
+    if (!data) return;
+
+    const leave = target.closest<HTMLButtonElement>(".dash-leave");
+    if (leave?.dataset.courseId) {
+      void leaveCourse(leave.dataset.courseId);
+      return;
+    }
+
+    const button = target.closest<HTMLButtonElement>(".dash-continue");
+    if (!button?.dataset.courseId) return;
     const course = data.courses.find((c) => c._id === button.dataset.courseId);
-    if (course) onSelectCourse(course);
+    if (course) void startCourse(course);
   });
 
   startTestBtn.addEventListener("click", () => {

@@ -17,7 +17,10 @@ export interface EnrolledCourse {
   courseId: string;
   title: string;
   lastTopic: string;
-  progressPercent: number; // 0–100
+  progressPercent: number; // 0–100, derived from completedModules
+  /** Titles of finished modules, in course order. */
+  completedModules: string[];
+  enrolledAt: Date;
 }
 
 export interface ProgressDocument extends Document {
@@ -36,6 +39,8 @@ const enrolledCourseSchema = new Schema<EnrolledCourse>(
     title: { type: String, required: true },
     lastTopic: { type: String, default: "" },
     progressPercent: { type: Number, default: 0, min: 0, max: 100 },
+    completedModules: { type: [String], default: [] },
+    enrolledAt: { type: Date, default: Date.now },
   },
   { _id: false },
 );

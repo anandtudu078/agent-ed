@@ -295,6 +295,20 @@ try {
   await page.locator("#dash-test-panel").waitFor({ state: "hidden" });
   check("closing the panel hides it again", true);
 
+  // Enrollment: the catalog used to render a "Start Learning" button that
+  // never enrolled anyone, so progress stayed at 0% forever.
+  const firstCard = page.locator(".dash-courses .dash-course").first();
+  check(
+    "course cards list their modules",
+    (await firstCard.locator(".dash-modules li").count()) > 0,
+    `${await firstCard.locator(".dash-modules li").count()} modules`,
+  );
+  check(
+    "un-enrolled course offers Start Learning",
+    ((await firstCard.locator(".dash-continue").textContent()) ?? "").includes("Start"),
+  );
+  check("un-enrolled course has no Leave button", (await page.locator(".dash-leave").count()) === 0);
+
   await page.locator(".dash-search").fill("machine");
   await page.waitForTimeout(150);
   const visibleCourses = await page.locator(".dash-courses .dash-course").count();
@@ -313,6 +327,40 @@ try {
   await page.locator("#dashboard-toggle").click();
   await page.locator("#dashboard-view").waitFor({ state: "visible" });
   check("dashboard can be reopened after returning to chat", true);
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector(".dash-weakpoints-body");
+        return !!el && el.textContent.trim() !== "Loading…";
+      },
+      { timeout: 20000 },
+    )
+    .catch(() => {});
+  check(
+    "starting a course enrolled the student",
+    (await page.locator(".dash-leave").count()) === 1,
+    `${await page.locator(".dash-leave").count()} enrolled`,
+  );
+  check(
+    "enrolled course shows Continue Learning",
+    (
+      (await page
+        .locator(".dash-courses .dash-course .dash-continue")
+        .first()
+        .textContent()) ?? ""
+    ).includes("Continue"),
+  );
+  // Leaving must return the card to its un-enrolled state.
+  await page.locator(".dash-leave").first().click();
+  await page
+    .waitForFunction(() => document.querySelectorAll(".dash-leave").length === 0, {
+      timeout: 10000,
+    })
+    .catch(() => {});
+  check(
+    "leaving a course restores Start Learning",
+    (await page.locator(".dash-leave").count()) === 0,
+  );
   await page.locator("#dashboard-toggle").click();
   await page.locator("#chat-container").waitFor({ state: "visible" });
 
