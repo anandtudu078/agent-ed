@@ -174,7 +174,11 @@ export async function generateVisual(
     const raw = await completeJson<Record<string, unknown>>(
       VISUAL_SYSTEM_PROMPT + clause,
       `Topic: ${topic}\n\nExplanation the student just read:\n${explanation.slice(0, 1200)}\n\nChoose the diagram that best helps here.`,
-      { model: VISUAL_MODEL, temperature: 0.2 },
+      // No explicit model: the JSON chain leads with gpt-oss-20b (the model
+      // this call used to pin) and falls back to the next if it's unavailable.
+      // A missing diagram is a cosmetic gap, so it must not be able to take the
+      // reply down either.
+      { temperature: 0.2 },
     );
     return parseVisualSpec(raw);
   } catch {

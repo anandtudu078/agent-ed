@@ -10,6 +10,7 @@ import {
   requireJwtSecret,
 } from "../middleware/auth";
 import { chatRateLimit } from "../middleware/rateLimit";
+import { aiSpendLimit } from "../middleware/aiSpendLimit";
 import {
   gradeAssessmentAnswer,
   generateAssessmentQuestion,
@@ -94,7 +95,7 @@ async function chooseTopic(
  * Body: { topic? } — defaults to the student's weakest tracked topic.
  * Returns a diagnostic question plus a token to submit an answer with.
  */
-router.post("/start", requireAuth, chatRateLimit, async (request: Request, response: Response) => {
+router.post("/start", requireAuth, chatRateLimit, aiSpendLimit, async (request: Request, response: Response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
     const { topic, misconceptions } = await chooseTopic(
@@ -130,7 +131,7 @@ router.post("/start", requireAuth, chatRateLimit, async (request: Request, respo
  * Body: { attemptToken, answer }
  * Grades the answer and records it as the student's latest test result.
  */
-router.post("/submit", requireAuth, chatRateLimit, async (request: Request, response: Response) => {
+router.post("/submit", requireAuth, chatRateLimit, aiSpendLimit, async (request: Request, response: Response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
     const studentId = authUser.username;

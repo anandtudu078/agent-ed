@@ -26,8 +26,12 @@ interface StoredUser {
 
 interface AuthResponse {
   token: string;
+  /** Long-lived credential used to mint new access tokens. */
+  refreshToken?: string;
   user: StoredUser;
 }
+
+const REFRESH_TOKEN_KEY = "agented:refreshToken";
 
 function loadStoredAuth(): { token: string; user: StoredUser } | null {
   try {
@@ -42,14 +46,89 @@ function loadStoredAuth(): { token: string; user: StoredUser } | null {
   return null;
 }
 
-function storeAuth(auth: { token: string; user: StoredUser }): void {
+function storeAuth(auth: { token: string; user: StoredUser; refreshToken?: string }): void {
   localStorage.setItem("agented:token", auth.token);
   localStorage.setItem("agented:user", JSON.stringify(auth.user));
+  if (auth.refreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, auth.refreshToken);
+  }
+}
+
+/**
+ * In-flight refresh, shared by every caller that hits a 401 at once.
+ *
+ * Without this, a dashboard load that fires five requests in parallel would
+ * send five refreshes with the same rotating token. Four would be rejected as
+ * reuse and — correctly — revoke the whole family, logging the student out.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * Trade the refresh token for a new access token, at most once per burst.
+ *
+ * Returns false when the session is genuinely over, so the caller can sign out
+ * rather than looping on a dead credential.
+ */
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+
+  const stored = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!stored) return false;
+
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: stored }),
+      });
+      if (!res.ok) return false;
+      const body = (await res.json()) as AuthResponse;
+      if (!body.token || !body.user) return false;
+      storeAuth(body);
+      currentAuth = { token: body.token, user: body.user };
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+/**
+ * `fetch` that transparently renews an expired access token once.
+ *
+ * The student is mid-lesson when a 30-minute token expires; bouncing them to
+ * the sign-in screen for that is the exact failure this exists to prevent.
+ */
+async function authedFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const send = () =>
+    fetch(`${SERVER_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(init.headers ?? {}),
+        Authorization: `Bearer ${currentAuth?.token ?? ""}`,
+      },
+    });
+
+  const first = await send();
+  if (first.status !== 401) return first;
+  // Only retry if there is something to retry with, and only once.
+  if (!localStorage.getItem(REFRESH_TOKEN_KEY)) return first;
+  if (!(await refreshAccessToken())) return first;
+  return send();
 }
 
 function clearStoredAuth(): void {
   localStorage.removeItem("agented:token");
   localStorage.removeItem("agented:user");
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem("agented:studentId");
   // The next sign-in may be a different student, so allow a fresh restore.
   historyRestoreStarted = false;
@@ -496,9 +575,8 @@ async function restoreSessionHistory(): Promise<void> {
   historyRestoreStarted = true;
 
   try {
-    const res = await fetch(
-      `${SERVER_URL}/api/sessions/${encodeURIComponent(studentId)}`,
-      { headers: { Authorization: `Bearer ${currentAuth?.token ?? ""}` } },
+    const res = await authedFetch(
+      `/api/sessions/${encodeURIComponent(studentId)}`,
     );
     // 404 just means this is a brand-new student with no session yet.
     if (!res.ok) return;
@@ -541,9 +619,8 @@ async function startNewChat(): Promise<void> {
   conversationEpoch += 1;
   const studentId = getStudentId();
   try {
-    await fetch(`${SERVER_URL}/api/sessions/${encodeURIComponent(studentId)}`, {
+    await authedFetch(`/api/sessions/${encodeURIComponent(studentId)}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${currentAuth?.token ?? ""}` },
     });
   } catch {
     // Even if the reset fails, clear locally so the UI isn't stuck.
@@ -601,6 +678,17 @@ function setAuthMode(register: boolean): void {
 }
 
 function signOut(message?: string): void {
+  // Revoke server-side refresh tokens first, while we still hold a valid
+  // access token — otherwise the refresh token would outlive the sign-out and
+  // silently sign the student back in. Best effort: the local state is cleared
+  // either way, because a failed revoke must not trap them in a signed-in UI.
+  const token = currentAuth?.token;
+  if (token) {
+    void fetch(`${SERVER_URL}/api/auth/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => undefined);
+  }
   disconnectSocket();
   clearStoredAuth();
   currentAuth = null;
@@ -1046,12 +1134,9 @@ async function setTeachLanguage(next: TeachLanguage): Promise<void> {
   languageToggleEl.setAttribute("aria-pressed", String(next === "hi"));
   languageToggleEl.textContent = next === "hi" ? "हिंदी" : "EN";
   try {
-    const res = await fetch(`${SERVER_URL}/api/auth/language`, {
+    const res = await authedFetch("/api/auth/language", {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ language: next }),
     });
     if (!res.ok) throw new Error("Could not save the language.");

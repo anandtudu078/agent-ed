@@ -8,6 +8,11 @@ import {
   requireAuth,
   signAuthToken,
 } from "../middleware/auth";
+import {
+  issueRefreshToken,
+  revokeAllRefreshTokens,
+  rotateRefreshToken,
+} from "../models/RefreshToken";
 import { authRateLimit } from "../middleware/rateLimit";
 
 const router = Router();
@@ -75,9 +80,11 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
       displayName: user.displayName,
       language: user.language ?? "en",
     });
+    const refreshToken = await issueRefreshToken(String(user._id));
 
     response.status(201).json({
       token,
+      refreshToken,
       user: {
         id: String(user._id),
         username: user.username,
@@ -127,9 +134,11 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
       displayName: user.displayName,
       language: user.language ?? "en",
     });
+    const refreshToken = await issueRefreshToken(String(user._id));
 
     response.json({
       token,
+      refreshToken,
       user: {
         id: String(user._id),
         username: user.username,
@@ -180,6 +189,81 @@ router.patch("/language", requireAuth, async (request, response) => {
   } catch (error) {
     console.error("Language change failed.", error);
     response.status(500).json({ error: "Unable to change language right now." });
+  }
+});
+
+/**
+ * POST /api/auth/refresh
+ * Body: { refreshToken }
+ *
+ * Exchanges a refresh token for a fresh access token, rotating the refresh
+ * token in the process. This is what stops a student's session dying
+ * mid-lesson: the client calls this the moment an access token is rejected,
+ * and the student never sees a sign-in screen again while their refresh token
+ * is alive.
+ */
+router.post("/refresh", async (request, response) => {
+  try {
+    const presented = (request.body as { refreshToken?: unknown } | undefined)
+      ?.refreshToken;
+    if (typeof presented !== "string" || !presented) {
+      response.status(400).json({ error: "refreshToken is required." });
+      return;
+    }
+
+    const outcome = await rotateRefreshToken(presented);
+    if (!outcome.ok) {
+      // A reused token means the credential leaked, so this is a security
+      // event, not a typo — but the client only needs to know to sign out.
+      console.warn(`Refresh rejected: ${outcome.reason}.`);
+      response.status(401).json({
+        error: "Your session has ended. Please sign in again.",
+      });
+      return;
+    }
+
+    const user = await User.findById(outcome.userId).lean();
+    if (!user) {
+      response.status(401).json({ error: "That account no longer exists." });
+      return;
+    }
+
+    response.json({
+      token: signAuthToken({
+        id: String(user._id),
+        username: user.username,
+        displayName: user.displayName,
+        language: user.language ?? "en",
+      }),
+      refreshToken: outcome.nextToken,
+      user: {
+        id: String(user._id),
+        username: user.username,
+        displayName: user.displayName,
+        language: user.language ?? "en",
+      },
+    });
+  } catch (error) {
+    console.error("Token refresh failed.", error);
+    response.status(500).json({ error: "Unable to refresh your session." });
+  }
+});
+
+/**
+ * POST /api/auth/logout
+ *
+ * Revokes every refresh token for the student. A no-op success is returned
+ * even when the token is already gone — signing out must always work, and
+ * telling an attacker whether a token existed tells them something.
+ */
+router.post("/logout", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    await revokeAllRefreshTokens(authUser.id);
+    response.json({ signedOut: true });
+  } catch (error) {
+    console.error("Logout failed.", error);
+    response.status(500).json({ error: "Unable to sign out right now." });
   }
 });
 

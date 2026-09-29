@@ -31,6 +31,7 @@ import {
   chatRateLimit,
   createSocketLimiter,
 } from "./middleware/rateLimit";
+import { aiSpendLimit, pruneOldUsage } from "./middleware/aiSpendLimit";
 
 const app = express();
 const httpServer = createServer(app);
@@ -353,7 +354,12 @@ app.delete("/api/sessions/:studentId", requireAuth, async (request, response) =>
   }
 });
 
-app.post("/api/chat", requireAuth, chatRateLimit, async (request, response) => {
+app.post(
+  "/api/chat",
+  requireAuth,
+  chatRateLimit,
+  aiSpendLimit,
+  async (request, response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser;
     const result = await processStudentMessage(
@@ -425,6 +431,11 @@ io.on("connection", (socket) => {
 
 async function startServer(): Promise<void> {
   await connectDB();
+
+  // Housekeeping only — never let it stop the server from coming up.
+  void pruneOldUsage().catch((error: unknown) => {
+    console.error("Failed to prune old AI usage rows.", error);
+  });
 
   httpServer.listen(port, () => {
     console.log(`AgentEd server listening on port ${port}.`);
