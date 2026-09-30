@@ -47,6 +47,45 @@ try {
 
   // 5. Send a chat message; student bubble appears
   await page.locator("#message-input").fill("What is a function in programming?");
+
+  // Record every state the owl passes through, from before the click.
+  //
+  // The three checks below used to sample the pill and the board AFTER awaiting
+  // the student bubble, which makes them timing-dependent: with a working
+  // provider the tutor takes seconds and the thinking pose is still up, but
+  // with no key at all the call fails almost immediately and the owl is already
+  // back to idle by the time the assertion runs. That is a real environment —
+  // CI has no provider key — and it made the suite pass or fail depending on how
+  // quickly a network call gave up, rather than on anything the app did.
+  //
+  // A MutationObserver records the transitions instead, so the assertion holds
+  // whenever they happened. It is also a stronger claim: not "the owl was in
+  // this state when I looked", but "the owl went through this state at all".
+  await page.evaluate(() => {
+    const states = [];
+    const boards = [];
+    window.__owlStates = states;
+    window.__owlBoards = boards;
+    const pill = document.querySelector("#owl-stage .owl-state-pill");
+    if (pill) {
+      states.push(pill.textContent?.trim() ?? "");
+      new MutationObserver(() => states.push(pill.textContent?.trim() ?? "")).observe(pill, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+    const board = document.querySelector("#owl-stage .owl-board-art");
+    if (board) {
+      boards.push(board.textContent ?? "");
+      new MutationObserver(() => boards.push(board.textContent ?? "")).observe(board, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+  });
+
   await page.locator("#send-button").click();
   await page.locator("#messages .flex.justify-end").first().waitFor();
   check("student bubble appears after send", true);
@@ -70,16 +109,20 @@ try {
     owlSvgClass.includes("wiggle") || owlSvgClass.includes("mascotbounce"),
     owlSvgClass,
   );
-  const pillText = (await page.locator("#owl-stage .owl-state-pill").textContent())?.trim();
+  // Read the recorded transitions, not the pill as it happens to look now.
+  const owlStates = await page.evaluate(() => window.__owlStates ?? []);
   check(
-    "state pill shows Thinking or Teaching",
-    pillText === "Thinking" || pillText === "Teaching",
-    pillText ?? "",
+    "owl passed through a thinking or teaching state",
+    owlStates.some((s) => s === "Thinking" || s === "Teaching"),
+    owlStates.join(" > ") || "none observed",
   );
-  const thinkingBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
+  // Same reasoning for the board: assert it *passed through* a thinking or
+  // teaching picture rather than happening to still be showing one.
+  const owlBoards = await page.evaluate(() => window.__owlBoards ?? []);
   check(
-    "lesson board shows a thinking/teaching sketch",
-    thinkingBoard.includes("Connecting the ideas") || thinkingBoard.includes("step by step"),
+    "lesson board passed through a thinking or teaching sketch",
+    owlBoards.some((t) => /Connecting the ideas|step by step|walk you through/i.test(t)),
+    owlBoards.length ? `${owlBoards.length} board update(s)` : "none observed",
   );
 
   // 7. A reply eventually arrives (tutor response or sanitized ai-error pill).
@@ -735,9 +778,31 @@ try {
   );
   await page.locator(".dash-search").fill("");
   await page.waitForTimeout(150);
+  // Count the student bubbles first, so the assertion below is about a NEW
+  // question being sent rather than about one already on screen.
+  const bubblesBefore = await page.locator("#messages .flex.justify-end").count();
   await page.locator(".dash-courses .dash-course .dash-continue").first().click();
   await page.locator("#chat-container").waitFor({ state: "visible" });
-  check("Continue Learning returns to chat with a new question", (await page.locator("#send-button").textContent())?.includes("Thinking") ?? false);
+  // This used to assert the send button read "Thinking", which is a transient
+  // label sampled straight after the click. It passes with a working provider,
+  // where the tutor is still thinking, and fails with none, where the request
+  // has already errored and the button has reset — so the suite was really
+  // asserting how fast a network call gave up. What the check is actually for
+  // is "Continue Learning starts a new conversation", and a new student bubble
+  // is the durable evidence of that.
+  await page
+    .waitForFunction(
+      (before) => document.querySelectorAll("#messages .flex.justify-end").length > before,
+      bubblesBefore,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
+  const bubblesAfter = await page.locator("#messages .flex.justify-end").count();
+  check(
+    "Continue Learning returns to chat with a new question",
+    bubblesAfter > bubblesBefore,
+    `${bubblesBefore} -> ${bubblesAfter} student message(s)`,
+  );
   await page.waitForTimeout(1000); // let the tutor reply or error land
   await page.locator("#dashboard-toggle").click();
   await page.locator("#dashboard-view").waitFor({ state: "visible" });
