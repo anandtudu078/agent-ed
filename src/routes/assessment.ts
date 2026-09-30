@@ -10,6 +10,7 @@ import {
   requireJwtSecret,
 } from "../middleware/auth";
 import { chatRateLimit } from "../middleware/rateLimit";
+import { requireConsent } from "../middleware/consent";
 import { aiSpendLimit } from "../middleware/aiSpendLimit";
 import {
   difficultyForTopic,
@@ -124,7 +125,13 @@ async function chooseTopic(
  * Body: { topic? } — defaults to the student's weakest tracked topic.
  * Returns a diagnostic question plus a token to submit an answer with.
  */
-router.post("/start", requireAuth, chatRateLimit, aiSpendLimit, async (request: Request, response: Response) => {
+router.post(
+  "/start",
+  requireAuth,
+  requireConsent,
+  chatRateLimit,
+  aiSpendLimit,
+  async (request: Request, response: Response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
     const { topic, misconceptions, difficulty } = await chooseTopic(
@@ -154,14 +161,21 @@ router.post("/start", requireAuth, chatRateLimit, aiSpendLimit, async (request: 
       error: "Could not start an evaluation right now. Please try again.",
     });
   }
-});
+  },
+);
 
 /**
  * POST /api/assessment/submit
  * Body: { attemptToken, answer }
  * Grades the answer and records it as the student's latest test result.
  */
-router.post("/submit", requireAuth, chatRateLimit, aiSpendLimit, async (request: Request, response: Response) => {
+router.post(
+  "/submit",
+  requireAuth,
+  requireConsent,
+  chatRateLimit,
+  aiSpendLimit,
+  async (request: Request, response: Response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
     const studentId = authUser.username;
@@ -274,6 +288,7 @@ router.post("/submit", requireAuth, chatRateLimit, aiSpendLimit, async (request:
       error: "Could not grade that answer right now. Please try again.",
     });
   }
-});
+  },
+);
 
 export default router;

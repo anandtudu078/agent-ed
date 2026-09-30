@@ -124,12 +124,63 @@ try {
     check("wrong-secret token rejected", wrongSecret.status() === 401, String(wrongSecret.status()));
   }
 
-  // 4. Authz: a valid token for another student must not read their data
+  // 4. Authz: a valid token for one real student must not read another's data.
+  //
+  // Uses two genuine accounts in their OWN cookie-free context. Two things bit
+  // here, both worth remembering:
+  //
+  //   - The original check minted a token for a made-up ObjectId. It passed only
+  //     because nothing verified the account existed; once `requireAuth` started
+  //     doing so (so deleting an account revokes access) the same token correctly
+  //     returned 401, and the check was measuring the wrong thing entirely.
+  //   - Registering both accounts on a shared client leaves the second one's
+  //     cookie in the jar, and a cookie outranks an Authorization header — so
+  //     "owner token, shared jar" authenticated as the attacker. The gate below
+  //     lives on its own client for the same reason the refresh tests do.
   if (secret) {
-    const cross = await r.get(`${BACKEND}/api/dashboard/seccheckalice`, {
-      headers: { Authorization: `Bearer ${evilToken}` },
+    const authzCtx = await browser.newContext();
+    const authzPage = await authzCtx.newPage();
+    const ar = authzPage.request;
+
+    const mk = async (name) => {
+      const res = await ar.post(`${BACKEND}/api/auth/register`, {
+        headers: CSRF,
+        data: { username: name, password: "authz-pass-12345" },
+      });
+      const body = await res.json();
+      // Drop the cookie this registration just set, so the calls below are
+      // authenticated by the bearer token alone.
+      await authzCtx.clearCookies();
+      return body;
+    };
+    const owner = await mk(`secauthz${Math.floor(Math.random() * 1e6)}`);
+    const attacker = await mk(`secintr${Math.floor(Math.random() * 1e6)}`);
+    check("two real accounts created for the authz checks", Boolean(owner.token && attacker.token));
+
+    const own = await ar.get(`${BACKEND}/api/dashboard/${owner.user.username}`, {
+      headers: { Authorization: `Bearer ${owner.token}` },
     });
-    check("cross-user dashboard blocked (403)", cross.status() === 403, String(cross.status()));
+    check("a student can read their own dashboard", own.status() === 200, String(own.status()));
+
+    const cross = await ar.get(`${BACKEND}/api/dashboard/${owner.user.username}`, {
+      headers: { Authorization: `Bearer ${attacker.token}` },
+    });
+    check(
+      "cross-user dashboard blocked (403)",
+      cross.status() === 403,
+      `${cross.status()} — an authenticated attacker reached another student's data`,
+    );
+
+    // And the same for the session transcript, which carries the student's own words.
+    const crossSession = await ar.get(`${BACKEND}/api/sessions/${owner.user.username}`, {
+      headers: { Authorization: `Bearer ${attacker.token}` },
+    });
+    check(
+      "cross-user conversation blocked (403)",
+      crossSession.status() === 403,
+      String(crossSession.status()),
+    );
+    await authzCtx.close();
   } else {
     check("JWT_SECRET readable for authz checks", false, ".env not found from script cwd");
   }
@@ -384,6 +435,111 @@ try {
     clearCookies.length ? `${clearCookies.length} cleared: ${clearCookies.join(" | ")}` : "none cleared",
   );
   await jar.close();
+
+  // 7. Consent enforcement — the promise the privacy notice makes.
+  //
+  // This is the whole point of the flow, and it has to be tested as an attacker
+  // rather than as a well-behaved client: a fresh account with a valid session
+  // that tries to send a question to a provider without agreeing to anything.
+  const gate = await browser.newContext();
+  const gatePage = await gate.newPage();
+  const g = gatePage.request;
+  const gateUser = `secgate${Math.floor(Math.random() * 1e6)}`;
+  const gateReg = await g.post(`${BACKEND}/api/auth/register`, {
+    headers: CSRF,
+    data: { username: gateUser, password: "gate-pass-12345" },
+  });
+  const gateRegBody = await gateReg.json();
+  check("gate client registered", gateReg.status() === 201, String(gateReg.status()));
+
+  const gChat = (msg) =>
+    g.post(`${BACKEND}/api/chat`, {
+      headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+      data: {
+        studentId: gateUser,
+        activeTopic: "machine learning",
+        studentMessage: msg,
+        mode: "socratic",
+      },
+    });
+
+  const blocked = await gChat("what is machine learning?");
+  const blockedBody = await blocked.json().catch(() => ({}));
+  check(
+    "a question without consent never reaches the AI provider",
+    blocked.status() === 403 && blockedBody.code === "CONSENT_REQUIRED",
+    `${blocked.status()} ${blockedBody.code ?? ""}`,
+  );
+  check(
+    "the refusal explains itself rather than saying 'try again'",
+    typeof blockedBody.error === "string" && /adult|guardian/i.test(blockedBody.error),
+    String(blockedBody.error ?? "").slice(0, 60),
+  );
+
+  const blockedTest = await g.post(`${BACKEND}/api/assessment/start`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+    data: {},
+  });
+  check("assessments are gated the same way", blockedTest.status() === 403, String(blockedTest.status()));
+
+  // A minor agreeing for themselves must not be enough. This is the exact
+  // loophole the whole flow exists to close.
+  const solo = await g.post(`${BACKEND}/api/auth/consent`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+    data: { ageBand: "13-17", acceptedTerms: true },
+  });
+  const soloBody = await solo.json().catch(() => ({}));
+  check("a minor cannot consent alone", solo.status() === 400, String(solo.status()));
+  check("and the refusal names the guardian requirement", soloBody.needsGuardian === true);
+  check("the gated question is still blocked after that attempt", (await gChat("try again")).status() === 403);
+
+  // With an adult's agreement it opens — which also proves the gate is a real
+  // check rather than a blanket refusal.
+  const ok = await g.post(`${BACKEND}/api/auth/consent`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+    data: { ageBand: "13-17", acceptedTerms: true, guardianName: "Mrs Sharma", guardianAccepted: true },
+  });
+  const okBody = await ok.json().catch(() => ({}));
+  check("guardian consent opens the gate", ok.status() === 200 && okBody.canUseAi === true, String(ok.status()));
+  check("the adult's name is recorded", okBody.consent?.by === "Mrs Sharma", String(okBody.consent?.by));
+
+  // Withdrawal has to bite immediately, not whenever the 30-minute token expires.
+  await g.delete(`${BACKEND}/api/auth/consent`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+  });
+  check(
+    "withdrawing consent blocks the AI again immediately",
+    (await gChat("and now?")).status() === 403,
+  );
+
+  // Everything that does NOT involve a provider stays available. Refusing a
+  // minor their own account would be a worse outcome than not teaching them.
+  const dashboard = await g.get(`${BACKEND}/api/dashboard/${gateUser}`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+  });
+  check("the dashboard still works without consent", dashboard.status() === 200, String(dashboard.status()));
+
+  // Export must work regardless — the right to see your data cannot depend on
+  // having agreed to anything.
+  const exported = await g.get(`${BACKEND}/api/account/export`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+  });
+  check("a student can export their data without consenting", exported.status() === 200, String(exported.status()));
+
+  // Erasure, and the session it must revoke.
+  const erased = await g.delete(`${BACKEND}/api/account`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+  });
+  check("the account can be deleted", erased.status() === 200, String(erased.status()));
+  const afterErase = await g.get(`${BACKEND}/api/auth/me`, {
+    headers: { ...CSRF, Authorization: `Bearer ${gateRegBody.token}` },
+  });
+  check(
+    "deleting the account revokes its live session",
+    afterErase.status() === 401,
+    `${afterErase.status()} — a deleted account was still authenticated`,
+  );
+  await gate.close();
 
   // 6. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {

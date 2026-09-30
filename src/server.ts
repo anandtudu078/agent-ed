@@ -19,6 +19,7 @@ import { recordLearningSignal } from "./services/progressService";
 import { refreshEnrollments } from "./services/courseService";
 import { generateVisual, type VisualSpec } from "./services/visualService";
 import authRouter from "./routes/auth";
+import accountRouter from "./routes/account";
 import assessmentRouter from "./routes/assessment";
 import coursesRouter from "./routes/courses";
 import dashboardRouter from "./routes/dashboard";
@@ -36,6 +37,9 @@ import {
 } from "./middleware/rateLimit";
 import { aiSpendLimit, pruneOldUsage } from "./middleware/aiSpendLimit";
 import { Progress } from "./models/Progress";
+import { User } from "./models/User";
+import { assertConsent, requireConsent } from "./middleware/consent";
+import { CONSENT_REQUIRED_MESSAGE } from "./services/consent";
 import {
   buildLearnerProfile,
   difficultyForTopic,
@@ -124,6 +128,7 @@ app.use(express.json());
 app.use("/api", requireCsrfHeader);
 
 app.use("/api/auth", authRouter);
+app.use("/api/account", accountRouter);
 app.use("/api/assessment", assessmentRouter);
 app.use("/api/courses", coursesRouter);
 app.use("/api/dashboard", dashboardRouter);
@@ -188,6 +193,14 @@ const CLIENT_SAFE_ERROR_PATTERNS = [
   "cannot be empty",
   "All Gemini models are unavailable",
   "Unable to save the tutoring session.",
+  // The consent refusal is the one deliberate exception: hiding it behind a
+  // generic "temporarily unavailable" would tell a student to retry when retrying
+  // can never work, and would leave the client unable to show them the notice.
+  CONSENT_REQUIRED_MESSAGE,
+  "Please choose an age group.",
+  "The privacy notice has to be accepted to continue.",
+  "parent or guardian",
+  "That name is too long.",
 ];
 
 function toClientMessage(error: unknown): string {
@@ -198,11 +211,28 @@ function toClientMessage(error: unknown): string {
     : "The AI tutor is temporarily unavailable. Please try again in a moment.";
 }
 
+/**
+ * Throw unless this user has valid consent to use the AI features.
+ *
+ * The socket chat path calls this directly (it is not a route); the assessment
+ * routes use the `requireConsent` middleware. Both delegate to the same rule in
+ * `services/consent.ts`, so there is exactly one implementation of "is this
+ * student allowed to talk to a model".
+ */
 async function processStudentMessage(
   payload: StudentMessagePayload,
   authUser: AuthUser,
 ): Promise<ChatResult> {
   validateStudentMessage(payload);
+
+  // Consent gate, before anything is read or sent.
+  //
+  // This is the enforcement point that matters: it runs before the thread is read
+  // and long before the prompt is built, so a student without valid consent cannot
+  // cause their own words to leave the server. Client-side gating is not enough —
+  // the client is the thing an attacker controls — so the rule lives here, on the
+  // only path that reaches a provider.
+  await assertConsent(authUser.id);
 
   // Sessions are keyed by the authenticated username, so one student can
   // never read or write another student's conversation.
@@ -437,6 +467,7 @@ app.delete("/api/sessions/:studentId", requireAuth, async (request, response) =>
 app.post(
   "/api/chat",
   requireAuth,
+  requireConsent,
   chatRateLimit,
   aiSpendLimit,
   async (request, response) => {
