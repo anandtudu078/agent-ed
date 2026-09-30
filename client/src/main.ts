@@ -1,5 +1,7 @@
 import { io, type Socket } from "socket.io-client";
 import { createMascot, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
+import { splitIntoBeats, type LessonBeat } from "./components/beats";
+import { sketchForBeat } from "./components/sketches";
 import { visualStepCount, type VisualSpec } from "./components/diagrams";
 import {
   createDashboard,
@@ -426,6 +428,12 @@ function setDashboardVisible(visible: boolean): void {
       (score: number) => {
         const outcome =
           score >= 90 ? "great" : score >= 70 ? "correct" : score >= 40 ? "close" : "wrong";
+        // Cut off any explanation still in flight. The student has just answered
+        // a question, so the lesson they were mid-way through is stale, and a
+        // beat loop that keeps running would talk over the reaction they are
+        // about to get — and re-assert its own mood on every beat, so the
+        // reaction could never settle.
+        stopOwlSpeech();
         if (mascot.react(outcome)) {
           setAiStatus("speaking");
           speakOwlMessage(mascot.message() ?? "");
@@ -1000,7 +1008,22 @@ let micSuspendedForSpeech = false;
 /** Stop any guidance the owl is currently reading aloud. */
 function stopOwlSpeech(): void {
   currentUtterance = null;
+  // Invalidate the beat playthrough. Without this, a cancellation between beats
+  // (a student types mid-explanation) would let the loop wake up and carry on
+  // talking over them — the utterance is already cancelled, but the timeout
+  // between beats is not.
+  playRun += 1;
   window.speechSynthesis?.cancel();
+  // A playthrough that set the sticky `curious` mood is cancelled here, so it
+  // will never reach its own `finally` cleanup. Release the mood on its behalf,
+  // otherwise a cancelled lesson strands the owl wide-eyed until something else
+  // happens to change it — and anything that then *does* change it (a reaction to
+  // a graded answer) has to win, which it cannot if the cancelled loop later
+  // resets over the top of it.
+  if (moodOwnerRun !== -1) {
+    mascot.setMood("neutral");
+    moodOwnerRun = -1;
+  }
   // The utterance's onend won't fire for a cancelled one, so close the mouth
   // here or the owl would keep chewing on nothing.
   mascot.setSpeaking(false);
@@ -1099,6 +1122,16 @@ async function speakOwlMessage(text: string, visual: VisualSpec | null = null): 
     }
   }
 
+  // Teach mode gets the beat treatment: a long reply is played back one short
+  // segment at a time so the owl is visibly working through the idea with the
+  // student rather than reciting a wall of text at them. A one-line reply (the
+  // Socratic path) is a single beat and plays exactly as it always did.
+  const beats = splitIntoBeats(text);
+  if (beats.length > 1 && !singleUtteranceOverride) {
+    await playBeats(beats, visual);
+    return;
+  }
+
   const total = visualStepCount(visual);
 
   const utterance = new SpeechSynthesisUtterance(text);
@@ -1131,6 +1164,169 @@ async function speakOwlMessage(text: string, visual: VisualSpec | null = null): 
 
   synth.speak(utterance);
 }
+
+// ---------------------------------------------------------------------------
+// Beat playback — the owl works through a long explanation one segment at a
+// time.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pause between beats, in ms.
+ *
+ * This is the single most important number in the file. A gap is what turns one
+ * long utterance into a sequence of thoughts: without it the owl is still just
+ * reciting, only with the diagrams stepping over. It also gives the student a
+ * natural point to interrupt.
+ */
+const BEAT_GAP_MS = 650;
+
+/** Gap before the owl starts moving, so the first beat isn't swallowed. */
+const BEAT_LEAD_IN_MS = 120;
+
+/** Bumped by stopOwlSpeech so an abandoned playthrough can't resume itself. */
+let playRun = 0;
+
+/**
+ * The playthrough that last set the owl's mood.
+ *
+ * `curious` is a sticky mood, so whoever sets it must also clear it. Tracking
+ * the owning run lets the cleanup happen even when this playthrough was
+ * cancelled: the run is still the most recent one to have touched the mood, so
+ * it is still entitled to reset it. Keying this off `stillCurrent()` instead —
+ * which was the first attempt — skipped the reset on exactly the interrupted
+ * path where the mood was left stranded, and the UI suite caught it.
+ */
+let moodOwnerRun = -1;
+
+/**
+ * Dev-only escape hatch that restores the old one-utterance delivery.
+ *
+ * Stripped from production builds by Vite along with the rest of the test hook;
+ * nothing in the app ever sets it.
+ */
+let singleUtteranceOverride = false;
+
+/**
+ * Play each beat in turn: show it in the bubble, speak it, move the board, pause.
+ *
+ * Sequential rather than one utterance because that is the whole point — the
+ * student should watch the owl arrive at each idea. Awaiting each utterance's
+ * end is what makes it a sequence; firing them all at once would just be the old
+ * behaviour with extra steps.
+ */
+async function playBeats(beats: LessonBeat[], visual: VisualSpec | null): Promise<void> {
+  const run = ++playRun;
+  const stillCurrent = () => run === playRun;
+
+  try {
+    await new Promise((r) => window.setTimeout(r, BEAT_LEAD_IN_MS));
+    if (!stillCurrent()) return;
+
+    const totalSteps = visualStepCount(visual);
+
+    for (let index = 0; index < beats.length; index += 1) {
+      if (!stillCurrent()) return;
+      const beat = beats[index];
+
+      // The bubble shows this beat and only this beat. The full reply is still in
+      // the transcript below, so nothing is lost — the bubble is the owl's line,
+      // not the transcript.
+      mascot.setMessage(beat.text);
+      setAiStatus("speaking");
+
+      // A check-for-understanding beat is the owl handing the floor back, so it
+      // waits rather than performing: curious, not mid-celebration. A mascot that
+      // keeps bouncing while it waits for an answer teaches the student to talk
+      // past it.
+      if (beat.kind === "check" || beat.kind === "example") {
+        mascot.setMood("curious");
+        moodOwnerRun = run;
+      }
+
+      // Put a picture on the board that matches THIS sentence — the cat when the
+      // owl says cat, the envelope when it says spam. Returns null for a beat
+      // with nothing concrete to point at, and the board keeps the diagram.
+      mascot.setSketch(sketchForBeat(beat.text, beat.kind));
+
+      // Advance the board to the step this beat is about. Beats and diagram steps
+      // rarely divide evenly, so the step is spread across the beats rather than
+      // indexed directly — otherwise a 4-beat lesson over a 6-step diagram would
+      // stop halfway and leave half the diagram unexplained.
+      if (totalSteps > 1) {
+        const step = Math.min(
+          totalSteps - 1,
+          Math.round((index / Math.max(1, beats.length - 1)) * (totalSteps - 1)),
+        );
+        mascot.setVisualStep(step);
+      }
+
+      const finished = await speakOneBeat(beat.text);
+      if (!stillCurrent() || !finished) return;
+
+      // Never pause after the last beat — the student should be able to answer.
+      if (index < beats.length - 1) {
+        await new Promise((r) => window.setTimeout(r, BEAT_GAP_MS));
+      }
+    }
+  } finally {
+    // `curious` is a *sticky* mood by design: it persists until something
+    // replaces it. That is right while the owl waits for an answer, but leaving
+    // it set strands the owl wide-eyed forever, which reads as frozen rather
+    // than attentive. This sits in `finally` because the loop returns early on
+    // every interruption, and those paths would otherwise skip the reset.
+    //
+    // Ownership, not `stillCurrent()`, decides who resets: a cancelled run is
+    // still the last one to have set the mood, so it must still clear it. If a
+    // newer playthrough has since set a mood of its own, this run no longer owns
+    // it and must not reset out from under that one.
+    if (moodOwnerRun === run) {
+      mascot.setMood("neutral");
+      moodOwnerRun = -1;
+    }
+    // Same rule for the board: hand it back rather than freezing on whichever
+    // picture happened to be up when the lesson ended — but only if nothing
+    // newer has already put its own picture up.
+    if (stillCurrent()) mascot.setSketch(null);
+    resumeMicAfterSpeech();
+  }
+}
+
+/**
+ * Speak a single beat. Resolves true when it finished, false if it was
+ * cancelled — so a playthrough stops rather than talking over the student.
+ */
+function speakOneBeat(text: string): Promise<boolean> {
+  const synth = window.speechSynthesis;
+  if (!synth) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1;
+    utterance.pitch = 1.05;
+    utterance.onstart = () => mascot.setSpeaking(true);
+    utterance.onend = () => {
+      if (currentUtterance !== utterance) {
+        resolve(false);
+        return;
+      }
+      currentUtterance = null;
+      mascot.setSpeaking(false);
+      resolve(true);
+    };
+    utterance.onerror = () => {
+      if (currentUtterance !== utterance) return;
+      currentUtterance = null;
+      mascot.setSpeaking(false);
+      // A failed beat is not a reason to abandon the lesson: carry on so the
+      // remaining beats still reach the screen.
+      resolve(true);
+    };
+    currentUtterance = utterance;
+    synth.speak(utterance);
+  });
+}
+
 
 let visualWalkTimer: number | null = null;
 let visualWalkIndex = 0;
@@ -1210,6 +1406,16 @@ let recognition: SpeechRecognitionLike | null = null;
 async function setTeachLanguage(next: TeachLanguage): Promise<void> {
   if (next === teachLanguage) return;
   teachLanguage = next;
+  // Stop the owl mid-explanation before switching. A beat playthrough in flight
+  // keeps writing its already-computed English beat into the bubble, so without
+  // this the student switches to Hindi and the owl carries on talking English —
+  // and the phrase toggle appears to do nothing. This is also just correct: the
+  // student has asked for a different language, so the lesson in the old one has
+  // stopped being what they want to hear.
+  stopOwlSpeech();
+  resumeMicAfterSpeech();
+  mascot.clearMessage();
+  setAiStatus("idle");
   mascot.setLanguage(next);
   languageToggleEl.setAttribute("aria-pressed", String(next === "hi"));
   languageToggleEl.textContent = next === "hi" ? "हिंदी" : "EN";
@@ -1402,9 +1608,23 @@ if (import.meta.env.DEV) {
     // Drives the real socratic-response handler (used when live AI providers
     // are down so the suite still covers the client reply path).
     simulateReply: (text: string) => handleSocraticResponse({ response: text }),
+    // Reproduces the pre-beats behaviour on demand (one long utterance, whole
+    // essay in the bubble). Exists so the beat playback suite can assert the
+    // contrast rather than trusting that its own positive assertions are
+    // meaningful — a test that cannot demonstrate the bug it prevents proves
+    // nothing about the fix.
+    forceSingleUtterance: (on: boolean) => {
+      singleUtteranceOverride = on;
+    },
     // Drives the owl's reaction directly, so the expression + animation
     // behaviour is covered without depending on a graded answer landing.
-    react: (outcome: "correct" | "close" | "wrong" | "great") => mascot.react(outcome),
+    // Stops playback first, exactly as the graded-answer path in showDashboard
+    // does — otherwise this hook can react *underneath* a beat playthrough that
+    // is still running, which no longer reflects anything a student can do.
+    react: (outcome: "correct" | "close" | "wrong" | "great") => {
+      stopOwlSpeech();
+      return mascot.react(outcome);
+    },
   };
 }
 
