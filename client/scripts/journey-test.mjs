@@ -348,8 +348,20 @@ try {
   await page.locator("#dashboard-toggle").click().catch(() => {});
   await page.locator("#sign-out-button").click();
   await page.locator("#auth-view").waitFor({ state: "visible" });
-  const token = await page.evaluate(() => localStorage.getItem("agented:token"));
-  check("sign out returns to the auth screen and clears the token", token === null);
+  // The credential is an httpOnly cookie, so the honest question after signing
+  // out is whether the API still recognises the student — not whether
+  // localStorage is empty, which proves nothing now that nothing is stored there.
+  const signedOut = await page.evaluate(async () => {
+    const res = await fetch("http://localhost:3000/api/auth/me", {
+      credentials: "include",
+    });
+    return { status: res.status, cached: localStorage.getItem("agented:user") };
+  });
+  check(
+    "sign out returns to the auth screen and ends the session",
+    signedOut.status === 401 && signedOut.cached === null,
+    `/me = ${signedOut.status}, cached user = ${signedOut.cached}`,
+  );
 
   await page.locator("#username-input").fill(USER);
   await page.locator("#password-input").fill(PASS);

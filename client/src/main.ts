@@ -27,20 +27,32 @@ interface StoredUser {
 }
 
 interface AuthResponse {
-  token: string;
-  /** Long-lived credential used to mint new access tokens. */
+  /**
+   * Present for scripted clients. The browser deliberately ignores it: the real
+   * credential is an httpOnly cookie the client cannot read, and re-implementing
+   * that half-way is how a token ends up in `localStorage` again.
+   */
+  token?: string;
   refreshToken?: string;
   user: StoredUser;
 }
 
-const REFRESH_TOKEN_KEY = "agented:refreshToken";
+/** The header that proves a request came from this app. See `requireCsrfHeader`. */
+const CSRF_HEADER = { "X-Requested-With": "AgentEd" };
 
-function loadStoredAuth(): { token: string; user: StoredUser } | null {
+/**
+ * Only the non-secret half of the session is persisted.
+ *
+ * The access and refresh tokens are httpOnly cookies now, so there is nothing
+ * secret left to store — what remains is a display cache so the app can paint
+ * the signed-in shell before the first `/api/auth/me` round trip returns. That
+ * is a convenience, not a credential: it cannot be used to call the API.
+ */
+function loadStoredAuth(): { user: StoredUser } | null {
   try {
-    const token = localStorage.getItem("agented:token");
     const userJson = localStorage.getItem("agented:user");
-    if (token && userJson) {
-      return { token, user: JSON.parse(userJson) as StoredUser };
+    if (userJson) {
+      return { user: JSON.parse(userJson) as StoredUser };
     }
   } catch {
     // Corrupted storage — fall through to signed-out state.
@@ -48,12 +60,8 @@ function loadStoredAuth(): { token: string; user: StoredUser } | null {
   return null;
 }
 
-function storeAuth(auth: { token: string; user: StoredUser; refreshToken?: string }): void {
-  localStorage.setItem("agented:token", auth.token);
+function storeAuth(auth: { user: StoredUser }): void {
   localStorage.setItem("agented:user", JSON.stringify(auth.user));
-  if (auth.refreshToken) {
-    localStorage.setItem(REFRESH_TOKEN_KEY, auth.refreshToken);
-  }
 }
 
 /**
@@ -74,21 +82,21 @@ let refreshInFlight: Promise<boolean> | null = null;
 async function refreshAccessToken(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
 
-  const stored = localStorage.getItem(REFRESH_TOKEN_KEY);
-  if (!stored) return false;
-
   refreshInFlight = (async () => {
     try {
+      // No body: the refresh token is an httpOnly cookie, so the browser attaches
+      // it and JavaScript never sees it. `credentials: "include"` is what makes
+      // that happen across origins.
       const res = await fetch(`${SERVER_URL}/api/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: stored }),
+        headers: { "Content-Type": "application/json", ...CSRF_HEADER },
+        credentials: "include",
       });
       if (!res.ok) return false;
       const body = (await res.json()) as AuthResponse;
-      if (!body.token || !body.user) return false;
+      if (!body.user) return false;
       storeAuth(body);
-      currentAuth = { token: body.token, user: body.user };
+      currentAuth = { user: body.user };
       return true;
     } catch {
       return false;
@@ -113,30 +121,32 @@ async function authedFetch(
   const send = () =>
     fetch(`${SERVER_URL}${path}`, {
       ...init,
+      // Sends the httpOnly cookie. Without this the request is anonymous and
+      // every authenticated call 401s — the single most important line here.
+      credentials: "include",
       headers: {
         ...(init.headers ?? {}),
-        Authorization: `Bearer ${currentAuth?.token ?? ""}`,
+        ...CSRF_HEADER,
       },
     });
 
   const first = await send();
   if (first.status !== 401) return first;
-  // Only retry if there is something to retry with, and only once.
-  if (!localStorage.getItem(REFRESH_TOKEN_KEY)) return first;
+  // Only retry once. Whether a refresh token exists is no longer knowable from
+  // JavaScript — that is the point — so this always attempts it and lets the
+  // server decide.
   if (!(await refreshAccessToken())) return first;
   return send();
 }
 
 function clearStoredAuth(): void {
-  localStorage.removeItem("agented:token");
   localStorage.removeItem("agented:user");
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem("agented:studentId");
   // The next sign-in may be a different student, so allow a fresh restore.
   historyRestoreStarted = false;
 }
 
-let currentAuth: { token: string; user: StoredUser } | null = loadStoredAuth();
+let currentAuth: { user: StoredUser } | null = loadStoredAuth();
 
 // The session key is the authenticated username, resolved at send time
 // (it is empty until sign-in, so computing it at module load would break
@@ -469,7 +479,10 @@ function connectSocket(): void {
 
   socket = io(SERVER_URL, {
     transports: ["websocket", "polling"],
-    auth: { token: currentAuth.token },
+    // No token to send — the session cookie rides along automatically. This is
+    // the socket equivalent of `credentials: "include"`, and without it the
+    // handshake is rejected as unauthenticated.
+    withCredentials: true,
   });
 
   socket.on("connect", () => {
@@ -493,7 +506,7 @@ function connectSocket(): void {
       error.message.includes("Authentication required") ||
       error.message.includes("Session expired")
     ) {
-      signOut("Your session expired. Please sign in again.");
+      void signOut("Your session expired. Please sign in again.");
       return;
     }
     setConnectionStatus("error");
@@ -771,17 +784,29 @@ function setAuthMode(register: boolean): void {
   updatePasswordStrength();
 }
 
-function signOut(message?: string): void {
-  // Revoke server-side refresh tokens first, while we still hold a valid
-  // access token — otherwise the refresh token would outlive the sign-out and
-  // silently sign the student back in. Best effort: the local state is cleared
-  // either way, because a failed revoke must not trap them in a signed-in UI.
-  const token = currentAuth?.token;
-  if (token) {
-    void fetch(`${SERVER_URL}/api/auth/logout`, {
+/**
+ * Sign out.
+ *
+ * Awaits the server's logout before returning to the auth screen. That ordering
+ * is the whole point: the credential is a cookie now, so "signed out" is only
+ * true once the browser has actually discarded it. Showing the auth screen while
+ * the logout is still in flight meant a reload could land the student straight
+ * back in — the exact failure the "silently signs them back in" comment below
+ * used to describe.
+ *
+ * The local state is cleared regardless of whether the call succeeds. A student
+ * who clicks sign out must end up signed out on this device even if the network
+ * is down; the server-side revoke is best effort, the cookie removal is not.
+ */
+async function signOut(message?: string): Promise<void> {
+  try {
+    await fetch(`${SERVER_URL}/api/auth/logout`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => undefined);
+      headers: { ...CSRF_HEADER },
+      credentials: "include",
+    });
+  } catch {
+    // Offline or the API is down. Continue with the local sign-out anyway.
   }
   disconnectSocket();
   clearStoredAuth();
@@ -808,7 +833,7 @@ function appendAuthError(text: string): void {
 
 authToggleLinkEl.addEventListener("click", () => setAuthMode(!isRegisterMode));
 
-signOutButtonEl.addEventListener("click", () => signOut());
+signOutButtonEl.addEventListener("click", () => void signOut());
 
 newChatButtonEl.addEventListener("click", () => {
   void startNewChat();
@@ -852,7 +877,10 @@ authFormEl.addEventListener("submit", async (event) => {
   try {
     const response = await fetch(`${SERVER_URL}${endpoint}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...CSRF_HEADER },
+      // Without this the `Set-Cookie` on the response is discarded and the
+      // student appears to sign in and then immediately 401s on every call.
+      credentials: "include",
       body: JSON.stringify(body),
     });
 
@@ -864,7 +892,7 @@ authFormEl.addEventListener("submit", async (event) => {
     }
 
     storeAuth(data);
-    currentAuth = data;
+    currentAuth = { user: data.user };
     showApp();
   } catch {
     appendAuthError("Could not reach the server. Is the backend running?");
@@ -1560,12 +1588,12 @@ async function setTeachLanguage(next: TeachLanguage): Promise<void> {
     });
     if (!res.ok) throw new Error("Could not save the language.");
     const body = (await res.json()) as { token?: string; user?: StoredUser };
-    // The server re-issues the token so the new language is in the JWT; keep
-    // the stored copy in step or the next reply would come back in the old one.
-    if (body.token) localStorage.setItem("agented:token", body.token);
+    // The server re-issues the session cookie so the new language is in the JWT,
+    // and re-sends the display copy. Nothing is written to localStorage as a
+    // credential — only the name and language, which cannot authorise anything.
     if (body.user) {
-      localStorage.setItem("agented:user", JSON.stringify(body.user));
-      currentAuth = { token: body.token ?? currentAuth?.token ?? "", user: body.user };
+      storeAuth({ user: body.user });
+      currentAuth = { user: body.user };
     }
   } catch (error) {
     teachLanguage = next === "hi" ? "en" : "hi";
@@ -1776,9 +1804,55 @@ if (import.meta.env.DEV) {
   };
 }
 
-if (currentAuth) {
+/**
+ * Boot.
+ *
+ * The cached user in `localStorage` is a display convenience, not proof of a
+ * session — a student whose cookie expired would otherwise get the signed-in
+ * shell and then a screen of 401s. So the cached state paints immediately and
+ * `/api/auth/me` confirms it; if the cookie is gone or expired, the local cache
+ * is discarded and the auth screen takes over.
+ *
+ * Painting first is deliberate: the round trip is local-to-local and fast, and
+ * flashing a sign-in screen at a signed-in student on every reload would be a
+ * worse regression than a brief flash of the wrong screen in the rare case the
+ * session really has expired.
+ */
+async function boot(): Promise<void> {
+  if (!currentAuth) {
+    showAuth();
+    setAuthMode(false);
+    return;
+  }
+
   showApp();
-} else {
-  showAuth();
-  setAuthMode(false);
+
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/me`, {
+      credentials: "include",
+      headers: { ...CSRF_HEADER },
+    });
+    if (!res.ok) {
+      clearStoredAuth();
+      currentAuth = null;
+      showAuth();
+      setAuthMode(false);
+      return;
+    }
+    const body = (await res.json()) as { user?: StoredUser };
+    if (body.user) {
+      // Trust the server over the cache: the display name and language may have
+      // changed in another tab or another device.
+      storeAuth({ user: body.user });
+      currentAuth = { user: body.user };
+      userBadgeEl.textContent = `👤 ${body.user.displayName}`;
+      mascot.setLanguage(body.user.language ?? "en");
+    }
+  } catch {
+    // The server is unreachable. Keep the cached session rather than signing the
+    // student out because their laptop briefly lost wifi — the first real request
+    // will fail visibly if it matters.
+  }
 }
+
+void boot();

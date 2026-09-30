@@ -542,25 +542,50 @@ try {
     (await page.locator("#owl-stage .owl-toggle").isHidden()) &&
       (await page.locator("#owl-stage .owl-bubble").isVisible()),
   );
+  // The session is an httpOnly cookie now, so there is nothing in localStorage to
+  // copy into a second context — `document.cookie` cannot read it either, which is
+  // the point. The mobile context therefore has to sign in for itself, exactly as
+  // a student on a phone would. Only the non-secret display cache is copied, to
+  // prove it is on its own enough to paint the signed-in shell.
   const stored = await page.evaluate(() => ({
-    token: localStorage.getItem("agented:token"),
     user: localStorage.getItem("agented:user"),
+    // Assert the security property rather than assuming it: a token in storage is
+    // the bug this change exists to fix.
+    leakedToken: localStorage.getItem("agented:token"),
+    leakedRefresh: localStorage.getItem("agented:refreshToken"),
+    readableCookie: document.cookie.includes("agented_access"),
   }));
+  check(
+    "no auth token is readable from JavaScript",
+    stored.leakedToken === null && stored.leakedRefresh === null,
+    `token=${stored.leakedToken} refresh=${stored.leakedRefresh}`,
+  );
+  check(
+    "the session cookie is httpOnly, so document.cookie cannot see it",
+    stored.readableCookie === false,
+    stored.readableCookie ? "access cookie is visible to JS" : "hidden from JS",
+  );
+
   const mobileContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
   });
   const mobilePage = await mobileContext.newPage();
-  await mobilePage.addInitScript(
-    ([token, user]) => {
-      localStorage.setItem("agented:token", token);
-      localStorage.setItem("agented:user", user);
-    },
-    [stored.token, stored.user],
-  );
+  await mobilePage.addInitScript((user) => {
+    localStorage.setItem("agented:user", user);
+  }, stored.user);
+  // Sign in through the real API so the context receives a genuine session
+  // cookie. Reusing the desktop page's cookie jar would not work — contexts do
+  // not share one — and faking it would test nothing.
   await mobilePage.goto(FRONTEND);
   await mobilePage.waitForFunction(() => window.__agentedTest !== undefined);
+  await mobilePage.locator("#auth-view").waitFor({ state: "visible" });
+  await mobilePage.locator("#auth-toggle").click();
+  await mobilePage.locator("#display-name-input").fill("Mobile Tester");
+  await mobilePage.locator("#username-input").fill(`mob${Date.now().toString(36).slice(-5)}`);
+  await mobilePage.locator("#password-input").fill("mobile-pass-123");
+  await mobilePage.locator("#auth-submit").click();
   await mobilePage.locator("#app-view").waitFor({ state: "visible" });
   await mobilePage.locator("#owl-stage .owl-compact").waitFor({ state: "visible" });
   check(
@@ -594,9 +619,11 @@ try {
   // major branch present, and no course left with a syllabus too thin to teach.
   const curriculum = await page.evaluate(async () => {
     const user = JSON.parse(localStorage.getItem("agented:user") ?? "{}");
+    // Same-origin request from the app page, so the httpOnly cookie rides along
+    // without needing a token — which is exactly the property being relied on.
     const res = await fetch(
       `http://localhost:3000/api/dashboard/${encodeURIComponent(user.username)}`,
-      { headers: { Authorization: `Bearer ${localStorage.getItem("agented:token")}` } },
+      { credentials: "include" },
     );
     const body = await res.json();
     return body.courses.map((c) => ({
@@ -885,7 +912,7 @@ try {
   const storedHistory = await page.evaluate(async () => {
     const username = JSON.parse(localStorage.getItem("agented:user") ?? "{}").username ?? "";
     const res = await fetch(`http://localhost:3000/api/sessions/${encodeURIComponent(username)}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}` },
+      credentials: "include",
     });
     if (!res.ok) return null;
     return (await res.json()).conversationHistory?.length ?? 0;
@@ -952,7 +979,7 @@ try {
       async () => {
         const username = JSON.parse(localStorage.getItem("agented:user") ?? "{}").username ?? "";
         const res = await fetch(`http://localhost:3000/api/sessions/${encodeURIComponent(username)}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}` },
+          credentials: "include",
         });
         if (!res.ok) return false;
         return ((await res.json()).conversationHistory?.length ?? 0) === 0;
@@ -973,11 +1000,27 @@ try {
     afterResetReload.slice(0, 60).replace(/\s+/g, " "),
   );
 
-  // 9. Sign out returns to auth view and clears storage
+  // 9. Sign out returns to auth view and clears the session
   await page.locator("#sign-out-button").click();
   await page.locator("#auth-view").waitFor({ state: "visible" });
-  const cleared = await page.evaluate(() => localStorage.getItem("agented:token"));
-  check("sign out clears token and returns to auth", cleared === null);
+  // The credential is a cookie, so "cleared" has to be checked by what the
+  // browser will actually send — not by what JavaScript can see, which is
+  // nothing either way. A leftover cookie would silently sign the student back
+  // in on the next reload, so this is the assertion that matters.
+  const afterSignOut = await page.evaluate(async () => {
+    const res = await fetch("http://localhost:3000/api/auth/me", {
+      credentials: "include",
+    });
+    return {
+      status: res.status,
+      cachedUser: localStorage.getItem("agented:user"),
+    };
+  });
+  check(
+    "sign out clears the session and returns to auth",
+    afterSignOut.status === 401 && afterSignOut.cachedUser === null,
+    `/me after sign out = ${afterSignOut.status}, cached user = ${afterSignOut.cachedUser}`,
+  );
 
   // 10. Wrong password shows an error
   await page.locator("#username-input").fill(USER);
