@@ -19,7 +19,11 @@ next reply.
 
 **Prerequisites**
 
-- Node.js 20+ (developed on 24)
+- Node.js **24 or newer** — required, not preferred. The client test suites run as
+  `node scripts/*.ts` and rely on native type stripping; on Node 20 or 22 they
+  die with `ERR_UNKNOWN_FILE_EXTENSION` before a single check runs. Both
+  `package.json` files declare `"engines": { "node": ">=24" }` so npm warns you
+  rather than letting you discover it as a mysterious test failure.
 - A MongoDB instance — local `mongod`, a container, or a free MongoDB Atlas cluster
 - A free [Groq](https://console.groq.com) API key for the AI features
 
@@ -73,7 +77,7 @@ work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-460 checks across fourteen suites. Start here.
+483 checks across fourteen suites. Start here.
 
 ```bash
 npm test              # runs every suite that needs no browser (10 suites, ~40s)
@@ -90,14 +94,14 @@ Or individually:
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
-| `npm run test:offline` | 30 | The offline AI gate — mostly an attack on the production refusal |
+| `npm run test:offline` | 42 | The offline AI gate and the auth cookie policy |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
-| `npm run test:ui` | 93 | Full browser flows (Playwright) |
+| `npm run test:ui` | 95 | Full browser flows, incl. that no token is readable from JS (Playwright) |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
-| `npm run test:security` | 23 | Auth, authz, CORS, token rotation, XSS |
+| `npm run test:security` | 36 | Auth, authz, CORS, CSRF, cookie attributes, token rotation, XSS |
 
 The three browser suites need the app running (`npm run dev` in both terminals)
 and a reachable MongoDB:
@@ -303,7 +307,47 @@ collected telemetry reached the model at all.
 
 ---
 
-## Design decisions worth arguing with
+## Session handling
+
+Tokens are **httpOnly cookies**, not `localStorage`. A token in `localStorage` is
+readable by any script on the page, so one injected `<script>` exfiltrates a
+student's session with no user interaction and nothing visible to notice. An
+httpOnly cookie cannot be read by JavaScript at all.
+
+Moving the credential into a cookie is only half the change — cookies are
+attached to cross-site requests automatically, which is the problem `localStorage`
+never had. Two defences, deliberately redundant:
+
+- **`SameSite=Lax`** on both cookies. Blocks the cross-site POST that CSRF
+  actually needs. `strict` would be stronger and would also break a student
+  arriving from a shared lesson link, so `lax` is the trade.
+- **An `X-Requested-With` check** on every non-GET API request
+  (`requireCsrfHeader`). A cross-origin caller cannot set a custom header without
+  a CORS preflight, and this server refuses preflights from unlisted origins.
+
+`Secure` is set in production and deliberately **not** in development: a `Secure`
+cookie over `http://localhost` silently vanishes, and the only symptom is "login
+is broken". `npm run test:offline` asserts both directions, including that
+`NODE_ENV=Production` (capitalised, as some hosts set it) still marks cookies
+secure — the same case-sensitivity trap that once left the offline AI gate open in
+production.
+
+Two things the migration could not keep, and did not try to:
+
+- **`GET /api/auth/me`** now exists, because "am I signed in?" can no longer be
+  answered from local storage — a cached display name is not a session. The boot
+  path paints from the cache and confirms against the API, so an expired session
+  lands on the auth screen instead of a shell full of 401s.
+- **Sign-out awaits the server** before showing the auth screen. Fire-and-forget
+  looked fine while the token lived in local storage, where removing it was
+  synchronous; with a cookie, the UI could claim to be signed out while the
+  credential was still live and a reload would sign the student straight back in.
+
+A bearer header is still accepted as a fallback, which is what lets the security
+suite and any scripted client authenticate without a cookie jar. The browser path
+never uses it.
+
+---
 
 These are judgement calls about a person, not facts about a model. They are the
 most likely things to need changing.
@@ -372,8 +416,6 @@ most likely things to need changing.
 - **Memory is 12 messages.** Enough for a thread, thin for a session.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.
-- **Tokens live in `localStorage`,** so they are exposed to XSS. httpOnly
-  cookies is the right fix and is not done here.
 - **No teacher view, and no consent flow.** Both are needed before real
   deployment with minors.
 - Gemini's free tier is exhausted on the development account, so Groq has been

@@ -16,6 +16,13 @@ import {
   offlineQuestion,
   offlineGrade,
 } from "../src/services/offlineAi";
+import {
+  ACCESS_COOKIE,
+  clearAuthCookies,
+  setAccessCookie,
+  setRefreshCookie,
+} from "../src/middleware/auth";
+import type { Response } from "express";
 
 const results: Array<{ label: string; ok: boolean }> = [];
 function check(label: string, ok: boolean, detail = ""): void {
@@ -128,6 +135,116 @@ check(
 // These stand-ins must not be mistaken for provider output anywhere downstream.
 check("the grade carries no topic verbatim from the model", typeof g1.feedback === "string");
 check("a very long answer does not change the grade", offlineGrade("recursion", "x".repeat(5000)).score === g1.score);
+
+// ===========================================================================
+// 6. The auth cookie policy
+// ===========================================================================
+//
+// The browser suite proves the cookies work over HTTP. Neither of these is
+// reachable from a dev-mode browser run, though, and both matter:
+//
+//   - `Secure` set in development silently breaks every login on http://localhost,
+//     with "login is broken" as the only symptom.
+//   - `Secure` NOT set in production sends a live session credential over the
+//     network in clear text.
+//
+// So the policy is asserted here against the same functions the server uses.
+
+interface CookieCall {
+  name: string;
+  value: string;
+  options: Record<string, unknown>;
+}
+
+/** Capture what would be written to `Set-Cookie`, without standing up a server. */
+function captureCookies(
+  fn: (response: Response, value: string) => void,
+): CookieCall[] {
+  const calls: CookieCall[] = [];
+  const fake = {
+    cookie(name: string, value: string, options: Record<string, unknown>) {
+      calls.push({ name, value, options });
+      return fake;
+    },
+    clearCookie(name: string, options: Record<string, unknown>) {
+      calls.push({ name, value: "", options });
+      return fake;
+    },
+  };
+  fn(fake as unknown as Response, "probe-token");
+  return calls;
+}
+
+const originalNodeEnv = process.env.NODE_ENV;
+
+delete process.env.NODE_ENV;
+const devAccess = captureCookies(setAccessCookie)[0];
+const devRefresh = captureCookies(setRefreshCookie)[0];
+check(
+  "the access cookie is not Secure in development",
+  devAccess?.options.secure === false,
+  `secure=${devAccess?.options.secure}`,
+);
+check("the access cookie is httpOnly", devAccess?.options.httpOnly === true);
+check("the access cookie is SameSite=Lax", devAccess?.options.sameSite === "lax");
+check(
+  "the access cookie is scoped to /",
+  devAccess?.options.path === "/",
+  `path=${devAccess?.options.path}`,
+);
+check(
+  "the access cookie uses the documented name",
+  devAccess?.name === ACCESS_COOKIE,
+  devAccess?.name ?? "",
+);
+
+process.env.NODE_ENV = "production";
+check(
+  "the access cookie IS Secure in production",
+  captureCookies(setAccessCookie)[0]?.options.secure === true,
+);
+check(
+  "the refresh cookie IS Secure in production",
+  captureCookies(setRefreshCookie)[0]?.options.secure === true,
+);
+
+// Some hosts set `NODE_ENV=Production`. A case-sensitive comparison drops
+// `Secure` there, which is a real vulnerability in production — and the same trap
+// already bit the offline-AI production guard above, so it is pinned on purpose.
+process.env.NODE_ENV = "Production";
+check(
+  "a capitalised NODE_ENV=Production still marks cookies Secure",
+  captureCookies(setAccessCookie)[0]?.options.secure === true,
+);
+
+delete process.env.NODE_ENV;
+const cleared = captureCookies(clearAuthCookies);
+const clearedAccess = cleared.find((c) => c.name === ACCESS_COOKIE);
+check(
+  "logout clears both cookies",
+  cleared.length === 2,
+  cleared.map((c) => c.name).join(", "),
+);
+check(
+  "the cleared cookies carry no Max-Age (immediate expiry)",
+  cleared.every((c) => c.options.maxAge === undefined),
+);
+// A mismatch on `path` alone is enough for the browser to keep the original,
+// producing a user who is "signed out" and still authenticated.
+check(
+  "clearing matches how the cookies were set (path and flags)",
+  clearedAccess?.options.path === devAccess?.options.path &&
+    clearedAccess?.options.sameSite === devAccess?.options.sameSite &&
+    clearedAccess?.options.httpOnly === devAccess?.options.httpOnly,
+);
+check(
+  "the refresh cookie outlives the access cookie",
+  Number(devRefresh?.options.maxAge ?? 0) > Number(devAccess?.options.maxAge ?? 0),
+  `access=${devAccess?.options.maxAge}ms refresh=${devRefresh?.options.maxAge}ms`,
+);
+
+if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+else process.env.NODE_ENV = originalNodeEnv;
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

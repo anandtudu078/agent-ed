@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -25,7 +26,9 @@ import {
   AuthenticatedRequest,
   AuthUser,
   requireAuth,
+  requireCsrfHeader,
   verifyAuthToken,
+  ACCESS_COOKIE,
 } from "./middleware/auth";
 import {
   chatRateLimit,
@@ -63,6 +66,11 @@ const allowedOrigins = [
 const io = new Server(httpServer, {
   cors: {
     origin: allowedOrigins.length ? allowedOrigins : undefined,
+    // The session now lives in a cookie, so the socket handshake must be allowed
+    // to carry it. Without this the browser withholds the cookie and every socket
+    // connection is rejected as unauthenticated — with an error that looks like a
+    // CORS problem rather than a credential one.
+    credentials: true,
   },
 });
 
@@ -92,6 +100,11 @@ app.use(helmet());
 
 app.use(
   cors({
+    // Required for cookies to be accepted cross-origin. The client is served from
+    // a different port (5173 in dev, a Vercel URL in production), so without this
+    // the browser drops every `Set-Cookie` and the app silently loses the ability
+    // to sign anyone in.
+    credentials: true,
     origin(origin, callback) {
       // Allow non-browser tools (curl, same-origin, server-to-server) with no Origin.
       if (!origin || allowedOrigins.includes(origin)) {
@@ -102,7 +115,13 @@ app.use(
     },
   }),
 );
+// Required for `requireAuth` to read the session cookie off the request.
+app.use(cookieParser());
 app.use(express.json());
+
+// Second lock against CSRF, alongside `SameSite=Lax` on the cookie itself. Applied
+// after CORS so a rejected origin is already answered before this runs.
+app.use("/api", requireCsrfHeader);
 
 app.use("/api/auth", authRouter);
 app.use("/api/assessment", assessmentRouter);
@@ -438,13 +457,24 @@ app.post(
 });
 
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token as string | undefined;
+  // The cookie first — that is how the browser authenticates a socket now, and
+  // it cannot be read from JS, which is the whole point of the move. The
+  // handshake header is kept as a fallback so a scripted client (and the test
+  // suites) can still connect without a cookie jar.
+  const header = socket.handshake.headers.cookie ?? "";
+  const fromCookie = header
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${ACCESS_COOKIE}=`))
+    ?.slice(ACCESS_COOKIE.length + 1);
+  const token =
+    fromCookie || (socket.handshake.auth?.token as string | undefined);
   if (!token) {
     next(new Error("Authentication required."));
     return;
   }
   try {
-    socket.data.user = verifyAuthToken(token);
+    socket.data.user = verifyAuthToken(decodeURIComponent(token));
     next();
   } catch {
     next(new Error("Session expired or invalid. Please sign in again."));

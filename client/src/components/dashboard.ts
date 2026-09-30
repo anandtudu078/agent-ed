@@ -248,10 +248,15 @@ export function createDashboard(
   let testTopic = "";
   let testBusy = false;
 
+  /**
+   * The session lives in an httpOnly cookie, so there is no token to attach.
+   * `X-Requested-With` is the CSRF header the API requires on writes; `credentials`
+   * makes the browser send the cookie.
+   */
   function authHeaders(): Record<string, string> {
     return {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}`,
+      "X-Requested-With": "AgentEd",
     };
   }
 
@@ -331,6 +336,7 @@ export function createDashboard(
       const res = await fetch(`${SERVER_URL}/api/assessment/start`, {
         method: "POST",
         headers: authHeaders(),
+        credentials: "include",
         body: JSON.stringify(topic ? { topic } : {}),
       });
       const body = (await res.json()) as {
@@ -373,6 +379,7 @@ export function createDashboard(
       const res = await fetch(`${SERVER_URL}/api/assessment/submit`, {
         method: "POST",
         headers: authHeaders(),
+        credentials: "include",
         body: JSON.stringify({ attemptToken, answer }),
       });
       const body = (await res.json()) as { evaluation?: TestEvaluation; error?: string };
@@ -412,7 +419,7 @@ export function createDashboard(
     try {
       const res = await fetch(
         `${SERVER_URL}/api/courses/${encodeURIComponent(course._id)}/enroll`,
-        { method: "POST", headers: authHeaders() },
+        { method: "POST", headers: authHeaders(), credentials: "include" },
       );
       const body = (await res.json()) as {
         nextModule?: CourseInfo["modules"][number] | null;
@@ -436,7 +443,7 @@ export function createDashboard(
     try {
       const res = await fetch(
         `${SERVER_URL}/api/courses/${encodeURIComponent(courseId)}/enroll`,
-        { method: "DELETE", headers: authHeaders() },
+        { method: "DELETE", headers: authHeaders(), credentials: "include" },
       );
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
@@ -761,7 +768,7 @@ export function createDashboard(
     statusEl.textContent = "";
     try {
       const res = await fetch(`${SERVER_URL}/api/dashboard/${encodeURIComponent(studentId)}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}` },
+        credentials: "include",
       });
       const body = (await res.json()) as DashboardData & { error?: string };
       if (!res.ok) {

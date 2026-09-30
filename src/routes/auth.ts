@@ -3,6 +3,12 @@ import bcrypt from "bcryptjs";
 
 import { User } from "../models/User";
 import {
+  clearAuthCookies,
+  REFRESH_COOKIE,
+  setAccessCookie,
+  setRefreshCookie,
+} from "../middleware/auth";
+import {
   AuthenticatedRequest,
   AuthUser,
   requireAuth,
@@ -82,6 +88,13 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
     });
     const refreshToken = await issueRefreshToken(String(user._id));
 
+    // The credential now travels as an httpOnly cookie rather than in the JSON
+    // body. It is still returned in the body as well, because the security suite
+    // and any scripted client authenticate with a bearer header and have no
+    // cookie jar; the browser path simply never reads it.
+    setAccessCookie(response, token);
+    setRefreshCookie(response, refreshToken);
+
     response.status(201).json({
       token,
       refreshToken,
@@ -136,6 +149,9 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
     });
     const refreshToken = await issueRefreshToken(String(user._id));
 
+    setAccessCookie(response, token);
+    setRefreshCookie(response, refreshToken);
+
     response.json({
       token,
       refreshToken,
@@ -150,6 +166,23 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
     console.error("Login failed.", error);
     response.status(500).json({ error: "Unable to sign in right now." });
   }
+});
+
+/**
+ * GET /api/auth/me
+ *
+ * Who am I? With tokens in `localStorage` the client could answer this from its
+ * own storage — but that only proved the browser still held a string, not that
+ * the credential was still valid. Now that the session is an httpOnly cookie,
+ * this endpoint is the only way to tell "signed in" from "holding a cached name
+ * for someone whose session expired", so the boot path calls it.
+ *
+ * Returns the user and nothing else — no token, because there is nothing to
+ * hand back.
+ */
+router.get("/me", requireAuth, (request, response) => {
+  const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+  response.json({ user: authUser });
 });
 
 /**
@@ -185,7 +218,12 @@ router.patch("/language", requireAuth, async (request, response) => {
       displayName: user.displayName,
       language: user.language,
     };
-    response.json({ token: signAuthToken(identity), user: identity });
+    // Re-issue the cookie so the new language travels in the JWT. Without this
+    // the next reply would come back in the old language until the access token
+    // expired — the exact staleness this re-issue exists to prevent.
+    const nextToken = signAuthToken(identity);
+    setAccessCookie(response, nextToken);
+    response.json({ token: nextToken, user: identity });
   } catch (error) {
     console.error("Language change failed.", error);
     response.status(500).json({ error: "Unable to change language right now." });
@@ -204,9 +242,19 @@ router.patch("/language", requireAuth, async (request, response) => {
  */
 router.post("/refresh", async (request, response) => {
   try {
-    const presented = (request.body as { refreshToken?: unknown } | undefined)
+    // The cookie is the browser's path; the body is kept for scripted clients.
+    const fromCookie = (request.cookies as Record<string, string> | undefined)?.[
+      REFRESH_COOKIE
+    ];
+    const fromBody = (request.body as { refreshToken?: unknown } | undefined)
       ?.refreshToken;
-    if (typeof presented !== "string" || !presented) {
+    const presented =
+      typeof fromCookie === "string" && fromCookie
+        ? fromCookie
+        : typeof fromBody === "string" && fromBody
+          ? fromBody
+          : null;
+    if (!presented) {
       response.status(400).json({ error: "refreshToken is required." });
       return;
     }
@@ -228,13 +276,20 @@ router.post("/refresh", async (request, response) => {
       return;
     }
 
+    const nextAccess = signAuthToken({
+      id: String(user._id),
+      username: user.username,
+      displayName: user.displayName,
+      language: user.language ?? "en",
+    });
+    // Rotate both cookies. The refresh cookie is the credential that mattered
+    // here — leaving the old one in place after a successful rotation would
+    // defeat the point of rotating.
+    setAccessCookie(response, nextAccess);
+    setRefreshCookie(response, outcome.nextToken);
+
     response.json({
-      token: signAuthToken({
-        id: String(user._id),
-        username: user.username,
-        displayName: user.displayName,
-        language: user.language ?? "en",
-      }),
+      token: nextAccess,
       refreshToken: outcome.nextToken,
       user: {
         id: String(user._id),
@@ -260,9 +315,14 @@ router.post("/logout", requireAuth, async (request, response) => {
   try {
     const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
     await revokeAllRefreshTokens(authUser.id);
+    // Always clear, including on the error path below — a student who clicked
+    // sign out must end up signed out locally even if the revoke call failed,
+    // or they are left with a live cookie and no way to remove it.
+    clearAuthCookies(response);
     response.json({ signedOut: true });
   } catch (error) {
     console.error("Logout failed.", error);
+    clearAuthCookies(response);
     response.status(500).json({ error: "Unable to sign out right now." });
   }
 });
