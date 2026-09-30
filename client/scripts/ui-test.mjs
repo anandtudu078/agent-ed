@@ -840,6 +840,32 @@ try {
     !afterReset.includes("Picking up") && afterReset.includes("New conversation started"),
   );
   // A reload must NOT bring the cleared history back.
+  //
+  // But the clear has two halves and they do not finish together: the view
+  // resets immediately, the server call does not. Reloading before the server
+  // half lands re-reads the history that was never actually deleted, and this
+  // check then fails for a reason that has nothing to do with the reset. It is a
+  // race, and on a cold CI database the server is reliably slower than the
+  // reload — which is why it passed locally and failed on every run there.
+  //
+  // Waiting also makes the assertion mean something. Without it, the check
+  // really asks "did the screen clear", which the line above already proved.
+  await page
+    .waitForFunction(
+      async () => {
+        const username = JSON.parse(localStorage.getItem("agented:user") ?? "{}").username ?? "";
+        const res = await fetch(`http://localhost:3000/api/sessions/${encodeURIComponent(username)}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("agented:token") ?? ""}` },
+        });
+        if (!res.ok) return false;
+        return ((await res.json()).conversationHistory?.length ?? 0) === 0;
+      },
+      // Options are the THIRD argument here. Passing them second sends them as
+      // `arg` and silently leaves the 30s default in place.
+      null,
+      { timeout: 15000, polling: 500 },
+    )
+    .catch(() => {});
   await page.reload();
   await page.locator("#app-view").waitFor({ state: "visible" });
   await page.waitForTimeout(1500);
