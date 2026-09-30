@@ -127,10 +127,18 @@ jobs:
       - name: Build server
         run: npm run build
 
+      # NB: do NOT set NODE_ENV here.
+      #
+      # NODE_ENV is read in exactly one place in this codebase — the offline AI
+      # gate — and it reads it to refuse. Setting NODE_ENV=production on this
+      # step therefore disabled the stand-in that the browser suites depend on,
+      # and the UI suite died on its first assessment question with a 502 behind
+      # it. That is the guard working correctly; the workflow was arming it.
+      #
+      # This step still runs the real artefact (npm run build, then npm start
+      # from dist), which is what makes it worth having. NODE_ENV bought nothing.
       - name: Start API
         run: npm start &
-        env:
-          NODE_ENV: production
 
       - name: Start Vite
         run: npm run dev --prefix client &
