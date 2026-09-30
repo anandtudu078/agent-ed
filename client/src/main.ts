@@ -904,6 +904,19 @@ consentViewEl.addEventListener("submit", async (event) => {
       }),
     });
     const body = (await res.json()) as { error?: string; canUseAi?: boolean };
+
+    // The same 401 as the GET in `ensureConsent`, and the same trap: it means the
+    // session is gone, not that the answer was wrong. Showing "Authentication
+    // required." in the form and leaving it up is the worst option available —
+    // the notice is now unsubmittable, but the student has no reason to know
+    // that, so they fill it in again and press the button again. Each attempt
+    // fires another 401 + refresh 400, which is exactly the console pattern this
+    // was found from. Sign out so they land on a screen they can act on.
+    if (res.status === 401) {
+      await signOut();
+      return;
+    }
+
     if (!res.ok || body.canUseAi !== true) {
       consentErrorEl.textContent = body.error ?? "Please complete this step.";
       return;

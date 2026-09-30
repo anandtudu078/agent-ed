@@ -662,6 +662,43 @@ try {
   );
   await doomedCtx.close();
 
+  // 8c. Submitting consent with a dead session must not trap the student.
+  //
+  // The GET guard above was the first half; this is the second. The submit
+  // handler rendered "Authentication required." inside the form and left the
+  // notice on screen, so the student had a form that could not be submitted and
+  // no way to tell. Retrying fired another 401 + refresh 400 every time — the
+  // repeating console pattern this was diagnosed from.
+  const stuckCtx = await browser.newContext();
+  const stuckPage = await stuckCtx.newPage();
+  await stuckPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await stuckPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
+
+  // Reveal the notice directly; it is normally gated behind a valid session, and
+  // forcing it visible is what reproduces a form rendered before the session died.
+  await stuckPage.evaluate(() => {
+    document.querySelector("#auth-view").classList.remove("hidden");
+    document.querySelector("#consent-view").classList.remove("hidden");
+  });
+  await stuckPage
+    .locator('#consent-view input[name="consent-age"][value="18-plus"]')
+    .check();
+  await stuckPage.locator("#consent-terms").check();
+  await stuckPage.locator("#consent-submit").click();
+  await stuckPage.waitForTimeout(4000);
+
+  check(
+    "submitting consent with no session does not leave the form up",
+    !(await stuckPage.locator("#consent-view").isVisible()),
+    "the unsubmittable consent form was left on screen",
+  );
+  check(
+    "and it offers the sign-in screen instead",
+    await stuckPage.locator("#auth-view").isVisible(),
+    "the student was left with no actionable screen",
+  );
+  await stuckCtx.close();
+
   // 9. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
