@@ -978,6 +978,39 @@ try {
   await linkBack.close();
   await landingCtx.close();
 
+  // 11. Both pages survive a production build.
+  //
+  // This is the check that would have caught the landing page shipping broken.
+  // With no vite config, Vite builds index.html ALONE: the dev server serves any
+  // HTML file from the project root, so the page worked perfectly locally, and
+  // was silently absent from dist/ — 404ing on the deployed site forever while
+  // every local test passed.
+  //
+  // Reads the build config rather than dist/, so it fails the moment a page is
+  // added and forgotten here, without needing a build to have been run.
+  // `import.meta.url`, not `__dirname`: this suite is an ES module and
+  // `__dirname` does not exist there.
+  const viteConfigPath = new URL("../vite.config.ts", import.meta.url);
+  // Read defensively. A missing file is exactly the bug being guarded, so it has
+  // to FAIL the checks below with a readable message — not abort the whole suite
+  // with an ENOENT that looks like a harness problem.
+  const viteConfig = fs.existsSync(viteConfigPath)
+    ? fs.readFileSync(viteConfigPath, "utf8")
+    : "";
+  for (const page of ["index.html", "landing.html"]) {
+    check(
+      `${page} is a declared build entry`,
+      viteConfig.includes(page),
+      `${page} is not in client/vite.config.ts — it will be omitted from dist/`,
+    );
+  }
+  // And the entry must be declared as an INPUT, not merely mentioned in a comment.
+  check(
+    "the build actually declares a rollup input",
+    /rollupOptions[\s\S]*input[\s\S]*landing/.test(viteConfig),
+    "no rollupOptions.input found, so Vite will fall back to index.html only",
+  );
+
   // 11. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
