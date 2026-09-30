@@ -1,0 +1,185 @@
+name: CI
+
+# Cancel superseded runs on the same branch. A re-push mid-review makes the
+# previous result irrelevant, and a stale green tick next to a new commit is
+# worse than no tick at all.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  # Fast gate: types plus every pure-logic suite. No services, no browser, no
+  # API keys — so it stays under a minute and fails within seconds of a
+  # regression rather than after the e2e job has burned ten minutes.
+  unit:
+    name: Types and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 24.x is required, not preferred: the client suites are run as
+      # `node scripts/*.ts` and rely on Node's native type stripping. On 20.x
+      # they fail with ERR_UNKNOWN_FILE_EXTENSION before a single check runs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install (server)
+        run: npm ci
+
+      - name: Install (client)
+        run: npm ci --prefix client
+
+      - name: Typecheck server
+        run: npx tsc --noEmit
+
+      # Runs in client/ rather than via `tsc --prefix`: tsc has no --prefix
+      # option, and it fails with TS5023 rather than checking anything.
+      - name: Typecheck client
+        run: npx tsc --noEmit
+        working-directory: client
+
+      - name: Unit suites
+        run: npm test
+
+  # The suites that would have caught the owl regressions. Every one of the four
+  # bugs fixed in that work passed review, passed the unit suites, and failed
+  # here — a sticky mood left by beat playback, a language switch that appeared
+  # to do nothing, a reaction talked over by a stale explanation. None of them
+  # were reachable from a pure logic test, which is the entire argument for
+  # spending the minutes to run a browser.
+  e2e:
+    name: Browser suites
+    runs-on: ubuntu-latest
+
+    # A fresh database per run: these suites register accounts, seed the course
+    # catalog and grade tests, and a carried-over database would make results
+    # depend on run order.
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MONGO_URI: mongodb://127.0.0.1:27017/agented
+      # Not a real secret, and does not need to be. The suites create their own
+      # accounts, and client/scripts/security-test.mjs reads this same value to
+      # mint tokens for its authorization checks — the server and the test have
+      # to agree, which is the only property that matters here.
+      JWT_SECRET: ci-only-not-a-real-secret-value
+      PORT: "3000"
+      # Deterministic stand-in for the assessment endpoints, which otherwise call
+      # Groq and 502 with no key — killing the UI suite at its first question and
+      # skipping beat playback with it. It answers on the SERVER, so the whole
+      # pipeline (question -> grade -> Progress/Session writes -> dashboard) still
+      # runs for real instead of being stubbed in the browser. Refused outright
+      # when NODE_ENV=production; see src/services/offlineAi.ts.
+      ALLOW_OFFLINE_AI: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      - name: Install (server)
+        run: npm ci
+
+      - name: Install (client)
+        run: npm ci --prefix client
+
+      # The server reads config through dotenv from .env on disk, and the
+      # security suite greps the same file for JWT_SECRET. Env vars alone would
+      # boot the server but leave that suite unable to mint a valid token.
+      - name: Write .env
+        run: |
+          printf 'MONGO_URI=%s\nJWT_SECRET=%s\nPORT=3000\n' \
+            "$MONGO_URI" "$JWT_SECRET" > .env
+
+      # The suites stub speechSynthesis, so no audio is needed — but they do need
+      # a real browser binary. `--with-deps` pulls the shared libraries that a
+      # bare ubuntu runner is missing.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: client
+
+      - name: Build server
+        run: npm run build
+
+      - name: Start API
+        run: npm start &
+        env:
+          NODE_ENV: production
+
+      - name: Start Vite
+        run: npm run dev --prefix client &
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/health > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API never became ready"
+          exit 1
+
+      - name: Wait for Vite
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173 > /dev/null 2>&1; then
+              echo "Vite ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Vite never became ready"
+          exit 1
+
+      # Order matters. The security suite can burn the auth rate-limit budget,
+      # and the UI suite needs an auth attempt to register — so security runs
+      # first, and never with SECURITY_TEST_RATELIMIT set.
+      - name: Security checks
+        run: npm run test:security
+
+      - name: UI suite
+        run: npm run test:ui
+
+      - name: Beat playback
+        run: npm run test:playback
+
+      # The browser suites drop screenshots into client/ on failure. Without
+      # this, a red CI run tells you a thing broke and nothing about what.
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-failure-screenshots
+          path: |
+            client/.ui-*.png
+            client/client/.ui-*.png
+          if-no-files-found: ignore
+          retention-days: 7

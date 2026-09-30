@@ -1,4 +1,5 @@
 import { completeJson } from "./groqClient";
+import { offlineAiEnabled, offlineGrade, offlineQuestion } from "./offlineAi";
 import type { TeachLanguage } from "./aiService";
 import { difficultyClause, type DifficultyBand } from "./progressService";
 
@@ -91,6 +92,14 @@ export async function generateAssessmentQuestion(
    */
   difficulty: DifficultyBand = "standard",
 ): Promise<AssessmentQuestion> {
+  // Offline first, and before any prompt is built: with no provider configured
+  // the call below would throw, and the endpoint would answer 502 for a reason
+  // that has nothing to do with the student. See offlineAi.ts for why this is
+  // gated out of production.
+  if (offlineAiEnabled()) {
+    return offlineQuestion(topic, language, difficulty);
+  }
+
   const focus = misconceptions.length
     ? `Target these known sticking points: ${misconceptions
         .slice(0, 5)
@@ -131,6 +140,14 @@ export async function gradeAssessmentAnswer(
   misconceptions: string[] = [],
   language: TeachLanguage = "en",
 ): Promise<AssessmentGrade> {
+  // Same gate as the question, and for the same reason — but the consequence
+  // here is much larger. The route turns this return value into Progress and
+  // Session writes, so an offline answer has to travel the same path as a real
+  // one or the whole progress pipeline goes untested.
+  if (offlineAiEnabled()) {
+    return offlineGrade(topic, answer, language);
+  }
+
   const focus = misconceptions.length
     ? `Previously observed sticking points: ${misconceptions.slice(0, 5).join("; ")}.`
     : "";

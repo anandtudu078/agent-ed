@@ -73,10 +73,10 @@ work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-330 checks across ten suites. Start here.
+460 checks across fourteen suites. Start here.
 
 ```bash
-npm test              # runs all service suites in sequence (no browser needed)
+npm test              # runs every suite that needs no browser (10 suites, ~40s)
 ```
 
 Or individually:
@@ -90,27 +90,71 @@ Or individually:
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
+| `npm run test:offline` | 30 | The offline AI gate — mostly an attack on the production refusal |
+| `npm run test:beats` | 24 | Lesson-beat segmentation |
+| `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
-| `npm run test:ui` | 73 | Full browser flows (Playwright) |
+| `npm run test:ui` | 93 | Full browser flows (Playwright) |
+| `npm run test:playback` | 20 | Beat sequencing and sketch/board pairing (Playwright) |
 | `npm run test:security` | 23 | Auth, authz, CORS, token rotation, XSS |
 
-The browser suites need the app running (`npm run dev` in both terminals):
+The three browser suites need the app running (`npm run dev` in both terminals)
+and a reachable MongoDB:
 
 ```bash
+npm run test:security   # first: it can burn the auth rate-limit budget
 npm run test:ui
-npm run test:security
+npm run test:playback
 ```
+
+`test:security` is listed first on purpose. It can optionally exhaust the auth
+rate limiter, which would then block the registration the UI suite depends on.
 
 Type-check both projects:
 
 ```bash
 npx tsc --noEmit              # server
-npm run build --prefix client
+npx tsc --noEmit --project client/tsconfig.json
 ```
 
 > The `parse` and `render` suites are the security boundary for everything the
 > owl draws. They had no permanent coverage before — the earlier tests were a
 > throwaway script that was later deleted.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request to `master`, in
+two jobs:
+
+- **Types and unit tests** — both `tsc` projects plus the ten no-browser suites.
+  No services and no API keys, so a regression fails in under a minute.
+- **Browser suites** — a MongoDB service container, the built API on `:3000`,
+  Vite on `:5173`, and Playwright Chromium. Runs security, then UI, then
+  beat playback, and uploads failure screenshots as an artifact.
+
+The split is not a convenience. All four bugs fixed in the beat-and-sketch work
+passed review and passed every unit suite, and failed only in a browser — a
+sticky mood left behind by beat playback, a language switch that appeared to do
+nothing, a reaction talked over by a stale explanation. None were reachable from
+a pure logic test, which is the reason the slow job exists at all.
+
+CI uses no AI provider keys. The browser suites are made possible by a
+deterministic stand-in for the assessment endpoints
+(`src/services/offlineAi.ts`), which answers on the **server** rather than in the
+browser — so the whole pipeline runs for real: question → grade → `Progress` and
+`Session` writes → dashboard render. A browser-side stub would have painted a
+result panel while writing none of that, forcing the review-card and weak-point
+checks to be skipped.
+
+The stand-in is gated behind `ALLOW_OFFLINE_AI=1` and **refuses outright when
+`NODE_ENV=production`**. That guard is the entire safety story: a deploy with a
+missing key would otherwise show real students a fabricated score and invented
+feedback, which is strictly worse than the honest `502` the routes return today.
+`npm run test:offline` exists mostly to attack that guard.
+
+Its score is deliberately set below `REVIEW_PASS_SCORE`, so an offline run still
+records a weak point and a due review card. A higher score would take the happy
+path through a pipeline that would otherwise never execute in CI.
 
 ---
 
