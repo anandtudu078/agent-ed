@@ -17,6 +17,8 @@
 
 import { chromium } from "playwright";
 
+import { acceptConsent } from "./test-helpers.mjs";
+
 const FRONTEND = "http://localhost:5173";
 const USER = `journey${Date.now().toString(36).slice(-6)}`;
 const PASS = "journey-pass-123";
@@ -79,7 +81,8 @@ try {
   await page.locator("#username-input").fill(USER);
   await page.locator("#password-input").fill(PASS);
   await page.locator("#auth-submit").click();
-  await page.locator("#app-view").waitFor({ state: "visible" });
+  // Registration no longer lands in the app: the consent notice comes first.
+  await acceptConsent(page);
   await page.locator("#status-text").filter({ hasText: "Online" }).waitFor();
   check("account created and socket connected", true, `user=${USER}`);
   check(
@@ -366,7 +369,15 @@ try {
   await page.locator("#username-input").fill(USER);
   await page.locator("#password-input").fill(PASS);
   await page.locator("#auth-submit").click();
+  // Deliberately NOT `acceptConsent`: this is a sign-in, not a registration. The
+  // consent is already on record, so the notice must not reappear — and waiting
+  // for it here is exactly the check that would prove consent is not asked for
+  // twice.
   await page.locator("#app-view").waitFor({ state: "visible" });
+  check(
+    "signing back in does not re-ask for consent",
+    await page.locator("#consent-view").isHidden(),
+  );
   check("signing back in works", (await page.locator("#user-badge").textContent())?.includes(NAME) ?? false);
 
   // A duplicate account must be refused rather than silently overwriting.
@@ -408,8 +419,15 @@ try {
   // not a fault: the client documents it ("404 just means this is a brand-new
   // student with no session yet") and treats it as "no history". Anything else
   // failing is real.
+  //
+  // The 401 from /api/auth/me is expected too: the sign-out check calls it to
+  // prove the session is gone, so it is allowed on its specific status rather than
+  // swept into a blanket allowlist — a blanket one would defeat that check's point.
   const realBad = badResponses.filter(
-    (r) => !/favicon/i.test(r) && !/^\d{3} .*\/api\/sessions\//.test(r),
+    (r) =>
+      !/favicon/i.test(r) &&
+      !/^\d{3} .*\/api\/sessions\//.test(r) &&
+      !/^401 .*\/api\/auth\/me/.test(r),
   );
   check("no failed API responses", realBad.length === 0, realBad.slice(0, 3).join(" | ") || "clean");
   const expected404 = badResponses.filter((r) => /^\d{3} .*\/api\/sessions\//.test(r));

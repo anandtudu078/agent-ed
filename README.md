@@ -77,7 +77,7 @@ work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-483 checks across fourteen suites. Start here.
+560 checks across fourteen suites. Start here.
 
 ```bash
 npm test              # runs every suite that needs no browser (10 suites, ~40s)
@@ -94,14 +94,14 @@ Or individually:
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
-| `npm run test:offline` | 42 | The offline AI gate and the auth cookie policy |
+| `npm run test:offline` | 98 | The offline AI gate, the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
-| `npm run test:ui` | 95 | Full browser flows, incl. that no token is readable from JS (Playwright) |
+| `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
-| `npm run test:security` | 36 | Auth, authz, CORS, CSRF, cookie attributes, token rotation, XSS |
+| `npm run test:security` | 53 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
 
 The three browser suites need the app running (`npm run dev` in both terminals)
 and a reachable MongoDB:
@@ -343,6 +343,70 @@ Two things the migration could not keep, and did not try to:
   synchronous; with a cookie, the UI could claim to be signed out while the
   credential was still live and a reload would sign the student straight back in.
 
+---
+
+## Consent, and who it protects
+
+This app is aimed at students — the people least able to consent meaningfully to
+their data going to a third party. Every tutor prompt carries a student's own
+words, their mistakes and their progress, out to Groq or Gemini. So the flow is
+built around one decision, and everything else serves it:
+
+> **May this student send a question to an AI provider?**
+
+**Where the rule lives.** `src/services/consent.ts`, as pure functions. Not in a
+route, not in the form. A rule like "a minor without guardian consent must be
+refused" is worth far more with 60 unit tests than a paragraph in a README — and
+consent logic has a habit of being duplicated in the form, the API and the client,
+where they drift and the copy that matters is the one nobody tests.
+
+**What counts as consent.** Recorded per account: who agreed, which version of the
+notice, and when. Deliberately conservative:
+
+- Silence is never consent. A new account cannot use the AI features.
+- **Stale consent is not consent.** Bump `CONSENT_POLICY_VERSION` and every
+  existing consent goes back to being asked for. That is the entire reason the
+  version is stored.
+- **Under 18 always needs an adult**, whatever the student ticks. The guardian's
+  name is recorded — a blank or one-character name is refused, and a whitespace-only
+  name is refused too, since `"   "` is truthy and a naive `if (by)` accepts it.
+- A database error is never read as "your account is gone". `requireAuth` fails
+  the *request* and keeps the session.
+
+**Enforced on the server, on the only path that reaches a provider.** The socket
+chat handler and both assessment routes. Client-side gating is not a control — the
+client is the thing an attacker controls — so the server re-reads the record on
+every AI call rather than trusting the token, which is good for 30 minutes.
+
+**Withdrawal bites immediately**, for the same reason. A consent that takes half
+an hour to revoke is not withdrawal.
+
+**What a refusal does *not* do.** Sign-in, the course catalog, the dashboard, and
+exporting your own data all work without consent. Only calls that leave the
+machine are gated. Refusing a minor their own account would be a worse outcome
+than not teaching them.
+
+**Data rights, because a notice that promises them is worth nothing:**
+
+- `GET /api/account/export` — everything held, as JSON. Works whether or not
+  consent was given; the right to see your data cannot depend on agreeing to
+  anything. The password hash is included on purpose: it is one-way, and omitting
+  it from your own export looks like concealment.
+- `DELETE /api/account` — erases the account, conversation, progress and tokens.
+  Scoped by the authenticated id, never a username from the request body.
+- `DELETE /api/auth/consent` — withdraws consent and keeps the progress, so
+  changing your mind about the notice is not punished by losing your work.
+
+**One bug this found, which is why it is worth reading.** Erasure did not revoke
+the session: `requireAuth` trusted the JWT, which stays valid for 30 minutes, so a
+deleted account kept working until it expired. It now confirms the account still
+exists on every authenticated request — one indexed `_id` read, which is the price
+of deletion actually working.
+
+The trade, stated plainly: **the guardian's name is self-reported**, because
+verifying it would mean emailing an adult and there is no mail infrastructure
+here. That is how school-registered accounts are usually set up, but it is not
+verification, and the app should not pretend otherwise.
 A bearer header is still accepted as a fallback, which is what lets the security
 suite and any scripted client authenticate without a cookie jar. The browser path
 never uses it.
@@ -416,8 +480,8 @@ most likely things to need changing.
 - **Memory is 12 messages.** Enough for a thread, thin for a session.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.
-- **No teacher view, and no consent flow.** Both are needed before real
-  deployment with minors.
+- **No teacher view.** Needed before real deployment in a school. The consent
+  flow is done; a teacher cannot yet see a cohort's progress.
 - Gemini's free tier is exhausted on the development account, so Groq has been
   carrying everything. Both paths work; only the fallback has been exercised
   recently.

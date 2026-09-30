@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
+import { User } from "../models/User";
+
 /**
  * CSRF guard.
  *
@@ -192,12 +194,22 @@ export function verifyAuthToken(token: string): AuthUser {
  * fallback because the security suite and any scripted client need a way to
  * present a token without a cookie jar — but the browser path never uses it,
  * which is the point.
+ *
+ * Also confirms the account still exists. A JWT stays valid for 30 minutes after
+ * it is issued, so without this a student who deletes their account — or one
+ * deleted for them — keeps a working session until the token expires. Deletion
+ * that does not revoke access is not deletion, and "sign me out permanently" that
+ * leaves the door open is worse than no such button.
+ *
+ * Costs one indexed `_id` lookup per authenticated request. That is the price of
+ * deletion actually working, and it is cheap: a single-key read on a small
+ * document.
  */
-export function requireAuth(
+export async function requireAuth(
   request: AuthenticatedRequest,
   response: Response,
   next: NextFunction,
-): void {
+): Promise<void> {
   const header = request.headers.authorization;
   const bearer = header?.startsWith("Bearer ") ? header.slice(7).trim() : null;
   const fromCookie = (request.cookies as Record<string, string> | undefined)?.[
@@ -210,12 +222,32 @@ export function requireAuth(
     return;
   }
 
+  let user: AuthUser;
   try {
-    request.authUser = verifyAuthToken(token);
-    next();
+    user = verifyAuthToken(token);
   } catch {
     response
       .status(401)
       .json({ error: "Session expired or invalid. Please sign in again." });
+    return;
   }
+
+  try {
+    const exists = await User.exists({ _id: user.id });
+    if (!exists) {
+      response.status(401).json({
+        error: "That account no longer exists. Please sign in again.",
+      });
+      return;
+    }
+  } catch {
+    // A database blip must not read as "your account is gone" and sign the student
+    // out. Fail closed on the *request* instead: refuse this call, keep the
+    // session, and let the next one succeed.
+    response.status(503).json({ error: "Unable to verify your session. Try again." });
+    return;
+  }
+
+  request.authUser = user;
+  next();
 }

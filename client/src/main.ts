@@ -191,6 +191,19 @@ const statusDotEl = document.querySelector<HTMLSpanElement>("#status-dot")!;
 const statusTextEl = document.querySelector<HTMLSpanElement>("#status-text")!;
 const mascotHostEl = document.querySelector<HTMLDivElement>("#mascot-host")!;
 
+// Consent step.
+const consentViewEl = document.querySelector<HTMLFormElement>("#consent-view")!;
+const consentDisclosureEl = document.querySelector<HTMLUListElement>("#consent-disclosure")!;
+const consentGuardianEl = document.querySelector<HTMLDivElement>("#consent-guardian")!;
+const consentGuardianNameEl =
+  document.querySelector<HTMLInputElement>("#consent-guardian-name")!;
+const consentGuardianCheckEl =
+  document.querySelector<HTMLInputElement>("#consent-guardian-check")!;
+const consentTermsEl = document.querySelector<HTMLInputElement>("#consent-terms")!;
+const consentErrorEl = document.querySelector<HTMLParagraphElement>("#consent-error")!;
+const consentExportEl = document.querySelector<HTMLButtonElement>("#consent-export")!;
+const consentSignOutEl = document.querySelector<HTMLButtonElement>("#consent-signout")!;
+
 /**
  * Instructional mode. The owl's own display toggle owns this; main.ts just
  * forwards it with each message and uses it to label the connection notice.
@@ -762,6 +775,153 @@ function showAuth(): void {
   appViewEl.classList.add("hidden");
   authViewEl.classList.remove("hidden");
   authErrorEl.textContent = "";
+  // The consent form belongs to the signed-out surface, so leaving it up would
+  // show a student two forms at once after they sign back out.
+  consentViewEl.classList.add("hidden");
+}
+
+// ---------------------------------------------------------------------------
+// Consent
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors of the server's rules (`src/services/consent.ts`).
+ *
+ * These exist to explain the requirement before the student hits it, not to
+ * enforce it — the server is the only thing that decides, and it re-reads the
+ * record on every AI call. A client that agreed to enforce would be a client that
+ * can be made to skip it, which is the opposite of the point.
+ */
+const MINOR_AGE_BANDS = ["under-13", "13-17"];
+
+let consentGranted = false;
+
+/** Render the notice and show the step. */
+async function showConsentStep(): Promise<void> {
+  authViewEl.classList.remove("hidden");
+  appViewEl.classList.add("hidden");
+  consentViewEl.classList.remove("hidden");
+  authFormEl.classList.add("hidden");
+  consentErrorEl.textContent = "";
+  consentGuardianEl.classList.add("hidden");
+
+  // The notice comes from the API, so the version shown is the version that gets
+  // recorded. A hard-coded copy here would drift and quietly change what people
+  // agreed to.
+  try {
+    const res = await authedFetch("/api/auth/consent/policy");
+    const body = (await res.json()) as { disclosure?: string[] };
+    const lines = body.disclosure ?? [];
+    consentDisclosureEl.replaceChildren(
+      ...lines.map((line) => {
+        const li = document.createElement("li");
+        li.className = "flex gap-2 text-xs leading-relaxed text-slate-300";
+        const dot = document.createElement("span");
+        dot.className = "text-indigo-400";
+        dot.textContent = "•";
+        const text = document.createElement("span");
+        // textContent, never innerHTML: the disclosure is our copy today, but a
+        // future editor making it configurable should not be able to introduce
+        // an injection point by accident.
+        text.textContent = line;
+        li.append(dot, text);
+        return li;
+      }),
+    );
+  } catch {
+    consentDisclosureEl.replaceChildren();
+  }
+}
+
+function hideConsentStep(): void {
+  consentViewEl.classList.add("hidden");
+  authFormEl.classList.remove("hidden");
+}
+
+/** The guardian block appears only once an under-18 band is selected. */
+for (const radio of consentViewEl.querySelectorAll<HTMLInputElement>(
+  'input[name="consent-age"]',
+)) {
+  radio.addEventListener("change", () => {
+    const isMinor = MINOR_AGE_BANDS.includes(radio.value);
+    consentGuardianEl.classList.toggle("hidden", !isMinor);
+    // Clear the guardian fields when switching to an adult band, so a stale name
+    // cannot be submitted against an age that does not need one.
+    if (!isMinor) {
+      consentGuardianNameEl.value = "";
+      consentGuardianCheckEl.checked = false;
+    }
+  });
+}
+
+consentViewEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  consentErrorEl.textContent = "";
+
+  const ageBand =
+    consentViewEl.querySelector<HTMLInputElement>('input[name="consent-age"]:checked')
+      ?.value ?? "";
+
+  try {
+    const res = await authedFetch("/api/auth/consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...CSRF_HEADER },
+      body: JSON.stringify({
+        ageBand,
+        acceptedTerms: consentTermsEl.checked,
+        guardianName: consentGuardianNameEl.value,
+        guardianAccepted: consentGuardianCheckEl.checked,
+      }),
+    });
+    const body = (await res.json()) as { error?: string; canUseAi?: boolean };
+    if (!res.ok || body.canUseAi !== true) {
+      consentErrorEl.textContent = body.error ?? "Please complete this step.";
+      return;
+    }
+    consentGranted = true;
+    hideConsentStep();
+    showApp();
+  } catch {
+    consentErrorEl.textContent = "Could not reach the server. Please try again.";
+  }
+});
+
+consentSignOutEl.addEventListener("click", () => void signOut());
+
+/**
+ * "See what we already hold" — the export, opened in a new tab.
+ *
+ * Available before consent is given, which is deliberate: the right to see your
+ * data does not depend on having agreed to anything.
+ */
+consentExportEl.addEventListener("click", () => {
+  window.open(`${SERVER_URL}/api/account/export`, "_blank", "noopener");
+});
+
+/**
+ * Ask the server whether this account may use the AI features.
+ *
+ * Every entry point calls this — sign-up, sign-in, reload — rather than assuming
+ * a successful authentication means a usable account. It costs one request, and
+ * it is the only way a student whose consent has gone stale finds out.
+ */
+async function ensureConsent(): Promise<void> {
+  try {
+    const res = await authedFetch("/api/auth/consent");
+    const body = (await res.json()) as { canUseAi?: boolean };
+    if (body.canUseAi === true) {
+      consentGranted = true;
+      hideConsentStep();
+      return;
+    }
+  } catch {
+    // Offline. Do not block: the server refuses the AI calls anyway if consent is
+    // genuinely missing, and locking a student out of the app because their
+    // network blipped is worse than showing them the app.
+    return;
+  }
+  consentGranted = false;
+  await showConsentStep();
 }
 
 function setAuthMode(register: boolean): void {
@@ -893,7 +1053,11 @@ authFormEl.addEventListener("submit", async (event) => {
 
     storeAuth(data);
     currentAuth = { user: data.user };
-    showApp();
+    // Consent is checked on every sign-in, not just sign-up: an account created
+    // before the flow existed, or one whose consent has gone stale against the
+    // current policy version, lands on the notice here.
+    await ensureConsent();
+    if (consentGranted) showApp();
   } catch {
     appendAuthError("Could not reach the server. Is the backend running?");
   } finally {
@@ -1594,6 +1758,20 @@ async function setTeachLanguage(next: TeachLanguage): Promise<void> {
     if (body.user) {
       storeAuth({ user: body.user });
       currentAuth = { user: body.user };
+      // Reconnect so the chat socket authenticates with the NEW session cookie.
+      //
+      // The socket decodes the token once, at handshake, and keeps
+      // `socket.data.user` for its whole life — so a socket opened in English
+      // answers in English no matter how many times the preference is saved. The
+      // owl's own phrases changed and the toggle looked half-broken, which is
+      // exactly the symptom the `stopOwlSpeech` above was added for.
+      //
+      // Cheap: one reconnect on a deliberate user action, and it is the only way
+      // the server ever sees the new language.
+      if (socket?.connected) {
+        disconnectSocket();
+        connectSocket();
+      }
     }
   } catch (error) {
     teachLanguage = next === "hi" ? "en" : "hi";
@@ -1853,6 +2031,11 @@ async function boot(): Promise<void> {
     // student out because their laptop briefly lost wifi — the first real request
     // will fail visibly if it matters.
   }
+
+  // Consent is confirmed after the session is known good, so a student who has
+  // already agreed is not made to re-read the notice on every reload, and one
+  // who has not is not let into the app.
+  await ensureConsent();
 }
 
 void boot();

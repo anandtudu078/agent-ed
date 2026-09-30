@@ -18,6 +18,8 @@
 
 import { chromium } from "playwright";
 
+import { acceptConsent } from "./test-helpers.mjs";
+
 const FRONTEND = "http://localhost:5173";
 const USER = `beat${Date.now().toString(36).slice(-5)}`;
 const PASS = "beat-pass-123";
@@ -152,7 +154,8 @@ try {
   await page.locator("#username-input").fill(USER);
   await page.locator("#password-input").fill(PASS);
   await page.locator("#auth-submit").click();
-  await page.locator("#app-view").waitFor({ state: "visible" });
+  // Registration no longer lands in the app: the consent notice comes first.
+  await acceptConsent(page);
   await page.locator("#status-text").filter({ hasText: "Online" }).waitFor();
   check("registered and connected", true, `user=${USER}`);
   await page.waitForTimeout(400);
@@ -517,10 +520,20 @@ try {
     Boolean(askPair),
     `labels=${labels.join(" | ") || "none"}`,
   );
+  // Scoped to the beat that IS the question, which is what this check is about.
+  //
+  // It used to assert that no board label anywhere in the lesson was a warning,
+  // which is a different and much stronger claim — and a wrong one: a lesson may
+  // legitimately contain a cautionary beat that deserves a hazard triangle. It
+  // passed only while the later beats were never played; once course enrolment
+  // started working (it silently failed without a session cookie) more of the
+  // lesson ran, and a genuinely cautionary beat tripped an assertion about
+  // questions.
+  const questionBeat = pairs.find((p) => /wrong first/i.test(p.beat));
   check(
-    "no question beat shows a warning sign",
-    !pairs.some((p) => /warning/i.test(p.label)),
-    labels.join(" | "),
+    "the question beat itself does not show a warning sign",
+    questionBeat !== undefined && !/warning/i.test(questionBeat.label),
+    questionBeat ? `label="${questionBeat.label}"` : "closing question beat not captured",
   );
 
   // A real sketch must actually be an <svg> on the board, not just a title.

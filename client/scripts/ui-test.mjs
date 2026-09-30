@@ -2,6 +2,8 @@
 // Run: node client/scripts/ui-test.mjs
 import { chromium } from "playwright";
 
+import { acceptConsent } from "./test-helpers.mjs";
+
 const FRONTEND = "http://localhost:5173";
 const USER = `uitest${Date.now().toString(36).slice(-5)}`;
 const PASS = "uitest-pass-123";
@@ -34,7 +36,61 @@ try {
   await page.locator("#username-input").fill(USER);
   await page.locator("#password-input").fill(PASS);
   await page.locator("#auth-submit").click();
-  await page.locator("#app-view").waitFor({ state: "visible" });
+
+  // 2b. The consent step. Registration does NOT land in the app — the notice
+  //     comes first, and the server refuses AI calls until it is answered. These
+  //     checks are the UI half; the rules themselves are covered by
+  //     `npm run test:offline`, and the enforcement by the security suite.
+  await page.locator("#consent-view").waitFor({ state: "visible", timeout: 20000 });
+  check(
+    "registration lands on the consent notice, not the chat",
+    (await page.locator("#consent-view").isVisible()) &&
+      !(await page.locator("#app-view").isVisible()),
+  );
+  // The disclosure has to actually say something. An empty list renders as an
+  // empty box, which looks like a rendering bug rather than a notice.
+  const disclosureLines = await page.locator("#consent-disclosure li").count();
+  check(
+    "the notice lists what is collected and who receives it",
+    disclosureLines >= 4,
+    `${disclosureLines} lines`,
+  );
+  const disclosureText = (await page.locator("#consent-disclosure").textContent()) ?? "";
+  check(
+    "the notice names the AI provider that receives messages",
+    /Groq|Gemini/.test(disclosureText),
+  );
+
+  // The guardian block must stay hidden until an under-18 band is chosen,
+  // otherwise a student under 13 could submit without an adult noticing.
+  check(
+    "the guardian block is hidden before an age is chosen",
+    await page.locator("#consent-guardian").isHidden(),
+  );
+  await page.locator('#consent-view input[name="consent-age"][value="13-17"]').check();
+  check(
+    "choosing 13-17 reveals the guardian block",
+    await page.locator("#consent-guardian").isVisible(),
+  );
+  await page.locator('#consent-view input[name="consent-age"][value="18-plus"]').check();
+  check(
+    "choosing 18+ hides the guardian block again",
+    await page.locator("#consent-guardian").isHidden(),
+  );
+
+  // Submitting without ticking the box must be refused by the server, not
+  // silently accepted — this is the check a `if (checkbox.checked)` omission
+  // would fail.
+  await page.locator("#consent-submit").click();
+  await page.locator("#consent-error").filter({ hasText: /\S/ }).waitFor({ timeout: 15000 });
+  check(
+    "consent is refused until the notice is actually accepted",
+    (await page.locator("#app-view").isHidden()) &&
+      ((await page.locator("#consent-error").textContent()) ?? "").length > 0,
+    ((await page.locator("#consent-error").textContent()) ?? "").slice(0, 50),
+  );
+
+  await acceptConsent(page);
   check("registration signs in and shows chat", true, `user=${USER}`);
 
   // 3. Socket connects (status pill turns Online)
@@ -425,11 +481,31 @@ try {
     (await page.locator("#owl-stage .owl-message").textContent()) ?? ""
   ).trim();
   check("owl switches its own phrases to Hindi", /[ऀ-ॿ]/.test(hindiLine), hindiLine.slice(0, 40));
+
   // It must survive a reload — that is the whole point of storing it.
   // Assert the stored preference, not the owl's line: the session history
   // restored on boot holds replies from *before* the switch, and we do not
   // retroactively translate them, so the owl may legitimately be showing an
   // older English message.
+  //
+  // Wait for the preference to actually be persisted before reloading. The
+  // 700ms above only proves the owl re-rendered, which happens before the
+  // PATCH returns — reloading in that window discards the request and the
+  // assertion fails for a reason that has nothing to do with persistence. That
+  // is exactly the fixed-sleep race this suite has already been bitten by twice.
+  await page
+    .waitForFunction(
+      () => {
+        try {
+          return JSON.parse(localStorage.getItem("agented:user") ?? "{}").language === "hi";
+        } catch {
+          return false;
+        }
+      },
+      null,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
   await page.reload();
   await page.locator("#app-view").waitFor({ state: "visible" });
   await page.waitForTimeout(1500);
@@ -586,7 +662,8 @@ try {
   await mobilePage.locator("#username-input").fill(`mob${Date.now().toString(36).slice(-5)}`);
   await mobilePage.locator("#password-input").fill("mobile-pass-123");
   await mobilePage.locator("#auth-submit").click();
-  await mobilePage.locator("#app-view").waitFor({ state: "visible" });
+  // Registration no longer lands in the app: the consent notice comes first.
+  await acceptConsent(mobilePage);
   await mobilePage.locator("#owl-stage .owl-compact").waitFor({ state: "visible" });
   check(
     "mobile starts collapsed to compact bar",

@@ -247,6 +247,108 @@
           </p>
         </form>
 
+        <!--
+          Consent step.
+
+          Shown after sign-up (and on any later boot where consent is missing or
+          stale). Not dismissible: the AI features are refused server-side until
+          this is completed, so letting it be skipped would only produce a
+          student who signs in successfully and then cannot ask anything.
+        -->
+        <form
+          id="consent-view"
+          class="animate-fadeup mt-4 hidden space-y-4 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur"
+          aria-labelledby="consent-title"
+        >
+          <div>
+            <h2 id="consent-title" class="text-lg font-semibold">
+              Before you start
+            </h2>
+            <p class="mt-1 text-xs text-slate-400">
+              Your tutor sends your questions to an AI provider to write each
+              reply. Here is exactly what that involves.
+            </p>
+          </div>
+
+          <ul id="consent-disclosure" class="space-y-1.5"></ul>
+
+          <fieldset class="space-y-1.5">
+            <legend class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              How old are you?
+            </legend>
+            <label class="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-700/70 bg-slate-800/40 px-3 py-2.5 text-sm transition hover:border-indigo-500/50">
+              <input type="radio" name="consent-age" value="under-13" class="accent-indigo-500" />
+              <span>Under 13</span>
+            </label>
+            <label class="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-700/70 bg-slate-800/40 px-3 py-2.5 text-sm transition hover:border-indigo-500/50">
+              <input type="radio" name="consent-age" value="13-17" class="accent-indigo-500" />
+              <span>13 to 17</span>
+            </label>
+            <label class="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-700/70 bg-slate-800/40 px-3 py-2.5 text-sm transition hover:border-indigo-500/50">
+              <input type="radio" name="consent-age" value="18-plus" class="accent-indigo-500" />
+              <span>18 or older</span>
+            </label>
+          </fieldset>
+
+          <!--
+            Only revealed once an under-18 band is chosen. Hidden rather than
+            disabled so it cannot be tabbed into before it makes sense.
+          -->
+          <div id="consent-guardian" class="hidden space-y-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5">
+            <p class="text-xs leading-relaxed text-amber-200/90">
+              A parent or guardian has to agree too. Their name is recorded
+              alongside this account.
+            </p>
+            <label for="consent-guardian-name" class="sr-only">Parent or guardian's name</label>
+            <input
+              id="consent-guardian-name"
+              type="text"
+              maxlength="64"
+              placeholder="Parent or guardian's name"
+              class="w-full rounded-xl border border-slate-700/80 bg-slate-800/60 px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+            />
+            <label class="flex cursor-pointer items-start gap-2.5 text-xs text-amber-100/90">
+              <input id="consent-guardian-check" type="checkbox" class="mt-0.5 accent-amber-500" />
+              <span>A parent or guardian has read this and agrees.</span>
+            </label>
+          </div>
+
+          <label class="flex cursor-pointer items-start gap-2.5 text-xs text-slate-300">
+            <input id="consent-terms" type="checkbox" class="mt-0.5 accent-indigo-500" />
+            <span>
+              I have read the privacy notice and agree to my questions being sent
+              to an AI provider.
+            </span>
+          </label>
+
+          <p id="consent-error" role="alert" class="min-h-[1.1rem] text-sm text-rose-400"></p>
+
+          <button
+            id="consent-submit"
+            type="submit"
+            class="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98]"
+          >
+            Continue
+          </button>
+
+          <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+            <button
+              id="consent-export"
+              type="button"
+              class="text-xs font-medium text-slate-400 underline-offset-2 transition hover:text-slate-200 hover:underline"
+            >
+              See what we already hold
+            </button>
+            <button
+              id="consent-signout"
+              type="button"
+              class="text-xs font-medium text-slate-400 underline-offset-2 transition hover:text-slate-200 hover:underline"
+            >
+              Sign out
+            </button>
+          </div>
+        </form>
+
         <p class="mt-6 text-center text-xs text-slate-600">
           Learn by curiosity — one guiding question at a time.
         </p>

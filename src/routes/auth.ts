@@ -20,6 +20,14 @@ import {
   rotateRefreshToken,
 } from "../models/RefreshToken";
 import { authRateLimit } from "../middleware/rateLimit";
+import {
+  buildConsent,
+  canUseAiFeatures,
+  CONSENT_POLICY_VERSION,
+  emptyConsent,
+  PRIVACY_DISCLOSURE,
+  type AgeBand,
+} from "../services/consent";
 
 const router = Router();
 
@@ -177,12 +185,15 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
  * this endpoint is the only way to tell "signed in" from "holding a cached name
  * for someone whose session expired", so the boot path calls it.
  *
- * Returns the user and nothing else — no token, because there is nothing to
- * hand back.
+ * Returns only the display fields. The decoded token also carries `iat`/`exp`,
+ * and echoing those would write JWT claims into `localStorage` on every boot —
+ * harmless today, but it is the kind of thing that quietly becomes a credential
+ * the day someone starts reading that object.
  */
 router.get("/me", requireAuth, (request, response) => {
-  const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
-  response.json({ user: authUser });
+  const { id, username, displayName, language } =
+    (request as AuthenticatedRequest).authUser as AuthUser;
+  response.json({ user: { id, username, displayName, language } });
 });
 
 /**
@@ -325,6 +336,116 @@ router.post("/logout", requireAuth, async (request, response) => {
     clearAuthCookies(response);
     response.status(500).json({ error: "Unable to sign out right now." });
   }
+});
+
+/**
+ * GET /api/auth/consent
+ *
+ * What consent state is this account in? The client asks on every boot so a
+ * student whose consent is missing (or stale — see CONSENT_POLICY_VERSION) is
+ * shown the notice rather than being quietly allowed through.
+ */
+router.get("/consent", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    const user = await User.findById(authUser.id).lean();
+    if (!user) {
+      response.status(404).json({ error: "User not found." });
+      return;
+    }
+    response.json({
+      policyVersion: CONSENT_POLICY_VERSION,
+      ageBand: user.ageBand ?? null,
+      consent: user.consent ?? emptyConsent(),
+      canUseAi: canUseAiFeatures(user.ageBand ?? null, user.consent),
+    });
+  } catch (error) {
+    console.error("Consent status read failed.", error);
+    response.status(500).json({ error: "Unable to read consent status." });
+  }
+});
+
+/**
+ * POST /api/auth/consent
+ * Body: { ageBand, acceptedTerms, guardianName?, guardianAccepted? }
+ *
+ * Records who agreed, to which version, and when. The rules are in
+ * `services/consent.ts` and are the same ones the client hints at — this is the
+ * copy that actually decides.
+ */
+router.post("/consent", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    const outcome = buildConsent({
+      ageBand: body.ageBand,
+      acceptedTerms: body.acceptedTerms,
+      guardianName: body.guardianName,
+      guardianAccepted: body.guardianAccepted,
+    });
+
+    if (!outcome.ok || !outcome.record) {
+      response.status(400).json({
+        error: outcome.error ?? "Consent could not be recorded.",
+        needsGuardian: outcome.needsGuardian ?? false,
+      });
+      return;
+    }
+
+    const record = outcome.record;
+    await User.updateOne(
+      { _id: authUser.id },
+      { $set: { ageBand: body.ageBand, consent: record } },
+    );
+
+    response.json({
+      ageBand: body.ageBand,
+      consent: record,
+      canUseAi: canUseAiFeatures(body.ageBand as AgeBand, record),
+    });
+  } catch (error) {
+    console.error("Consent recording failed.", error);
+    response.status(500).json({ error: "Unable to record consent." });
+  }
+});
+
+/**
+ * DELETE /api/auth/consent
+ *
+ * Withdrawal. Consent that cannot be taken back is not consent, and a student who
+ * revokes it has to stop being able to use the AI features immediately — so the
+ * record is cleared rather than flagged, and the AI routes refuse from then on.
+ * The account itself survives: a student who changes their mind about the notice
+ * should not lose their progress as a side effect, and deleting is a separate,
+ * explicit act.
+ */
+router.delete("/consent", requireAuth, async (request, response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    await User.updateOne(
+      { _id: authUser.id },
+      { $set: { consent: emptyConsent() } },
+    );
+    response.json({ consent: emptyConsent(), canUseAi: false });
+  } catch (error) {
+    console.error("Consent withdrawal failed.", error);
+    response.status(500).json({ error: "Unable to withdraw consent." });
+  }
+});
+
+/**
+ * GET /api/auth/consent/policy
+ *
+ * The notice itself. Served by the API rather than hard-coded in the client so
+ * there is exactly one copy, and so the version the student is shown is the same
+ * one that gets recorded against their consent.
+ */
+router.get("/consent/policy", (_request, response) => {
+  response.json({
+    version: CONSENT_POLICY_VERSION,
+    disclosure: PRIVACY_DISCLOSURE,
+  });
 });
 
 export default router;

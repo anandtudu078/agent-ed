@@ -1,4 +1,5 @@
 import { Document, Model, Schema, model } from "mongoose";
+import type { AgeBand, ConsentRecord } from "../services/consent";
 
 export interface UserDocument extends Document {
   username: string;
@@ -10,6 +11,17 @@ export interface UserDocument extends Document {
    * resets on a new browser isn't really a preference.
    */
   language: "en" | "hi";
+  /**
+   * Age band self-declared at registration. Null until the student answers,
+   * which is what makes the consent step reappear on the next sign-in instead of
+   * silently treating silence as consent.
+   */
+  ageBand: AgeBand | null;
+  /**
+   * Consent record. See `services/consent.ts` — the rules live there, not here,
+   * so they can be tested without a database.
+   */
+  consent: ConsentRecord;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,6 +43,28 @@ const userSchema = new Schema<UserDocument>(
       type: String,
       enum: ["en", "hi"],
       default: "en",
+    },
+    ageBand: {
+      type: String,
+      enum: ["under-13", "13-17", "18-plus"],
+      default: null,
+    },
+    consent: {
+      type: {
+        status: {
+          type: String,
+          enum: ["none", "student", "guardian"],
+          default: "none",
+        },
+        // The policy text the student (or guardian) actually agreed to. Consent
+        // to an unknown version of the policy is not consent.
+        version: { type: String, default: "" },
+        // Who agreed: for guardian consent this is the adult's name, recorded so
+        // a school or parent can point at a specific person later.
+        by: { type: String, default: "" },
+        at: { type: Date, default: null },
+      },
+      _id: false,
     },
   },
   { timestamps: true },

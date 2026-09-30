@@ -22,6 +22,18 @@ import {
   setAccessCookie,
   setRefreshCookie,
 } from "../src/middleware/auth";
+import {
+  AGE_BANDS,
+  buildConsent,
+  canUseAiFeatures,
+  CONSENT_POLICY_VERSION,
+  emptyConsent,
+  isAgeBand,
+  PRIVACY_DISCLOSURE,
+  requiresGuardian,
+  type AgeBand,
+  type ConsentRecord,
+} from "../src/services/consent";
 import type { Response } from "express";
 
 const results: Array<{ label: string; ok: boolean }> = [];
@@ -245,6 +257,166 @@ check(
 
 if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
 else process.env.NODE_ENV = originalNodeEnv;
+
+// ===========================================================================
+// 7. Consent
+// ===========================================================================
+//
+// The rule that matters: a student under 18 cannot cause their words to reach an
+// AI provider without an adult having agreed. Every assertion below is an attempt
+// to get past that, because a consent check only tested on the happy path is a
+// checkbox, not a control.
+
+const NOW = new Date("2026-02-01T00:00:00.000Z");
+const consentFor = (over: Partial<ConsentRecord> = {}): ConsentRecord => ({
+  status: "student",
+  version: CONSENT_POLICY_VERSION,
+  by: "Test Adult",
+  at: NOW,
+  ...over,
+});
+
+check("no consent means no AI features", !canUseAiFeatures("18-plus", emptyConsent()));
+check("a missing consent record is not consent", !canUseAiFeatures("18-plus", null));
+check("an unknown age band is not consent", !canUseAiFeatures("unknown" as AgeBand, consentFor()));
+check("a null age band is not consent", !canUseAiFeatures(null, consentFor()));
+
+// --- 1. Stale consent is not consent -------------------------------------
+// This is the reason the version is recorded at all.
+check(
+  "consent to an older policy version does not count",
+  !canUseAiFeatures("18-plus", consentFor({ version: "2025-01" })),
+);
+check("an empty policy version does not count", !canUseAiFeatures("18-plus", consentFor({ version: "" })));
+check("consent with no timestamp does not count", !canUseAiFeatures("18-plus", consentFor({ at: null })));
+
+// --- 2. Minors need an adult ---------------------------------------------
+check("under 13 requires a guardian", requiresGuardian("under-13"));
+check("13-17 requires a guardian", requiresGuardian("13-17"));
+check("18-plus does not require a guardian", !requiresGuardian("18-plus"));
+check("an unknown age is treated as needing one", requiresGuardian(null));
+
+for (const band of ["under-13", "13-17"] as const) {
+  check(
+    `a ${band} student's own agreement is not enough`,
+    !canUseAiFeatures(band, consentFor({ status: "student", by: "" })),
+  );
+  check(
+    `a ${band} student's own agreement is refused even with a name`,
+    !canUseAiFeatures(band, consentFor({ status: "student", by: "The Student" })),
+  );
+  check(
+    `a ${band} student is unblocked by a guardian's consent`,
+    canUseAiFeatures(band, consentFor({ status: "guardian", by: "Mrs Sharma" })),
+  );
+  check(
+    `a ${band} guardian consent with no name is refused`,
+    !canUseAiFeatures(band, consentFor({ status: "guardian", by: "" })),
+  );
+  // A whitespace-only name is truthy, so this is the check that catches a naive
+  // `if (by)`.
+  check(
+    `a ${band} guardian consent with a blank name is refused`,
+    !canUseAiFeatures(band, consentFor({ status: "guardian", by: "   " })),
+  );
+  check(
+    `a ${band} guardian consent with a one-character name is refused`,
+    !canUseAiFeatures(band, consentFor({ status: "guardian", by: "A" })),
+  );
+}
+
+check(
+  "an adult consenting for themselves is allowed with no guardian name",
+  canUseAiFeatures("18-plus", consentFor({ status: "student", by: "" })),
+);
+check(
+  "an adult with guardian consent is also allowed",
+  canUseAiFeatures("18-plus", consentFor({ status: "guardian", by: "A Parent" })),
+);
+
+// --- 3. Building a record -------------------------------------------------
+const adult = buildConsent({ ageBand: "18-plus", acceptedTerms: true, now: NOW });
+check("an adult can consent alone", adult.ok && adult.record?.status === "student");
+check("the record carries the current policy version", adult.record?.version === CONSENT_POLICY_VERSION);
+check("the record carries the timestamp given", adult.record?.at === NOW);
+
+const minorNoGuardian = buildConsent({ ageBand: "13-17", acceptedTerms: true, now: NOW });
+check("a minor cannot consent alone", !minorNoGuardian.ok);
+check("the refusal says a guardian is needed", minorNoGuardian.needsGuardian === true);
+check("a refused consent produces no record", minorNoGuardian.record === undefined);
+
+const minorBlankName = buildConsent({
+  ageBand: "under-13",
+  acceptedTerms: true,
+  guardianName: "  ",
+  guardianAccepted: true,
+  now: NOW,
+});
+check("a whitespace-only guardian name is refused", !minorBlankName.ok);
+
+const minorUnconfirmed = buildConsent({
+  ageBand: "under-13",
+  acceptedTerms: true,
+  guardianName: "Mrs Sharma",
+  guardianAccepted: false,
+  now: NOW,
+});
+check("a guardian's name without their confirmation is refused", !minorUnconfirmed.ok);
+
+const minorOk = buildConsent({
+  ageBand: "under-13",
+  acceptedTerms: true,
+  guardianName: "  Mrs Sharma  ",
+  guardianAccepted: true,
+  now: NOW,
+});
+check("a minor with a confirmed guardian is allowed", minorOk.ok);
+check("the guardian's name is trimmed", minorOk.record?.by === "Mrs Sharma", minorOk.record?.by);
+check("it is recorded as guardian consent", minorOk.record?.status === "guardian");
+
+// --- 4. Hostile input -----------------------------------------------------
+check("no age at all is refused", !buildConsent({ ageBand: "", acceptedTerms: true }).ok);
+check("an invented age band is refused", !buildConsent({ ageBand: "99", acceptedTerms: true }).ok);
+check("an age band of the wrong type is refused", !buildConsent({ ageBand: 18, acceptedTerms: true }).ok);
+// The string "false" is truthy — a check written as `if (acceptedTerms)` would
+// accept this and record a consent nobody gave.
+check("the string 'false' is not acceptance", !buildConsent({ ageBand: "18-plus", acceptedTerms: "false" }).ok);
+check("the number 1 is not acceptance", !buildConsent({ ageBand: "18-plus", acceptedTerms: 1 }).ok);
+check("undefined is not acceptance", !buildConsent({ ageBand: "18-plus", acceptedTerms: undefined }).ok);
+check("null is not acceptance", !buildConsent({ ageBand: "18-plus", acceptedTerms: null }).ok);
+const longName = buildConsent({
+  ageBand: "under-13",
+  acceptedTerms: true,
+  guardianName: "x".repeat(200),
+  guardianAccepted: true,
+  now: NOW,
+});
+check("an absurdly long guardian name is refused", !longName.ok);
+
+// --- 5. The disclosure itself --------------------------------------------
+check("the disclosure is not empty", PRIVACY_DISCLOSURE.length >= 4);
+// A notice that never names the third party is the exact thing that makes
+// privacy notices untrustworthy.
+check(
+  "the disclosure names the third party that receives messages",
+  PRIVACY_DISCLOSURE.some((line) => /AI provider/i.test(line)),
+);
+check(
+  "the disclosure says data leaves for a third party",
+  PRIVACY_DISCLOSURE.some((line) => /Groq|Gemini/.test(line)),
+);
+check(
+  "the disclosure mentions export and deletion",
+  PRIVACY_DISCLOSURE.some((line) => /export/i.test(line) && /delete/i.test(line)),
+);
+check("the policy version looks like a version", /^\d{4}-\d{2}$/.test(CONSENT_POLICY_VERSION));
+
+// --- 6. Age band validation ----------------------------------------------
+check("the three age bands are defined", AGE_BANDS.length === 3);
+for (const band of AGE_BANDS) check(`${band} is a valid band`, isAgeBand(band));
+check("null is not a band", !isAgeBand(null));
+check("undefined is not a band", !isAgeBand(undefined));
+check("an object is not a band", !isAgeBand({ ageBand: "under-13" }));
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
