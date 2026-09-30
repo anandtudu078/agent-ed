@@ -515,11 +515,41 @@ function connectSocket(): void {
 
   socket.on("connect_error", (error: Error) => {
     // The backend rejects the handshake when the token is missing/expired.
+    //
+    // Do NOT tear the session down on this alone. `signOut()` clears the auth
+    // cookies, and a socket handshake can be refused for reasons that have
+    // nothing to do with whether the session is alive — a CORS or proxy hiccup,
+    // a dropped connection during a reconnect, the 401 racing a token refresh.
+    // Signing out on those turns a recoverable blip into a dead session, and the
+    // student sees "Authentication required" on whatever screen they are next
+    // (most painfully, mid-consent).
+    //
+    // So confirm against the REST API first — `authedFetch` renews the token on
+    // the way — and only sign out when the session really is gone.
     if (
       error.message.includes("Authentication required") ||
       error.message.includes("Session expired")
     ) {
-      void signOut("Your session expired. Please sign in again.");
+      void (async () => {
+        try {
+          const res = await authedFetch("/api/auth/me");
+          if (res.ok) {
+            // The session is fine; the socket is the problem. Leave the student
+            // signed in and let the automatic reconnect try again.
+            setConnectionStatus("disconnected");
+            appendMessage(
+              "system",
+              "Lost the live connection. Retrying — your work is safe.",
+            );
+            return;
+          }
+        } catch {
+          // Genuinely unreachable: keep the session, same reasoning.
+          setConnectionStatus("disconnected");
+          return;
+        }
+        await signOut("Your session expired. Please sign in again.");
+      })();
       return;
     }
     setConnectionStatus("error");
@@ -908,7 +938,20 @@ consentExportEl.addEventListener("click", () => {
 async function ensureConsent(): Promise<void> {
   try {
     const res = await authedFetch("/api/auth/consent");
-    const body = (await res.json()) as { canUseAi?: boolean };
+    const body = (await res.json()) as { canUseAi?: boolean; error?: string };
+
+    // A 401 is "you are not signed in", NOT "you have not agreed". `authedFetch`
+    // RETURNS a 401 rather than throwing, so without this branch the code fell
+    // straight through to `showConsentStep()` and rendered the consent form for
+    // somebody with no session at all. They fill it in, press continue, and the
+    // POST is rejected with a bare "Authentication required." — a form that is
+    // impossible to submit, with no explanation. Sign out properly instead, so
+    // they get the sign-in screen they can actually act on.
+    if (res.status === 401) {
+      await signOut();
+      return;
+    }
+
     if (body.canUseAi === true) {
       consentGranted = true;
       hideConsentStep();

@@ -79,13 +79,31 @@ const SAME_SITE = "lax" as const;
 /**
  * Whether cookies may be marked `Secure`.
  *
- * Only over HTTPS. Setting it unconditionally would make the cookie silently
- * vanish on `http://localhost:5173`, which is exactly where local development —
- * and every judge's first run — happens, and the failure looks like "login is
- * broken" rather than a misconfigured security header.
+ * Decided from the ACTUAL request, not from `NODE_ENV`. This used to be
+ * `NODE_ENV === "production"`, and that was a trap: run the dev server with
+ * `NODE_ENV=production` — one env var, and entirely reasonable when you are
+ * "testing production mode" — and every cookie came back `Secure`. Over
+ * `http://localhost:5173` the browser then *silently refuses to store them*.
+ *
+ * The symptom is genuinely nasty and cost real debugging time: sign-in returns
+ * 200, the app opens, the student taps through the consent form, and then
+ * `POST /api/auth/consent` fails with a bare "Authentication required." — because
+ * the session they never actually had is not in the cookie jar. Every step looks
+ * like it worked.
+ *
+ * Asking the connection instead cannot be misconfigured: if the request did not
+ * arrive over HTTPS, a `Secure` cookie is guaranteed useless, so never send one.
  */
-function secureCookies(): boolean {
-  return process.env.NODE_ENV?.trim().toLowerCase() === "production";
+function secureCookies(request: Request): boolean {
+  // Behind a proxy (Render, Vercel) TLS is terminated before this app sees the
+  // socket, so the connection itself looks plain. The forwarded scheme is the
+  // only reliable signal — and `app.set("trust proxy", 1)` is what makes reading
+  // it safe, since only one hop is believed.
+  const forwarded = request.headers["x-forwarded-proto"];
+  const viaProxy =
+    typeof forwarded === "string" ? forwarded.split(",")[0].trim().toLowerCase() : "";
+  if (viaProxy) return viaProxy === "https";
+  return Boolean((request.socket as { encrypted?: boolean }).encrypted);
 }
 
 /**
@@ -96,7 +114,7 @@ function secureCookies(): boolean {
  * across `/api/auth`, `/api/dashboard` and `/api/assessment`. A narrower path
  * would silently fail to authenticate on two of them.
  */
-function baseOptions(maxAgeMs: number): {
+function baseOptions(request: Request, maxAgeMs: number): {
   httpOnly: true;
   sameSite: typeof SAME_SITE;
   secure: boolean;
@@ -106,20 +124,20 @@ function baseOptions(maxAgeMs: number): {
   return {
     httpOnly: true,
     sameSite: SAME_SITE,
-    secure: secureCookies(),
+    secure: secureCookies(request),
     path: "/",
     maxAge: maxAgeMs,
   };
 }
 
 /** 30 minutes, matching the access token's own TTL. */
-export function setAccessCookie(response: Response, token: string): void {
-  response.cookie(ACCESS_COOKIE, token, baseOptions(30 * 60 * 1000));
+export function setAccessCookie(request: Request, response: Response, token: string): void {
+  response.cookie(ACCESS_COOKIE, token, baseOptions(request, 30 * 60 * 1000));
 }
 
 /** 30 days, matching the refresh token's own TTL. */
-export function setRefreshCookie(response: Response, token: string): void {
-  response.cookie(REFRESH_COOKIE, token, baseOptions(30 * 24 * 60 * 60 * 1000));
+export function setRefreshCookie(request: Request, response: Response, token: string): void {
+  response.cookie(REFRESH_COOKIE, token, baseOptions(request, 30 * 24 * 60 * 60 * 1000));
 }
 
 /**
@@ -129,9 +147,10 @@ export function setRefreshCookie(response: Response, token: string): void {
  * original — a mismatch on `path` alone is enough, and the result is a "signed
  * out" user who is still authenticated.
  */
-export function clearAuthCookies(response: Response): void {
+export function clearAuthCookies(request: Request, response: Response): void {
   for (const name of [ACCESS_COOKIE, REFRESH_COOKIE]) {
-    response.clearCookie(name, { ...baseOptions(0), maxAge: undefined });
+    // `secure` must match how the cookie was set, or the browser keeps it.
+    response.clearCookie(name, { ...baseOptions(request, 0), maxAge: undefined });
   }
 }
 

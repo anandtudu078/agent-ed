@@ -100,8 +100,8 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
     // body. It is still returned in the body as well, because the security suite
     // and any scripted client authenticate with a bearer header and have no
     // cookie jar; the browser path simply never reads it.
-    setAccessCookie(response, token);
-    setRefreshCookie(response, refreshToken);
+    setAccessCookie(request, response, token);
+    setRefreshCookie(request, response, refreshToken);
 
     response.status(201).json({
       token,
@@ -157,8 +157,8 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
     });
     const refreshToken = await issueRefreshToken(String(user._id));
 
-    setAccessCookie(response, token);
-    setRefreshCookie(response, refreshToken);
+    setAccessCookie(request, response, token);
+    setRefreshCookie(request, response, refreshToken);
 
     response.json({
       token,
@@ -233,7 +233,7 @@ router.patch("/language", requireAuth, async (request, response) => {
     // the next reply would come back in the old language until the access token
     // expired — the exact staleness this re-issue exists to prevent.
     const nextToken = signAuthToken(identity);
-    setAccessCookie(response, nextToken);
+    setAccessCookie(request, response, nextToken);
     response.json({ token: nextToken, user: identity });
   } catch (error) {
     console.error("Language change failed.", error);
@@ -296,8 +296,8 @@ router.post("/refresh", async (request, response) => {
     // Rotate both cookies. The refresh cookie is the credential that mattered
     // here — leaving the old one in place after a successful rotation would
     // defeat the point of rotating.
-    setAccessCookie(response, nextAccess);
-    setRefreshCookie(response, outcome.nextToken);
+    setAccessCookie(request, response, nextAccess);
+    setRefreshCookie(request, response, outcome.nextToken);
 
     response.json({
       token: nextAccess,
@@ -329,11 +329,11 @@ router.post("/logout", requireAuth, async (request, response) => {
     // Always clear, including on the error path below — a student who clicked
     // sign out must end up signed out locally even if the revoke call failed,
     // or they are left with a live cookie and no way to remove it.
-    clearAuthCookies(response);
+    clearAuthCookies(request, response);
     response.json({ signedOut: true });
   } catch (error) {
     console.error("Logout failed.", error);
-    clearAuthCookies(response);
+    clearAuthCookies(request, response);
     response.status(500).json({ error: "Unable to sign out right now." });
   }
 });
