@@ -10,6 +10,7 @@
 // space; the chevron toggles the full classroom display.
 
 import { renderVisual, visualStepCount, type VisualSpec } from "./diagrams";
+import { renderSketch, type SketchId } from "./sketches";
 
 export type MascotStatus = "idle" | "thinking" | "speaking";
 
@@ -397,6 +398,8 @@ export function createMascot(
   react: (outcome: "correct" | "close" | "wrong" | "great") => boolean;
   /** Show a topic diagram on the lesson board. */
   setVisual: (spec: VisualSpec | null) => void;
+  /** Show the picture for the beat being spoken, or null for none. */
+  setSketch: (id: SketchId | null) => void;
   /** Move the highlight, so the board tracks what the owl is saying. */
   setVisualStep: (index: number) => void;
   /** How many highlightable elements the current diagram has. */
@@ -512,6 +515,15 @@ export function createMascot(
   let revealTimer: number | null = null;
   /** Topic diagram for the board, when the tutor is explaining one. */
   let topicVisual: VisualSpec | null = null;
+  /**
+   * A picture matching the beat being spoken, when there is a good one.
+   *
+   * Takes priority over the diagram: a beat saying "teach a child to spot a cat"
+   * should show the cat, not the six-step diagram chosen for the whole reply.
+   * Null falls back to the diagram, which is the right default for a beat with
+   * no concrete thing to point at.
+   */
+  let activeSketch: SketchId | null = null;
   /** Which element of the diagram the owl is currently on. */
   let visualStep = -1;
   /** Language for the owl's own phrases. */
@@ -599,9 +611,11 @@ export function createMascot(
     // A real topic diagram takes the board whenever the tutor is explaining
     // one — it's the whole point of the visual teacher. The state sketches
     // are the fallback when there's nothing specific to show.
+    // A beat sketch wins over both: it is the picture for *this* sentence.
+    const sketch = renderSketch(activeSketch);
     const diagram = topicVisual ? renderVisual(topicVisual, visualStep) : "";
-    boardArt.innerHTML = diagram || boardSvg(boardKind);
-    boardArt.classList.toggle("owl-board-visual", Boolean(diagram));
+    boardArt.innerHTML = sketch || diagram || boardSvg(boardKind);
+    boardArt.classList.toggle("owl-board-visual", Boolean(sketch || diagram));
     display.classList.toggle("owl-talking", talking);
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
@@ -696,6 +710,7 @@ export function createMascot(
     // The old diagram belonged to the previous topic; leaving it up would show
     // a picture of something the student is no longer asking about.
     topicVisual = null;
+    activeSketch = null;
     visualStep = -1;
     stopReveal();
     render();
@@ -709,8 +724,25 @@ export function createMascot(
 
   /** Put a topic diagram on the board, or take it away. */
   function setVisual(spec: VisualSpec | null): void {
+    // A new diagram means a new explanation, so any picture left over from the
+    // previous beat belongs to a sentence the student can no longer see.
+    activeSketch = null;
     topicVisual = spec;
     visualStep = -1;
+    render();
+  }
+
+  /**
+   * Show the picture for the beat currently being spoken.
+   *
+   * Separate from setVisual on purpose: the diagram is the skeleton of the whole
+   * explanation and outlives any one sentence, while a sketch is borrowed for a
+   * single beat. Passing null returns the board to the diagram without
+   * disturbing it.
+   */
+  function setSketch(id: SketchId | null): void {
+    if (id === activeSketch) return;
+    activeSketch = id;
     render();
   }
 
@@ -811,6 +843,8 @@ export function createMascot(
     react,
     setVisual,
     setVisualStep,
+    /** Show the picture for the beat being spoken, or null for none. */
+    setSketch,
     visualStepCount: () => visualStepCount(topicVisual),
     setLanguage,
   };

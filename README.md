@@ -221,7 +221,21 @@ most likely things to need changing.
   always says the right thing.
 - **No true lip-sync.** The beak flaps on a timer — `SpeechSynthesis` gives no
   reliable boundary events. Word-accurate would mean abandoning it for
-  prerecorded audio, which would cost Hindi support.
+  prerecorded audio, which would cost Hindi support. What the owl does instead is
+  *segment* a reply into short beats (`client/src/components/beats.ts`) and play
+  them in sequence with a gap between each, so the delivery has rhythm even
+  though the mouth shapes do not match the phonemes.
+- **Beat segmentation is prose, not structure.** Beats are cut on sentence and
+  clause boundaries with a word cap, so a reply the tutor wrote as a numbered
+  list is split sensibly only because the lines happen to break. A single
+  40-word sentence with no clause punctuation is broken at the least-bad comma,
+  and no beat is ever re-ordered to match the diagram.
+- **Beat sketches are a keyword table, not a picture model.** Sixteen hand-drawn
+  SVGs are picked by matching nouns in the beat (`client/src/components/sketches.ts`).
+  A beat naming two concrete things gets whichever the cue table lists first, so
+  "teach a child to recognise a cat" shows the cat — the thing being
+  recognised — rather than the child. A beat naming nothing concrete gets no
+  picture at all, and the board falls back to the topic diagram.
 - **Memory is 12 messages.** Enough for a thread, thin for a session.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.

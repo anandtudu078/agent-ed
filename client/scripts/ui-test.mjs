@@ -142,10 +142,18 @@ try {
   );
   const teachingBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
   const teachingPill = (await page.locator("#owl-stage .owl-state-pill").textContent())?.trim();
+  check("owl switches to its teaching pose", teachingPill === "Teaching", teachingPill ?? "");
+  // The board has three layers, in priority order: a beat sketch (a picture
+  // matching the sentence being spoken), the topic diagram, then the generic
+  // state art. During beat playback the top layer is legitimately a sketch, so
+  // asserting one specific piece of art here would pin the test to whichever
+  // layer happens to win. What matters is that it is never the idle/quiz board.
   check(
-    "owl switches to teaching pose with step diagram",
-    teachingBoard.includes("step by step") && teachingPill === "Teaching",
+    "the board is teaching something, not the idle question mark",
+    !teachingBoard.includes("Ready for your question"),
+    teachingBoard.includes("step by step") ? "generic step art" : "diagram or beat sketch",
   );
+
   check(
     "owl is animating as though speaking while it delivers a line",
     await page.locator("#owl-stage .owl-display.owl-talking").isVisible().catch(() => false),
@@ -154,6 +162,25 @@ try {
     "owl has a moving beak to lip-sync with",
     (await page.locator("#owl-stage .owl-beak").count()) === 1,
   );
+
+  // The generic step-by-step art must still appear when no beat sketch or topic
+  // diagram claims the board. Forced through the no-beats path, which never sets
+  // a sketch, so this keeps the original assertion meaningful instead of letting
+  // the sketch layer quietly retire it. Placed AFTER the speaking/beak checks
+  // because it deliberately stops playback, and those two assert on the owl
+  // mid-utterance.
+  await page.evaluate(() => {
+    window.__agentedTest.forceSingleUtterance(true);
+    window.__agentedTest.setVisual(null);
+    window.__agentedTest.simulateReply("Let us work through this one step at a time.");
+  });
+  await page.waitForTimeout(600);
+  const plainBoard = await page.locator("#owl-stage .owl-board-art svg").innerHTML();
+  check(
+    "with no sketch or diagram the board shows the step-by-step art",
+    plainBoard.includes("step by step"),
+  );
+  await page.evaluate(() => window.__agentedTest.forceSingleUtterance(false));
 
   // 7b-2. Teach mode: the owl's own toggle switches the tutor from asking to
   // explaining, and the new lesson board reflects that.
@@ -344,9 +371,28 @@ try {
     "language toggle shows Hindi after reload",
     (await langBtn.getAttribute("aria-pressed")) === "true",
   );
-  // Put it back so the remaining checks run in the default language.
+  // Put it back so the remaining checks run in the default language. Wait for
+  // the *persisted* value rather than a fixed delay: the PATCH is async, and the
+  // next section opens a fresh page. Booting that page while the server still
+  // says "hi" makes the owl correctly refuse to read Devanagari aloud, so the
+  // speech check below fails for a reason that has nothing to do with speech.
   await langBtn.click();
-  await page.waitForTimeout(700);
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem("agented:user");
+      try {
+        return (JSON.parse(raw ?? "{}").language ?? "en") === "en";
+      } catch {
+        return false;
+      }
+    },
+    null,
+    { timeout: 10000 },
+  );
+  check(
+    "the owl is back to English before the voice checks",
+    (await langBtn.getAttribute("aria-pressed")) === "false",
+  );
 
   // 7c. Voice mode TTS: run a second page (same session) with speechSynthesis
   // stubbed, then verify the owl TALKS — speaks the guidance and stops speech
@@ -403,11 +449,14 @@ try {
   await voicePage.evaluate(() => {
     window.__agentedTest.speakOwlMessage("Hoo! Let us think about functions step by step.");
   });
-  await voicePage.waitForFunction(() => window.__ttsCalls.speak.length > 0, { timeout: 5000 });
+  // NB: waitForFunction's second argument is `arg`, not options — passing
+  // { timeout } there is silently ignored and the 30s default applies. The
+  // options object has to be the third argument.
+  await voicePage.waitForFunction(() => window.__ttsCalls.speak.length > 0, null, { timeout: 8000 });
   const spoken = await voicePage.evaluate(() => window.__ttsCalls.speak.join(" | "));
   check("owl speaks guidance aloud in voice mode", spoken.includes("Hoo! Let us think"), spoken.slice(0, 80));
   await voicePage.locator("#voice-toggle").click();
-  await voicePage.waitForFunction(() => window.__ttsCalls.cancel >= 1, { timeout: 5000 });
+  await voicePage.waitForFunction(() => window.__ttsCalls.cancel >= 1, null, { timeout: 8000 });
   check("turning voice mode off stops the owl's speech", await voicePage.evaluate(() => window.__ttsCalls.cancel >= 1));
   await voicePage.close();
 
