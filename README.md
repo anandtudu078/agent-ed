@@ -73,7 +73,7 @@ work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-430 checks across thirteen suites. Start here.
+460 checks across fourteen suites. Start here.
 
 ```bash
 npm test              # runs every suite that needs no browser (10 suites, ~40s)
@@ -90,6 +90,7 @@ Or individually:
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
+| `npm run test:offline` | 30 | The offline AI gate — mostly an attack on the production refusal |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
@@ -137,8 +138,23 @@ sticky mood left behind by beat playback, a language switch that appeared to do
 nothing, a reaction talked over by a stale explanation. None were reachable from
 a pure logic test, which is the reason the slow job exists at all.
 
-CI uses no AI provider keys. The UI suite is written to tolerate a tutor reply
-failing, so a green run does not depend on a third party being up.
+CI uses no AI provider keys. The browser suites are made possible by a
+deterministic stand-in for the assessment endpoints
+(`src/services/offlineAi.ts`), which answers on the **server** rather than in the
+browser — so the whole pipeline runs for real: question → grade → `Progress` and
+`Session` writes → dashboard render. A browser-side stub would have painted a
+result panel while writing none of that, forcing the review-card and weak-point
+checks to be skipped.
+
+The stand-in is gated behind `ALLOW_OFFLINE_AI=1` and **refuses outright when
+`NODE_ENV=production`**. That guard is the entire safety story: a deploy with a
+missing key would otherwise show real students a fabricated score and invented
+feedback, which is strictly worse than the honest `502` the routes return today.
+`npm run test:offline` exists mostly to attack that guard.
+
+Its score is deliberately set below `REVIEW_PASS_SCORE`, so an offline run still
+records a weak point and a due review card. A higher score would take the happy
+path through a pipeline that would otherwise never execute in CI.
 
 ---
 

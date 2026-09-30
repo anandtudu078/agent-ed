@@ -84,6 +84,13 @@ jobs:
       # to agree, which is the only property that matters here.
       JWT_SECRET: ci-only-not-a-real-secret-value
       PORT: "3000"
+      # Deterministic stand-in for the assessment endpoints, which otherwise call
+      # Groq and 502 with no key — killing the UI suite at its first question and
+      # skipping beat playback with it. It answers on the SERVER, so the whole
+      # pipeline (question -> grade -> Progress/Session writes -> dashboard) still
+      # runs for real instead of being stubbed in the browser. Refused outright
+      # when NODE_ENV=production; see src/services/offlineAi.ts.
+      ALLOW_OFFLINE_AI: "1"
 
     steps:
       - uses: actions/checkout@v4
