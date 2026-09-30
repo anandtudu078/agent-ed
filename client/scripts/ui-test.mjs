@@ -64,35 +64,64 @@ try {
   await page.evaluate(() => {
     const states = [];
     const boards = [];
+    const classes = [];
+    const sends = [];
     window.__owlStates = states;
     window.__owlBoards = boards;
-    const pill = document.querySelector("#owl-stage .owl-state-pill");
-    if (pill) {
-      states.push(pill.textContent?.trim() ?? "");
-      new MutationObserver(() => states.push(pill.textContent?.trim() ?? "")).observe(pill, {
-        childList: true,
-        characterData: true,
-        subtree: true,
-      });
-    }
-    const board = document.querySelector("#owl-stage .owl-board-art");
-    if (board) {
-      boards.push(board.textContent ?? "");
-      new MutationObserver(() => boards.push(board.textContent ?? "")).observe(board, {
-        childList: true,
-        characterData: true,
-        subtree: true,
-      });
-    }
+    window.__owlClasses = classes;
+    window.__sendStates = sends;
+
+    const record = (sink, read) => {
+      const el = document.querySelector(read.sel);
+      if (!el) return;
+      sink.push(read.get(el));
+      new MutationObserver(() => sink.push(read.get(el))).observe(el, read.observe);
+    };
+
+    record(states, {
+      sel: "#owl-stage .owl-state-pill",
+      get: (el) => el.textContent?.trim() ?? "",
+      observe: { childList: true, characterData: true, subtree: true },
+    });
+    record(boards, {
+      sel: "#owl-stage .owl-board-art",
+      get: (el) => el.textContent ?? "",
+      observe: { childList: true, characterData: true, subtree: true },
+    });
+    // The owl's own animation class: idle is `animate-bob`, thinking is
+    // `wiggle`, teaching is `mascotbounce`. Reading it once after an await only
+    // proves what it is showing now, not that it ever reacted.
+    record(classes, {
+      sel: "#owl-stage .owl-visual",
+      get: (el) => el.getAttribute("class") ?? "",
+      observe: { attributes: true, attributeFilter: ["class"] },
+    });
+    // The send button's label: "Send" vs "Thinking…". Same reason - a request
+    // that errors instantly has already reset it by the time we look.
+    record(sends, {
+      sel: "#send-button",
+      get: (el) => el.textContent ?? "",
+      observe: { childList: true, characterData: true, subtree: true },
+    });
   });
 
   await page.locator("#send-button").click();
   await page.locator("#messages .flex.justify-end").first().waitFor();
   check("student bubble appears after send", true);
 
-  // 6. Busy state on send button
-  const busyText = await page.locator("#send-button").textContent();
-  check("send button enters Thinking state", busyText?.includes("Thinking") ?? true, busyText ?? "");
+  // 6. Busy state on send button.
+  //
+  // Read the recorded transitions rather than the label as it looks now. The
+  // old version read it after awaiting the student bubble, and its `?? true`
+  // only covered a null label - which never happens. So with no provider key
+  // (CI) the request had already errored and reset the button to "Send", and the
+  // check failed against a perfectly correct app.
+  const sendStates = await page.evaluate(() => window.__sendStates ?? []);
+  check(
+    "send button entered a Thinking state",
+    sendStates.some((s) => /Thinking/i.test(s)),
+    sendStates.map((s) => s.replace(/\s+/g, " ").trim()).join(" > ") || "none observed",
+  );
 
   // 6b. Owl teacher: stage visible, cap + pointer present, thinking pose on send
   const owlStage = page.locator("#owl-stage");
@@ -103,11 +132,14 @@ try {
   );
   // (Tolerant sampling: a fast reply may already have flipped the owl into its
   // teaching pose before we look.)
-  const owlSvgClass = (await page.locator("#owl-stage .owl-visual").getAttribute("class")) ?? "";
+  // Recorded transitions rather than a single read - `animate-bob` is idle, so
+  // a one-shot sample reports "idle" on a fast-failing provider even though the
+  // owl did react.
+  const owlClasses = await page.evaluate(() => window.__owlClasses ?? []);
   check(
     "owl animates while thinking/teaching",
-    owlSvgClass.includes("wiggle") || owlSvgClass.includes("mascotbounce"),
-    owlSvgClass,
+    owlClasses.some((c) => c.includes("wiggle") || c.includes("mascotbounce")),
+    `${owlClasses.length} class change(s) recorded`,
   );
   // Read the recorded transitions, not the pill as it happens to look now.
   const owlStates = await page.evaluate(() => window.__owlStates ?? []);
