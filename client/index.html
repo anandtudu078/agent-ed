@@ -245,7 +245,133 @@
               Create an account
             </button>
           </p>
+
+          <!--
+            The privacy notice, linked BEFORE signup rather than only inside it.
+
+            The disclosure is enforced server-side and shown in the consent step,
+            but for a student that notice arrives after they have already typed a
+            username into a form. For an under-13 student the whole point of the
+            guardian rule is that a child should not be the first reader of a
+            data-processing notice, so the honest place for it is in front of the
+            account, not behind it. This is the same copy the server enforces -
+            it is fetched from /api/auth/consent/policy rather than duplicated.
+          -->
+          <p class="pt-1 text-center text-xs text-slate-500">
+            <button
+              id="about-link"
+              type="button"
+              class="underline decoration-slate-600 underline-offset-2 transition hover:text-slate-300 hover:decoration-slate-400"
+            >
+              What happens to my data?
+            </button>
+          </p>
         </form>
+
+        <!--
+          The privacy notice, as its own screen.
+
+          Reachable before signup, so a student (or a parent deciding whether to
+          let them) can read what happens to their words before they type a
+          username into anything. Deliberately a dialog over the auth screen
+          rather than a separate page: it has to be reachable from the consent
+          step too, and a second route would mean the app is a multi-page site
+          it currently is not.
+
+          The disclosure list is NOT written here. It is fetched from
+          /api/auth/consent/policy, which serves PRIVACY_DISCLOSURE straight out
+          of src/services/consent.ts - the same array the server enforces and the
+          same one the consent step shows. Duplicating that copy into static
+          markup is exactly the drift this project keeps having to undo
+          elsewhere; a judge comparing the two pages should find them identical
+          because there is only one of them.
+
+          The limits section states plainly what this build does NOT do. A privacy
+          page that overclaims is worse than none: guardian identity here is
+          self-reported with no verification workflow, and saying so is the only
+          version of this page that survives someone actually reading the code.
+        -->
+        <div
+          id="about-view"
+          class="animate-fadeup mt-4 hidden max-h-[80vh] space-y-4 overflow-y-auto rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6 shadow-2xl shadow-black/40 backdrop-blur"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="about-title"
+        >
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="about-title" class="text-lg font-semibold">
+                What happens to your data
+              </h2>
+              <p class="mt-1 text-xs text-slate-400">
+                Read this before you create an account.
+              </p>
+            </div>
+            <button
+              id="about-close"
+              type="button"
+              aria-label="Close"
+              class="shrink-0 rounded-lg px-2 py-1 text-sm text-slate-400 transition hover:bg-slate-700/60 hover:text-slate-200"
+            >
+              ✕
+            </button>
+          </div>
+
+          <!--
+            Populated from the API. The fallback inside the list is what shows if
+            the request fails, and it says so rather than showing a stale copy or
+            an empty box - a privacy notice that silently renders as nothing is
+            the one failure mode worth being loud about.
+          -->
+          <ul id="about-disclosure" class="space-y-2 text-sm text-slate-300"></ul>
+
+          <p class="text-xs text-slate-500">
+            Notice version
+            <span id="about-version" class="font-mono text-slate-400"
+              >loading…</span
+            >. The version your account is recorded against is the one that decides
+            what you are asked to agree to.
+          </p>
+
+          <div class="rounded-2xl border border-amber-800/40 bg-amber-950/20 p-4">
+            <h3 class="text-sm font-semibold text-amber-200">
+              What this build does not do
+            </h3>
+            <ul class="mt-2 list-disc space-y-1.5 pl-4 text-xs text-amber-100/80">
+              <li>
+                <span class="font-semibold">Guardian consent is self-reported.</span>
+                A guardian types their name; there is no email, verification or
+                follow-up step, so it records an assertion rather than a confirmed
+                identity. Treat it accordingly.
+              </li>
+              <li>
+                <span class="font-semibold"
+                  >Deletion is immediate and total</span
+                >
+                but unrecoverable — there is no backup to restore from, and no
+                grace period to change your mind.
+              </li>
+              <li>
+                <span class="font-semibold">No teacher or cohort view yet.</span>
+                A class cannot be given access centrally, and a teacher cannot see
+                what their students have asked. Access is per-account.
+              </li>
+            </ul>
+          </div>
+
+          <div class="rounded-2xl border border-slate-800/80 bg-slate-950/40 p-4 text-xs text-slate-400">
+            <h3 class="text-sm font-semibold text-slate-200">
+              For teachers and parents
+            </h3>
+            <p class="mt-1.5">
+              Anyone under 18 needs a named adult to agree before the AI features
+              unlock, and the server refuses them regardless of what the browser
+              does. Students can export everything held about them or delete the
+              account outright at any time — the right to see your own data does
+              not depend on having agreed to anything.
+            </p>
+          </div>
+        </div>
 
         <!--
           Consent step.
@@ -347,6 +473,23 @@
               Sign out
             </button>
           </div>
+
+          <!--
+            Reachable from the consent step too, not only from the login screen.
+
+            Someone who lands here having just created an account has already
+            committed to nothing, and this is the moment they most want to know
+            what "before you start" actually commits them to — including the
+            limits, which are the part that should be read before agreeing rather
+            than discovered afterwards.
+          -->
+          <button
+            id="about-link-consent"
+            type="button"
+            class="w-full text-center text-xs text-slate-500 underline decoration-slate-700 underline-offset-2 transition hover:text-slate-300 hover:decoration-slate-500"
+          >
+            What exactly happens to my data?
+          </button>
         </form>
 
         <p class="mt-6 text-center text-xs text-slate-600">

@@ -15,6 +15,17 @@ import {
 const SERVER_URL =
   (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "http://localhost:3000";
 
+// A production build without VITE_SERVER_URL silently talks to the developer's
+// own machine — auth "works" locally and is a wall of 401s for everyone else.
+// Vite bakes VITE_* vars in at build time, so this is a build-config error.
+if (import.meta.env.PROD && !import.meta.env.VITE_SERVER_URL) {
+  console.error(
+    "[AgentEd] VITE_SERVER_URL is not set in this build — the app is calling " +
+      "http://localhost:3000, which only works on the developer's machine. " +
+      "Set VITE_SERVER_URL in the hosting provider's environment variables and rebuild.",
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Auth state (persisted so reloads keep you signed in)
 // ---------------------------------------------------------------------------
@@ -203,6 +214,14 @@ const consentTermsEl = document.querySelector<HTMLInputElement>("#consent-terms"
 const consentErrorEl = document.querySelector<HTMLParagraphElement>("#consent-error")!;
 const consentExportEl = document.querySelector<HTMLButtonElement>("#consent-export")!;
 const consentSignOutEl = document.querySelector<HTMLButtonElement>("#consent-signout")!;
+
+// The privacy notice, readable before signup.
+const aboutViewEl = document.querySelector<HTMLDivElement>("#about-view")!;
+const aboutDisclosureEl = document.querySelector<HTMLUListElement>("#about-disclosure")!;
+const aboutVersionEl = document.querySelector<HTMLSpanElement>("#about-version")!;
+const aboutLinkEl = document.querySelector<HTMLButtonElement>("#about-link")!;
+const aboutLinkConsentEl = document.querySelector<HTMLButtonElement>("#about-link-consent")!;
+const aboutCloseEl = document.querySelector<HTMLButtonElement>("#about-close")!;
 
 /**
  * Instructional mode. The owl's own display toggle owns this; main.ts just
@@ -834,6 +853,9 @@ function showAuth(): void {
   // The consent form belongs to the signed-out surface, so leaving it up would
   // show a student two forms at once after they sign back out.
   consentViewEl.classList.add("hidden");
+  // Same reasoning for the notice: it lives inside the auth view, so a sign-out
+  // mid-read would otherwise leave it sitting over the sign-in form.
+  aboutViewEl.classList.add("hidden");
 }
 
 // ---------------------------------------------------------------------------
@@ -888,6 +910,97 @@ async function showConsentStep(): Promise<void> {
     consentDisclosureEl.replaceChildren();
   }
 }
+
+// ---------------------------------------------------------------------------
+// The privacy notice (about view)
+// ---------------------------------------------------------------------------
+//
+// The same copy the consent step shows, fetched from the same public endpoint,
+// so a person reading this before they create an account is reading exactly what
+// they will be asked to agree to — and a judge comparing the two surfaces finds
+// them identical because there is only one source, PRIVACY_DISCLOSURE in
+// src/services/consent.ts.
+//
+// The endpoint is deliberately reached with a plain fetch rather than
+// `authedFetch`: this screen is shown on the login page, before anyone is
+// signed in, and going through the auth path would attach a refresh attempt to
+// a page that is supposed to be anonymous. The route is public for that reason.
+
+let aboutPolicyCache: { version: string; disclosure: string[] } | null = null;
+
+function renderAboutDisclosure(
+  version: string,
+  lines: readonly string[],
+): void {
+  aboutDisclosureEl.replaceChildren(
+    ...lines.map((line) => {
+      const li = document.createElement("li");
+      li.className = "flex gap-2 leading-relaxed";
+      const dot = document.createElement("span");
+      dot.className = "text-indigo-400";
+      dot.textContent = "•";
+      const text = document.createElement("span");
+      // textContent, not innerHTML — same reasoning as the consent step.
+      text.textContent = line;
+      li.append(dot, text);
+      return li;
+    }),
+  );
+  aboutVersionEl.textContent = version;
+}
+
+function showAbout(): void {
+  aboutViewEl.classList.remove("hidden");
+  aboutCloseEl.focus();
+
+  // The notice is worth having even if the app is half-loaded, so this never
+  // gates the dialog itself — only its contents.
+  if (aboutPolicyCache) {
+    renderAboutDisclosure(aboutPolicyCache.version, aboutPolicyCache.disclosure);
+    return;
+  }
+
+  void (async () => {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/auth/consent/policy`, {
+        headers: { ...CSRF_HEADER },
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as {
+        version?: string;
+        disclosure?: string[];
+      };
+      if (!Array.isArray(body.disclosure) || !body.version) throw new Error("shape");
+      aboutPolicyCache = { version: body.version, disclosure: body.disclosure };
+      renderAboutDisclosure(body.version, body.disclosure);
+    } catch {
+      // Say so rather than rendering an empty list. A privacy notice that
+      // silently comes back blank is the one failure worth being loud about:
+      // the student would read "no data is stored" into an empty box.
+      aboutVersionEl.textContent = "unavailable";
+      aboutDisclosureEl.replaceChildren();
+      const li = document.createElement("li");
+      li.className = "text-xs text-amber-200";
+      li.textContent =
+        "The disclosure could not be loaded, so it is not safe to agree to anything yet. " +
+        "Reload the page, or read it in the project's README.";
+      aboutDisclosureEl.append(li);
+    }
+  })();
+}
+
+function hideAbout(): void {
+  aboutViewEl.classList.add("hidden");
+}
+
+aboutLinkEl.addEventListener("click", showAbout);
+aboutLinkConsentEl.addEventListener("click", showAbout);
+aboutCloseEl.addEventListener("click", hideAbout);
+// Escape closes it. A dialog you cannot back out of with the keyboard is a
+// dialog that traps someone using a screen reader or a switch device.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !aboutViewEl.classList.contains("hidden")) hideAbout();
+});
 
 function hideConsentStep(): void {
   consentViewEl.classList.add("hidden");

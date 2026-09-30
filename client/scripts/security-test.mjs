@@ -760,7 +760,137 @@ try {
   );
   await anonCtx.close();
 
-  // 9. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
+  // 9. The privacy notice is readable BEFORE signup, and is the same copy the
+  // consent step enforces.
+  //
+  // Two properties matter here. First, the disclosure has to be reachable in
+  // front of the account rather than only inside the consent step after it: for
+  // an under-13 student the whole point of the guardian rule is that a child is
+  // not the first reader of a data-processing notice. Second, the text must be
+  // the server's, not a second copy in the markup — this project keeps having to
+  // undo exactly that kind of drift, so it is asserted rather than trusted.
+  const aboutCtx = await browser.newContext();
+  const aboutPage = await aboutCtx.newPage();
+  const aboutCalls = [];
+  aboutPage.on("response", (res) => {
+    const path = res.url().replace(BACKEND, "").split("?")[0];
+    if (path.startsWith("/api/")) aboutCalls.push(`${res.status()} ${path}`);
+  });
+  await aboutPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await aboutPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
+  await aboutPage.waitForTimeout(1000);
+
+  check(
+    "the notice is not visible until it is asked for",
+    !(await aboutPage.locator("#about-view").isVisible()),
+    "the notice rendered on the login page unprompted",
+  );
+  await aboutPage.locator("#about-link").click();
+  await aboutPage.waitForTimeout(1500);
+
+  check(
+    "the notice opens before any account exists",
+    await aboutPage.locator("#about-view").isVisible(),
+    "the pre-signup privacy notice did not open",
+  );
+  // Strip only the bullet the renderer prepends. A first attempt at this helper
+  // used /^\s*\S+\s*/, which also ate the first WORD of every item — "Your
+  // display name" became "display name" — so the verbatim comparison below
+  // failed on a page that was rendering the disclosure correctly. Matching the
+  // bullet specifically keeps the check honest instead of approximate.
+  const stripBullet = (t) => t.replace(/^\s*•\s*/, "").trim();
+  const aboutItems = (
+    await aboutPage.locator("#about-disclosure li").allTextContents()
+  ).map(stripBullet);
+  check(
+    "the notice actually lists what is stored and who sees it",
+    aboutItems.length >= 4 &&
+      aboutItems.some((t) => /third-party AI provider/i.test(t)) &&
+      aboutItems.some((t) => /delete/i.test(t)),
+    `${aboutItems.length} items`,
+  );
+  check(
+    "the notice names its version, so it can be tied to a recorded consent",
+    /^\d{4}-\d{2}$/.test(((await aboutPage.locator("#about-version").textContent()) ?? "").trim()),
+    JSON.stringify(await aboutPage.locator("#about-version").textContent()),
+  );
+  // The honest part: the limits have to be stated, not just the promises.
+  check(
+    "the notice discloses that guardian consent is self-reported",
+    ((await aboutPage.locator("#about-view").textContent()) ?? "").includes(
+      "self-reported",
+    ),
+    "the limits section is missing or does not say guardian consent is unverified",
+  );
+  check(
+    "reading the notice on the login page is anonymous",
+    !aboutCalls.some((c) => c.includes("/api/auth/me") || c.includes("/api/sessions/")),
+    aboutCalls.join(" | ") || "clean",
+  );
+
+  // The copy the notice shows must equal the copy the consent step records.
+  const aboutVersion = ((await aboutPage.locator("#about-version").textContent()) ?? "").trim();
+  await aboutPage.locator("#about-close").click();
+  const aboutUser = `secab${Math.floor(Math.random() * 1e6)}`;
+  await aboutPage.locator("#auth-toggle").click();
+  await aboutPage.locator("#display-name-input").fill("Notice");
+  await aboutPage.locator("#username-input").fill(aboutUser);
+  await aboutPage.locator("#password-input").fill("notice-pass-12345");
+  await aboutPage.locator("#auth-submit").click();
+  await aboutPage.waitForSelector("#consent-view:not(.hidden)", { timeout: 20000 });
+  await aboutPage.waitForTimeout(1200);
+  const consentItems = (
+    await aboutPage.locator("#consent-disclosure li").allTextContents()
+  ).map(stripBullet);
+  check(
+    "the pre-signup notice and the consent step show IDENTICAL text",
+    JSON.stringify(aboutItems) === JSON.stringify(consentItems),
+    `about=${aboutItems.length} consent=${consentItems.length}`,
+  );
+  const serverPolicy = await aboutPage.request.get(`${BACKEND}/api/auth/consent/policy`);
+  const serverBody = await serverPolicy.json();
+  check(
+    "both match the server's PRIVACY_DISCLOSURE verbatim",
+    JSON.stringify(serverBody.disclosure) === JSON.stringify(consentItems) &&
+      serverBody.version === aboutVersion,
+    `server=${serverBody.version ?? "?"} about=${aboutVersion}`,
+  );
+  check(
+    "the notice is also reachable from the consent step",
+    await (async () => {
+      await aboutPage.locator("#about-link-consent").click();
+      await aboutPage.waitForTimeout(800);
+      return aboutPage.locator("#about-view").isVisible();
+    })(),
+    "the consent step has no route to the notice",
+  );
+  await aboutCtx.close();
+
+  // A privacy notice that silently renders blank is the worst failure here: a
+  // student would read "no data is stored" into an empty list.
+  const brokenCtx = await browser.newContext();
+  const brokenPage = await brokenCtx.newPage();
+  await brokenPage.route(`${BACKEND}/api/auth/consent/policy`, (route) =>
+    route.fulfill({ status: 500, body: "boom" }),
+  );
+  await brokenPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await brokenPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
+  await brokenPage.locator("#about-link").click();
+  await brokenPage.waitForTimeout(1800);
+  const brokenItems = await brokenPage.locator("#about-disclosure li").allTextContents();
+  check(
+    "a failed disclosure load says so instead of showing an empty list",
+    brokenItems.length > 0 && /could not be loaded/i.test(brokenItems.join(" ")),
+    `items=${brokenItems.length}`,
+  );
+  check(
+    "and the dialog itself still opens, so the failure is legible",
+    await brokenPage.locator("#about-view").isVisible(),
+    "the notice could not be opened at all when the API was down",
+  );
+  await brokenCtx.close();
+
+  // 10. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
     for (let i = 0; i < 12; i += 1) {
