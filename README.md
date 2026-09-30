@@ -91,6 +91,7 @@ Or individually:
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
 | `npm run test:offline` | 30 | The offline AI gate — mostly an attack on the production refusal |
+| `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
@@ -121,6 +122,56 @@ npx tsc --noEmit --project client/tsconfig.json
 > owl draws. They had no permanent coverage before — the earlier tests were a
 > throwaway script that was later deleted.
 
+### Does the tutor actually teach?
+
+Every other suite tests the app *around* the model - parsing, scheduling,
+segmentation, rendering, authorisation. `test:quality` asks the question none of
+them ask: is the teaching any good?
+
+```bash
+npm run test:quality     # needs GROQ_API_KEY or GEMINI_API_KEY
+```
+
+It calls the real `generateTutorResponse` with the real system prompts across
+eight cases - Socratic and Teach, English and Hindi, including a follow-up that
+has thread context and a student who demands the answer outright - and grades
+what comes back in two separate layers:
+
+**Contract checks (50) - deterministic, and they gate.** The promises the
+prompts make and the code depends on: Socratic mode must not hand over the
+answer, must ask something, must stay short enough to think about; Teach mode
+must explain substantively and close by checking understanding; Hindi must come
+back as Devanagari. A prompt is a request. These make some of them obligations.
+
+**Judged checks - one model call per case, reported but never gating.** Factual
+soundness, whether the withholding actually worked, whether it built on the
+thread, whether a beginner would understand it. These are a grader that is
+itself a language model, so failing a run on its opinion would produce a flaky
+suite nobody trusts. The scores are a baseline to watch for drift.
+
+Dimensions are only scored where they apply. `withholds` is not counted on a
+Teach-mode case, where explaining *is* the job, and `buildsOnThread` is not
+counted when the case has no prior turn. A baseline that punishes correct
+behaviour is worse than no baseline.
+
+Last run:
+
+```
+CONTRACT   50/50 passed
+JUDGED     withholds        5/5  (100%)
+           factuallySound   8/8  (100%)
+           onTopic          6/8  ( 75%)
+           helpsABeginner   7/8  ( 88%)
+           buildsOnThread   1/1  (100%)
+```
+
+Not in CI: it spends real provider quota and takes a few minutes. It is a manual
+gate before a release, not on every push. `QUALITY_SHOW_REPLIES=1` prints every
+reply for reading.
+
+> The honest limit: this measures whether the tutor *behaves* as specified. It
+> cannot prove the explanations are pedagogically good, and the judge shares a
+> blind spot with the model it is grading. It is a floor, not a ceiling.
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request to `master`, in
