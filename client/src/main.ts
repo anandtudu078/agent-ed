@@ -782,7 +782,21 @@ async function startNewChat(): Promise<void> {
   inputEl.focus();
 }
 
-function showApp(): void {
+/**
+ * Paint the signed-in shell WITHOUT touching the network.
+ *
+ * Split out from `showApp()` because of boot ordering. Painting from the cached
+ * profile is fine, but `showApp()` also opened the socket and fetched session
+ * history — and calling it before `/api/auth/me` confirmed the session meant a
+ * student with a dead cookie saw `GET /api/sessions/... 401` and a refused
+ * socket handshake fire *while the sign-in screen was on display*. The console
+ * filled with 401s on a page that is supposed to be anonymous, and the socket
+ * rejection then tripped the sign-out path on top of it.
+ *
+ * So: paint eagerly, authenticate, then connect. The 401s belong to the app, not
+ * to the login page.
+ */
+function paintAppShell(): void {
   authViewEl.classList.add("hidden");
   appViewEl.classList.remove("hidden");
   if (currentAuth) {
@@ -795,9 +809,21 @@ function showApp(): void {
     languageToggleEl.textContent = teachLanguage === "hi" ? "हिंदी" : "EN";
   }
   setDashboardVisible(false);
+}
+
+/**
+ * Everything that needs a confirmed session: the live socket and the saved
+ * conversation. Called once the server has vouched for the session.
+ */
+function startSessionServices(): void {
   connectSocket();
   // Non-blocking: the app is usable while this is in flight.
   void restoreSessionHistory();
+}
+
+function showApp(): void {
+  paintAppShell();
+  startSessionServices();
   inputEl.focus();
 }
 
@@ -2050,7 +2076,10 @@ if (import.meta.env.DEV) {
  * Painting first is deliberate: the round trip is local-to-local and fast, and
  * flashing a sign-in screen at a signed-in student on every reload would be a
  * worse regression than a brief flash of the wrong screen in the rare case the
- * session really has expired.
+ * session really has expired. So the SHELL is painted from the cache, but nothing
+ * that needs a session is started until the server has confirmed one — otherwise
+ * a dead cookie fires a socket handshake and a session fetch that both 401, and
+ * the login page ends up spewing 401s it should never have made.
  */
 async function boot(): Promise<void> {
   if (!currentAuth) {
@@ -2059,7 +2088,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  showApp();
+  paintAppShell();
 
   try {
     const res = await fetch(`${SERVER_URL}/api/auth/me`, {
@@ -2082,6 +2111,9 @@ async function boot(): Promise<void> {
       userBadgeEl.textContent = `👤 ${body.user.displayName}`;
       mascot.setLanguage(body.user.language ?? "en");
     }
+    // Confirmed. Now the socket and the saved conversation are safe to ask for.
+    startSessionServices();
+    inputEl.focus();
   } catch {
     // The server is unreachable. Keep the cached session rather than signing the
     // student out because their laptop briefly lost wifi — the first real request

@@ -699,6 +699,67 @@ try {
   );
   await stuckCtx.close();
 
+  // 8d. The login page must not make authenticated requests.
+  //
+  // `boot()` painted the signed-in shell from the cached profile before calling
+  // `/api/auth/me`, and that painting also opened the socket and fetched session
+  // history. With a dead cookie the sign-in screen was therefore covered in 401s
+  // — a refused socket handshake, `GET /api/sessions/... 401`, a refresh 400 —
+  // all of them fired by a page that is supposed to be anonymous. Worse, the
+  // socket rejection then tripped the sign-out path on top of it.
+  //
+  // Asserted on the requests themselves rather than on the DOM, because the
+  // console is where this was actually reported from.
+  const anonCtx = await browser.newContext();
+  const anonPage = await anonCtx.newPage();
+  const anonUser = `secanon${Math.floor(Math.random() * 1e6)}`;
+  const anonReg = await anonPage.request.post(`${BACKEND}/api/auth/register`, {
+    headers: CSRF,
+    data: { username: anonUser, password: "anon-pass-12345" },
+  });
+  const anonBody = await anonReg.json();
+  check("anonymous-boot fixture registered", anonReg.status() === 201, String(anonReg.status()));
+  await anonCtx.clearCookies();
+  await anonPage.addInitScript((user) => {
+    try {
+      window.localStorage.setItem("agented:user", JSON.stringify(user));
+    } catch {
+      /* storage unavailable */
+    }
+  }, anonBody.user);
+
+  const anonCalls = [];
+  anonPage.on("response", (res) => {
+    const path = res.url().replace(BACKEND, "").split("?")[0];
+    if (path.startsWith("/api/")) anonCalls.push(`${res.status()} ${path}`);
+  });
+  await anonPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await anonPage.waitForTimeout(6000);
+
+  const anonOffending = anonCalls.filter(
+    (c) =>
+      // /api/auth/me is the one call the login screen legitimately makes: it is
+      // how the app discovers the session is gone.
+      c.includes("/api/auth/me") === false &&
+      (c.startsWith("401") || c.startsWith("400")),
+  );
+  check(
+    "a stale cached session fires no 401s other than /api/auth/me",
+    anonOffending.length === 0,
+    anonOffending.slice(0, 3).join(" | ") || "clean",
+  );
+  check(
+    "and no session/socket request is attempted before login",
+    !anonCalls.some((c) => c.includes("/api/sessions/") || c.includes("/socket.io/")),
+    anonCalls.filter((c) => c.includes("/api/sessions/")).join(", ") || "clean",
+  );
+  check(
+    "the login page shows no error text",
+    ((await anonPage.locator("#auth-error").textContent()) ?? "").trim() === "",
+    JSON.stringify(await anonPage.locator("#auth-error").textContent()),
+  );
+  await anonCtx.close();
+
   // 9. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
