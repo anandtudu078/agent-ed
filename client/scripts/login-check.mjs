@@ -10,6 +10,18 @@ const check = (label, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
 };
 
+// Poll instead of fixed waits: production latency (Render cold starts,
+// cross-region hops) routinely exceeds a second, so fixed sleeps misreport
+// working features as failures.
+async function waitUntil(poll, timeoutMs = 10000, intervalMs = 300) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await poll()) return true;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
@@ -45,13 +57,11 @@ try {
   await page.locator("#username-input").fill(user);
   await page.locator("#password-input").fill("wrong-password-1");
   await page.locator("#auth-submit").click();
-  await page.waitForTimeout(1200);
-  const wrongErr = await page.locator("#auth-error").textContent();
-  check(
-    "wrong password shows inline error",
-    Boolean(wrongErr?.includes("Invalid username or password")),
-    wrongErr ?? "(none)",
+  const errAppeared = await waitUntil(async () =>
+    (await page.locator("#auth-error").textContent())?.includes("Invalid username or password"),
   );
+  const wrongErr = await page.locator("#auth-error").textContent();
+  check("wrong password shows inline error", errAppeared, wrongErr ?? "(none)");
 
   // 5. Register a fresh account through the UI, then it should sign us in.
   // Registration now lands on a consent step (privacy gate) before the app.
@@ -83,8 +93,8 @@ try {
 
     // 7. Sign out returns to the login page cleanly.
     await page.locator("#sign-out-button").click();
-    await page.waitForTimeout(600);
-    check("sign out returns to login", await page.locator("#auth-view").isVisible());
+    const backToAuth = await waitUntil(() => page.locator("#auth-view").isVisible());
+    check("sign out returns to login", backToAuth);
 
     // 8. Sign in with the credentials just created.
     await page.locator("#username-input").fill(user);

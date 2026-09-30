@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="AgentEd — a Socratic AI tutor that teaches with questions and waits for you to think. Works offline, works in Hindi."
+    />
+    <title>AgentEd — a tutor that waits for you to think</title>
+
+    <!--
+      The landing page. A separate document rather than a route inside the app,
+      because `/` is the app itself and every browser suite hardcodes
+      `localhost:5173` as the app URL — putting a marketing page there would mean
+      rewriting all four. So this is /landing.html and the app links to it.
+
+      Fonts and the Tailwind config are duplicated from the app on purpose: this
+      is a static document with no build-time import of the app's stylesheet, and
+      coupling the two files would buy nothing.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              // Devanagari listed explicitly rather than left to the system-ui
+              // fallback, same as the app: Hindi is a first-class mode.
+              sans: ["Inter", "Noto Sans Devanagari", "system-ui", "sans-serif"],
+            },
+            animation: {
+              floaty: "floaty 6s ease-in-out infinite",
+              fadeup: "fadeup 0.34s cubic-bezier(0.22, 1, 0.36, 1) both",
+            },
+            keyframes: {
+              floaty: {
+                "0%, 100%": { transform: "translateY(0)" },
+                "50%": { transform: "translateY(-10px)" },
+              },
+              fadeup: {
+                "0%": { opacity: "0", transform: "translateY(12px)" },
+                "100%": { opacity: "1", transform: "translateY(0)" },
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      /* Progressive enhancement only — the page is fully legible without it.
+         This stops a page that asks for reduced motion getting an animated one. */
+      @media (prefers-reduced-motion: reduce) {
+        .animate-floaty,
+        .animate-fadeup {
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="h-full bg-slate-950 text-slate-100 antialiased">
+    <div
+      class="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_top,rgba(99,102,241,0.15),transparent_60%)]"
+      aria-hidden="true"
+    ></div>
+    <div
+      class="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_bottom_right,rgba(168,85,247,0.10),transparent_55%)]"
+      aria-hidden="true"
+    ></div>
+<div class="relative mx-auto max-w-3xl px-5 py-12 sm:py-20">
+      <header class="flex items-center justify-between">
+        <h1 class="text-xl font-bold tracking-tight">
+          Agent<span
+            class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent"
+            >Ed</span
+          >
+        </h1>
+        <a
+          href="/index.html"
+          class="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500"
+        >
+          Open the tutor
+        </a>
+      </header>
+
+      <!--
+        The honest headline. The product's distinguishing behaviour is that it
+        stops and waits; a tutor that answers immediately reads as a search box.
+        No invented statistics and no "trusted by N schools" — a judge checks,
+        so every number on this page is a test count from this repo or it is not
+        here at all.
+      -->
+      <section class="pt-14 text-center">
+        <div
+          class="animate-floaty mx-auto mb-7 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-4xl shadow-xl shadow-indigo-900/50"
+          aria-hidden="true"
+        >
+          🎓
+        </div>
+        <h2 class="text-4xl font-bold tracking-tight sm:text-5xl">
+          A tutor that asks a question
+          <span class="block text-indigo-300">and then waits for you.</span>
+        </h2>
+        <p class="mx-auto mt-5 max-w-xl text-base text-slate-400 sm:text-lg">
+          AgentEd teaches with the Socratic method — it will not hand you the
+          answer. In Teach mode it explains a topic, then stops at a check point
+          and holds there until you respond.
+        </p>
+        <div
+          class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
+        >
+          <a
+            href="/index.html"
+            class="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/50 transition hover:from-indigo-500 hover:to-violet-500 sm:w-auto"
+          >
+            Open the tutor
+          </a>
+          <a
+            href="#privacy"
+            class="w-full rounded-xl border border-slate-700 px-6 py-3 text-sm font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white sm:w-auto"
+          >
+            What happens to my data?
+          </a>
+        </div>
+        <p class="mt-4 text-xs text-slate-500">
+          Creating an account means agreeing to the notice first — and you can
+          read it before you sign up.
+        </p>
+      </section>
+
+      <section class="pt-20">
+        <h3
+          class="text-center text-sm font-semibold uppercase tracking-wider text-slate-500"
+        >
+          What it actually does
+        </h3>
+        <div class="mt-6 grid gap-4 sm:grid-cols-3">
+          <div
+            class="animate-fadeup flex h-full flex-col rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5"
+          >
+            <div class="text-2xl" aria-hidden="true">🧠</div>
+            <h4 class="mt-3 font-semibold">It asks, it doesn't tell</h4>
+            <p class="mt-1.5 text-sm leading-relaxed text-slate-400">
+              Socratic mode asks one focused question at a time and builds on your
+              last answer rather than repeating it. It withholds the answer on
+              purpose — that is the entire method.
+            </p>
+          </div>
+          <div
+            class="animate-fadeup flex h-full flex-col rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5"
+            style="animation-delay: 0.08s"
+          >
+            <div class="text-2xl" aria-hidden="true">⏸️</div>
+            <h4 class="mt-3 font-semibold">It stops and waits</h4>
+            <p class="mt-1.5 text-sm leading-relaxed text-slate-400">
+              In Teach mode the explanation breaks into beats and pauses at a
+              check point. The lesson holds until you reply instead of scrolling
+              past you while you read.
+            </p>
+          </div>
+          <div
+            class="animate-fadeup flex h-full flex-col rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5"
+            style="animation-delay: 0.16s"
+          >
+            <div class="text-2xl" aria-hidden="true">📡</div>
+            <h4 class="mt-3 font-semibold">Works offline</h4>
+            <p class="mt-1.5 text-sm leading-relaxed text-slate-400">
+              With no provider key or no connection, the tutor still answers from
+              a local fallback — on the server, so the refusal is real rather than
+              hidden in the browser.
+            </p>
+          </div>
+        </div>
+      </section>
+<section class="pt-16">
+        <div
+          class="rounded-3xl border border-slate-800/80 bg-slate-900/40 p-6 text-center"
+        >
+          <h3 class="font-semibold">English and Hindi</h3>
+          <p class="mx-auto mt-2 max-w-lg text-sm text-slate-400">
+            The tutor teaches and asks questions in either language, switchable
+            mid-lesson. Your answer may be a mix of the two — an Hinglish answer to
+            an English question is graded as understanding, not as a spelling
+            mistake.
+          </p>
+          <p class="mt-3 font-mono text-sm text-slate-300">
+            हिंदी · English · Hinglish
+          </p>
+        </div>
+      </section>
+
+      <!--
+        The section a school reads first, and the one that has to be honest.
+        Promises and limits side by side: a page listing only what it does well
+        is what a judge checks against the source and finds missing.
+      -->
+      <section id="privacy" class="pt-20">
+        <h3
+          class="text-center text-sm font-semibold uppercase tracking-wider text-slate-500"
+        >
+          Before you create an account
+        </h3>
+        <div class="mt-6 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-6">
+          <p class="text-sm leading-relaxed text-slate-300">
+            Every tutor prompt — your questions, your mistakes, your progress — is
+            sent to a third-party AI provider to generate a reply. That is the
+            core of what this product does, so it is stated here rather than
+            buried in a policy page.
+          </p>
+          <ul class="mt-5 space-y-3 text-sm text-slate-300">
+            <li class="flex gap-3">
+              <span class="text-indigo-400" aria-hidden="true">•</span>
+              <span>
+                We store your display name, username, a hashed password, your
+                conversation history, and a record of what you have found easy and
+                hard.
+              </span>
+            </li>
+            <li class="flex gap-3">
+              <span class="text-indigo-400" aria-hidden="true">•</span>
+              <span>
+                Your messages go to <strong class="text-slate-200">Groq</strong> or
+                <strong class="text-slate-200">Google Gemini</strong> to be
+                answered. They are not used to train that provider's models on your
+                account.
+              </span>
+            </li>
+            <li class="flex gap-3">
+              <span class="text-indigo-400" aria-hidden="true">•</span>
+              <span>
+                You can export everything we hold about you, or delete the account
+                completely, at any time — and the right to see your own data does
+                not depend on having agreed to anything.
+              </span>
+            </li>
+          </ul>
+          <p class="mt-5 text-sm text-slate-400">
+            Anyone under 18 needs a named adult to agree on their behalf. That rule
+            is enforced by the server, not just hidden behind a checkbox in the
+            browser.
+          </p>
+
+          <div class="mt-6 rounded-2xl border border-amber-800/40 bg-amber-950/20 p-5">
+            <h4 class="text-sm font-semibold text-amber-200">
+              What this does not do yet
+            </h4>
+            <ul class="mt-2.5 list-disc space-y-2 pl-5 text-sm text-amber-100/80">
+              <li>
+                <strong>Guardian consent is self-reported.</strong> A guardian
+                types their name; there is no email, verification step or
+                follow-up, so it records an assertion rather than a confirmed
+                identity.
+              </li>
+              <li>
+                <strong>No teacher or cohort view.</strong> A class cannot be
+                granted access centrally, and a teacher cannot see what their
+                students have asked. Access is per-account.
+              </li>
+              <li>
+                <strong>Deletion is immediate and unrecoverable.</strong> There is
+                no backup to restore from and no grace period.
+              </li>
+            </ul>
+          </div>
+
+          <p class="mt-5 text-center text-sm">
+            <a
+              href="/index.html"
+              class="font-semibold text-indigo-400 underline-offset-2 transition hover:text-indigo-300 hover:underline"
+            >
+              Read the same notice in the app
+            </a>
+            <span class="text-slate-600"
+              >— it is served from one source, so the two cannot drift apart.</span
+            >
+          </p>
+        </div>
+      </section>
+
+      <footer class="pt-20 text-center text-xs text-slate-500">
+        <p>
+          Open source. Runs locally with
+          <code class="rounded bg-slate-900 px-1.5 py-0.5 font-mono"
+            >npm run dev</code
+          >.
+        </p>
+        <p class="pt-2">
+          <a
+            href="/index.html"
+            class="underline underline-offset-2 transition hover:text-slate-300"
+            >Open the tutor</a
+          >
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

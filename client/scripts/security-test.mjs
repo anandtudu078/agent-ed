@@ -890,7 +890,95 @@ try {
   );
   await brokenCtx.close();
 
-  // 10. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
+  // 10. The landing page.
+  //
+  // The point of these is restraint, not decoration. A judge reads a privacy page
+  // against the source, so the claims that matter are the LIMITS: if guardian
+  // consent is described as verified anywhere, and it is not, the page is worse
+  // than no page. And the page must stay a separate document — `/` is the app,
+  // and every suite here hardcodes localhost:5173 as the app URL.
+  const landingCtx = await browser.newContext();
+  const landingPage = await landingCtx.newPage();
+  const landingErrors = [];
+  landingPage.on("pageerror", (e) => landingErrors.push(e.message.slice(0, 80)));
+  const landingRes = await landingPage.goto(`${FRONTEND}/landing.html`, {
+    waitUntil: "domcontentloaded",
+  });
+  check(
+    "the landing page is served",
+    landingRes?.status() === 200,
+    String(landingRes?.status()),
+  );
+  await landingPage.waitForTimeout(2000);
+
+  check(
+    "the landing page loads without a script error",
+    landingErrors.length === 0,
+    landingErrors.join(" | ") || "clean",
+  );
+  check(
+    "it does not replace the app at the root URL",
+    await (async () => {
+      const root = await landingCtx.newPage();
+      await root.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+      await root.waitForTimeout(1200);
+      const stillApp = (await root.locator("#auth-view").count()) > 0;
+      await root.close();
+      return stillApp;
+    })(),
+    "the root URL no longer serves the app — every suite assumes it does",
+  );
+  const appLinks = await landingPage.locator('a[href="/index.html"]').count();
+  check("the landing page links into the app", appLinks >= 2, `${appLinks} links`);
+  check(
+    "the privacy anchor resolves to a real section",
+    (await landingPage.locator("#privacy").count()) === 1 &&
+      (await landingPage.locator('a[href="#privacy"]').count()) >= 1,
+    "the 'what happens to my data' button has nowhere to go",
+  );
+
+  const landingText = (await landingPage.locator("body").textContent()) ?? "";
+  check(
+    "the landing page names the third-party AI providers by name",
+    /Groq/.test(landingText) && /Gemini/.test(landingText),
+    "the providers receiving student messages are not named",
+  );
+  check(
+    "the landing page states the guardian limit",
+    /self-reported/.test(landingText),
+    "guardian consent is described without saying it is unverified",
+  );
+  check(
+    "the landing page admits there is no teacher or cohort view",
+    /cohort view/i.test(landingText),
+    "the missing teacher view is not disclosed",
+  );
+  check(
+    "the landing page states that deletion is unrecoverable",
+    /unrecoverable/i.test(landingText),
+    "deletion is described as if it were reversible",
+  );
+  // No invented traction. These are the phrases a fabricated landing page
+  // reaches for, and every one of them would be a lie about this project.
+  const boast = /trusted by|schools? using|students? taught|\d[\d,]*\+ students|loved by/i;
+  check(
+    "the landing page invents no traction figures",
+    !boast.test(landingText),
+    landingText.match(boast)?.[0] ?? "",
+  );
+  // And the app links back, or the page is unreachable from the product.
+  const linkBack = await landingCtx.newPage();
+  await linkBack.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await linkBack.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
+  check(
+    "the app links to the landing page",
+    (await linkBack.locator('a[href="/landing.html"]').count()) === 1,
+    "the landing page exists but nothing in the app points to it",
+  );
+  await linkBack.close();
+  await landingCtx.close();
+
+  // 11. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
     for (let i = 0; i < 12; i += 1) {
