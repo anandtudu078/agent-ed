@@ -64,17 +64,28 @@ export const ACCESS_COOKIE = "agented_access";
 export const REFRESH_COOKIE = "agented_refresh";
 
 /**
- * `lax` rather than `strict`, deliberately.
+ * SameSite is chosen PER REQUEST, not as a constant.
  *
  * `strict` would not be sent when a student arrives from an external link — a
  * shared link to a lesson, a search result, a Slack message — and the app would
- * show them a signed-out screen for a session they legitimately have. `lax` still
- * blocks the cross-site POST that actually matters here (CSRF), while letting a
- * top-level GET through. Since every state-changing route is POST/PATCH/DELETE
- * and additionally requires a `X-Requested-With` header, `lax` closes the gap
- * without costing real users their session.
+ * show them a signed-out screen for a session they legitimately have. So the
+ * candidates are `lax` and `none`:
+ *
+ * - Same-site deployments (localhost:5173 → localhost:3000 in dev) work with
+ *   `lax`, which also keeps the CSRF story tight.
+ * - Cross-site deployments (Vercel frontend → Render API in production) REQUIRE
+ *   `none`: browsers never attach a `lax` cookie to a cross-site fetch, so every
+ *   signed-in call went out unauthenticated (401 → refresh 400 → bounced to the
+ *   login screen). Found by testing the deployed login flow end to end.
+ *
+ * `SameSite=None` is only valid alongside `Secure`, so the decision reuses the
+ * same per-request HTTPS signal as `secureCookies` below: HTTPS gets `none`,
+ * plain HTTP (local dev) keeps `lax`. CSRF defense is unchanged either way —
+ * it lives in the `X-Requested-With` header requirement, not in SameSite.
  */
-const SAME_SITE = "lax" as const;
+function sameSiteFor(request: Request): "lax" | "none" {
+  return secureCookies(request) ? "none" : "lax";
+}
 
 /**
  * Whether cookies may be marked `Secure`.
@@ -116,15 +127,19 @@ function secureCookies(request: Request): boolean {
  */
 function baseOptions(request: Request, maxAgeMs: number): {
   httpOnly: true;
-  sameSite: typeof SAME_SITE;
+  sameSite: "lax" | "none";
   secure: boolean;
   path: string;
   maxAge: number;
 } {
+  const secure = secureCookies(request);
   return {
     httpOnly: true,
-    sameSite: SAME_SITE,
-    secure: secureCookies(request),
+    // `SameSite=None` is rejected by browsers unless the cookie is also
+    // `Secure`, so the two must move together — sameSiteFor derives both
+    // from the same signal.
+    sameSite: sameSiteFor(request),
+    secure,
     path: "/",
     maxAge: maxAgeMs,
   };
