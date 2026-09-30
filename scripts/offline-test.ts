@@ -238,6 +238,42 @@ check(
   "socket-derived",
 );
 
+// SameSite is chosen per request from the same signal as `secure`.
+//
+// This is the cross-site deployment case. A `lax` cookie is never attached to a
+// cross-site fetch, so a Vercel frontend talking to a Render API would send
+// every authenticated call out unauthenticated — 401, refresh 400, bounced to the
+// login screen — while working perfectly on localhost, where 5173 and 3000 are
+// the same site. `none` fixes that, but browsers reject `SameSite=None` unless
+// the cookie is also `Secure`, so the two flags are asserted TOGETHER rather than
+// individually: a mismatch is not a weaker setting, it is a cookie the browser
+// throws away.
+check(
+  "SameSite=Lax on plain HTTP (same-site dev)",
+  devAccess?.options.sameSite === "lax",
+  `sameSite=${devAccess?.options.sameSite}`,
+);
+const httpsAccess = captureCookies(setAccessCookie, "https")[0];
+check(
+  "SameSite=None over HTTPS (cross-site deployment)",
+  httpsAccess?.options.sameSite === "none",
+  `sameSite=${httpsAccess?.options.sameSite}`,
+);
+check(
+  "SameSite=None is only ever paired with Secure",
+  [captureCookies(setAccessCookie, "https")[0], captureCookies(setRefreshCookie, "https")[0]].every(
+    (c) =>
+      c?.options.sameSite !== "none" ||
+      c?.options.secure === true,
+  ),
+  "SameSite=None without Secure would be discarded by the browser",
+);
+check(
+  "plain HTTP never asks for SameSite=None",
+  captureCookies(setAccessCookie, undefined)[0]?.options.sameSite === "lax",
+  "a SameSite=None cookie on http:// is rejected by every browser",
+);
+
 // THE REGRESSION THIS FIX EXISTS FOR. `NODE_ENV=production` while serving
 // http://localhost is a completely reasonable thing to do when "testing
 // production mode", and it used to mark the cookies Secure. The browser then

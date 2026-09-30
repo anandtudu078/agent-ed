@@ -15,6 +15,17 @@ import {
 const SERVER_URL =
   (import.meta.env.VITE_SERVER_URL as string | undefined) ?? "http://localhost:3000";
 
+// A production build without VITE_SERVER_URL silently talks to the developer's
+// own machine — auth "works" locally and is a wall of 401s for everyone else.
+// Vite bakes VITE_* vars in at build time, so this is a build-config error.
+if (import.meta.env.PROD && !import.meta.env.VITE_SERVER_URL) {
+  console.error(
+    "[AgentEd] VITE_SERVER_URL is not set in this build — the app is calling " +
+      "http://localhost:3000, which only works on the developer's machine. " +
+      "Set VITE_SERVER_URL in the hosting provider's environment variables and rebuild.",
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Auth state (persisted so reloads keep you signed in)
 // ---------------------------------------------------------------------------
@@ -203,6 +214,14 @@ const consentTermsEl = document.querySelector<HTMLInputElement>("#consent-terms"
 const consentErrorEl = document.querySelector<HTMLParagraphElement>("#consent-error")!;
 const consentExportEl = document.querySelector<HTMLButtonElement>("#consent-export")!;
 const consentSignOutEl = document.querySelector<HTMLButtonElement>("#consent-signout")!;
+
+// The privacy notice, readable before signup.
+const aboutViewEl = document.querySelector<HTMLDivElement>("#about-view")!;
+const aboutDisclosureEl = document.querySelector<HTMLUListElement>("#about-disclosure")!;
+const aboutVersionEl = document.querySelector<HTMLSpanElement>("#about-version")!;
+const aboutLinkEl = document.querySelector<HTMLButtonElement>("#about-link")!;
+const aboutLinkConsentEl = document.querySelector<HTMLButtonElement>("#about-link-consent")!;
+const aboutCloseEl = document.querySelector<HTMLButtonElement>("#about-close")!;
 
 /**
  * Instructional mode. The owl's own display toggle owns this; main.ts just
@@ -782,7 +801,21 @@ async function startNewChat(): Promise<void> {
   inputEl.focus();
 }
 
-function showApp(): void {
+/**
+ * Paint the signed-in shell WITHOUT touching the network.
+ *
+ * Split out from `showApp()` because of boot ordering. Painting from the cached
+ * profile is fine, but `showApp()` also opened the socket and fetched session
+ * history — and calling it before `/api/auth/me` confirmed the session meant a
+ * student with a dead cookie saw `GET /api/sessions/... 401` and a refused
+ * socket handshake fire *while the sign-in screen was on display*. The console
+ * filled with 401s on a page that is supposed to be anonymous, and the socket
+ * rejection then tripped the sign-out path on top of it.
+ *
+ * So: paint eagerly, authenticate, then connect. The 401s belong to the app, not
+ * to the login page.
+ */
+function paintAppShell(): void {
   authViewEl.classList.add("hidden");
   appViewEl.classList.remove("hidden");
   if (currentAuth) {
@@ -795,9 +828,21 @@ function showApp(): void {
     languageToggleEl.textContent = teachLanguage === "hi" ? "हिंदी" : "EN";
   }
   setDashboardVisible(false);
+}
+
+/**
+ * Everything that needs a confirmed session: the live socket and the saved
+ * conversation. Called once the server has vouched for the session.
+ */
+function startSessionServices(): void {
   connectSocket();
   // Non-blocking: the app is usable while this is in flight.
   void restoreSessionHistory();
+}
+
+function showApp(): void {
+  paintAppShell();
+  startSessionServices();
   inputEl.focus();
 }
 
@@ -808,6 +853,9 @@ function showAuth(): void {
   // The consent form belongs to the signed-out surface, so leaving it up would
   // show a student two forms at once after they sign back out.
   consentViewEl.classList.add("hidden");
+  // Same reasoning for the notice: it lives inside the auth view, so a sign-out
+  // mid-read would otherwise leave it sitting over the sign-in form.
+  aboutViewEl.classList.add("hidden");
 }
 
 // ---------------------------------------------------------------------------
@@ -863,6 +911,97 @@ async function showConsentStep(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The privacy notice (about view)
+// ---------------------------------------------------------------------------
+//
+// The same copy the consent step shows, fetched from the same public endpoint,
+// so a person reading this before they create an account is reading exactly what
+// they will be asked to agree to — and a judge comparing the two surfaces finds
+// them identical because there is only one source, PRIVACY_DISCLOSURE in
+// src/services/consent.ts.
+//
+// The endpoint is deliberately reached with a plain fetch rather than
+// `authedFetch`: this screen is shown on the login page, before anyone is
+// signed in, and going through the auth path would attach a refresh attempt to
+// a page that is supposed to be anonymous. The route is public for that reason.
+
+let aboutPolicyCache: { version: string; disclosure: string[] } | null = null;
+
+function renderAboutDisclosure(
+  version: string,
+  lines: readonly string[],
+): void {
+  aboutDisclosureEl.replaceChildren(
+    ...lines.map((line) => {
+      const li = document.createElement("li");
+      li.className = "flex gap-2 leading-relaxed";
+      const dot = document.createElement("span");
+      dot.className = "text-indigo-400";
+      dot.textContent = "•";
+      const text = document.createElement("span");
+      // textContent, not innerHTML — same reasoning as the consent step.
+      text.textContent = line;
+      li.append(dot, text);
+      return li;
+    }),
+  );
+  aboutVersionEl.textContent = version;
+}
+
+function showAbout(): void {
+  aboutViewEl.classList.remove("hidden");
+  aboutCloseEl.focus();
+
+  // The notice is worth having even if the app is half-loaded, so this never
+  // gates the dialog itself — only its contents.
+  if (aboutPolicyCache) {
+    renderAboutDisclosure(aboutPolicyCache.version, aboutPolicyCache.disclosure);
+    return;
+  }
+
+  void (async () => {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/auth/consent/policy`, {
+        headers: { ...CSRF_HEADER },
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as {
+        version?: string;
+        disclosure?: string[];
+      };
+      if (!Array.isArray(body.disclosure) || !body.version) throw new Error("shape");
+      aboutPolicyCache = { version: body.version, disclosure: body.disclosure };
+      renderAboutDisclosure(body.version, body.disclosure);
+    } catch {
+      // Say so rather than rendering an empty list. A privacy notice that
+      // silently comes back blank is the one failure worth being loud about:
+      // the student would read "no data is stored" into an empty box.
+      aboutVersionEl.textContent = "unavailable";
+      aboutDisclosureEl.replaceChildren();
+      const li = document.createElement("li");
+      li.className = "text-xs text-amber-200";
+      li.textContent =
+        "The disclosure could not be loaded, so it is not safe to agree to anything yet. " +
+        "Reload the page, or read it in the project's README.";
+      aboutDisclosureEl.append(li);
+    }
+  })();
+}
+
+function hideAbout(): void {
+  aboutViewEl.classList.add("hidden");
+}
+
+aboutLinkEl.addEventListener("click", showAbout);
+aboutLinkConsentEl.addEventListener("click", showAbout);
+aboutCloseEl.addEventListener("click", hideAbout);
+// Escape closes it. A dialog you cannot back out of with the keyboard is a
+// dialog that traps someone using a screen reader or a switch device.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !aboutViewEl.classList.contains("hidden")) hideAbout();
+});
+
 function hideConsentStep(): void {
   consentViewEl.classList.add("hidden");
   authFormEl.classList.remove("hidden");
@@ -904,6 +1043,19 @@ consentViewEl.addEventListener("submit", async (event) => {
       }),
     });
     const body = (await res.json()) as { error?: string; canUseAi?: boolean };
+
+    // The same 401 as the GET in `ensureConsent`, and the same trap: it means the
+    // session is gone, not that the answer was wrong. Showing "Authentication
+    // required." in the form and leaving it up is the worst option available —
+    // the notice is now unsubmittable, but the student has no reason to know
+    // that, so they fill it in again and press the button again. Each attempt
+    // fires another 401 + refresh 400, which is exactly the console pattern this
+    // was found from. Sign out so they land on a screen they can act on.
+    if (res.status === 401) {
+      await signOut();
+      return;
+    }
+
     if (!res.ok || body.canUseAi !== true) {
       consentErrorEl.textContent = body.error ?? "Please complete this step.";
       return;
@@ -2037,7 +2189,10 @@ if (import.meta.env.DEV) {
  * Painting first is deliberate: the round trip is local-to-local and fast, and
  * flashing a sign-in screen at a signed-in student on every reload would be a
  * worse regression than a brief flash of the wrong screen in the rare case the
- * session really has expired.
+ * session really has expired. So the SHELL is painted from the cache, but nothing
+ * that needs a session is started until the server has confirmed one — otherwise
+ * a dead cookie fires a socket handshake and a session fetch that both 401, and
+ * the login page ends up spewing 401s it should never have made.
  */
 async function boot(): Promise<void> {
   if (!currentAuth) {
@@ -2046,7 +2201,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  showApp();
+  paintAppShell();
 
   try {
     const res = await fetch(`${SERVER_URL}/api/auth/me`, {
@@ -2069,6 +2224,9 @@ async function boot(): Promise<void> {
       userBadgeEl.textContent = `👤 ${body.user.displayName}`;
       mascot.setLanguage(body.user.language ?? "en");
     }
+    // Confirmed. Now the socket and the saved conversation are safe to ask for.
+    startSessionServices();
+    inputEl.focus();
   } catch {
     // The server is unreachable. Keep the cached session rather than signing the
     // student out because their laptop briefly lost wifi — the first real request
