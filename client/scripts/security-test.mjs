@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const BACKEND = "http://localhost:3000";
+const FRONTEND = "http://localhost:5173";
 const results = [];
 function check(label, ok, detail = "") {
   results.push({ label, ok });
@@ -541,7 +542,127 @@ try {
   );
   await gate.close();
 
-  // 6. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
+  // 8. A dead session must never be shown the consent form.
+  //
+  // This is a real bug that shipped, and it is easy to reintroduce. `authedFetch`
+  // RETURNS a 401 rather than throwing, so `ensureConsent` used to fall straight
+  // through its `canUseAi === true` check and render the consent step for a user
+  // with no session at all. They pick an age band, press continue, and the POST
+  // is refused with a bare "Authentication required." — a form that cannot
+  // possibly be submitted, with no explanation of what to do instead.
+  //
+  // Driven through a real browser because the whole defect lives in client-side
+  // control flow; an HTTP-level check would pass even with the bug present.
+  const staleCtx = await browser.newContext();
+  const stalePage = await staleCtx.newPage();
+  const staleUser = `secstale${Math.floor(Math.random() * 1e6)}`;
+  const staleReg = await stalePage.request.post(`${BACKEND}/api/auth/register`, {
+    headers: CSRF,
+    data: { username: staleUser, password: "stale-pass-12345" },
+  });
+  const staleBody = await staleReg.json();
+  check("stale-session fixture registered", staleReg.status() === 201, String(staleReg.status()));
+
+  // Drop the session the registration just left behind. `page.request` shares the
+  // browser context's cookie jar, so without this the "dead session" would still
+  // be perfectly alive and the consent form would be the CORRECT thing to show —
+  // the check below would pass for the wrong reason, or fail for the wrong one.
+  await staleCtx.clearCookies();
+
+  // A cached user with a credential that is no longer valid: exactly what a
+  // student has after clearing cookies, or after their 30-minute token lapses
+  // while the cached profile survives.
+  await stalePage.addInitScript((user) => {
+    try {
+      window.localStorage.setItem("agented:user", JSON.stringify(user));
+      window.localStorage.setItem("agented:token", "expired.invalid.jwt");
+    } catch {
+      /* storage unavailable — the assertion below still holds */
+    }
+  }, staleBody.user);
+  await stalePage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  // Give the boot sequence (me -> refresh -> consent) room to settle.
+  await stalePage.waitForTimeout(5000);
+
+  check(
+    "a dead session is NOT shown the consent form",
+    !(await stalePage.locator("#consent-view").isVisible()),
+    "the consent step was rendered for an unauthenticated visitor",
+  );
+  check(
+    "a dead session lands on the sign-in screen instead",
+    await stalePage.locator("#auth-view").isVisible(),
+    "neither the sign-in screen nor a usable app was shown",
+  );
+  check(
+    "a dead session does not leak into the app",
+    !(await stalePage.locator("#app-view").isVisible()),
+    "the app opened without a session",
+  );
+  await staleCtx.close();
+
+  // 8b. The consent form must never be rendered without a live session.
+  //
+  // The check above cannot reach this on its own: `boot` short-circuits on a
+  // failed /api/auth/me and returns before it ever calls ensureConsent. So the
+  // session is stubbed here instead — /me succeeds, and only the consent lookup
+  // comes back 401 — which is exactly the shape of the real bug: a session that
+  // dies between the two calls. That is precisely what happens when the socket
+  // handshake is rejected and the client tears the session down underneath
+  // itself.
+  //
+  // Before the fix, a 401 fell through the `canUseAi === true` check and the
+  // notice was rendered for someone who could not possibly submit it.
+  const doomedCtx = await browser.newContext();
+  const doomedPage = await doomedCtx.newPage();
+  const doomedUser = `secdoom${Math.floor(Math.random() * 1e6)}`;
+  const doomedReg = await doomedPage.request.post(`${BACKEND}/api/auth/register`, {
+    headers: CSRF,
+    data: { username: doomedUser, password: "doom-pass-12345" },
+  });
+  check("consent-401 fixture registered", doomedReg.status() === 201, String(doomedReg.status()));
+  const doomedUserBody = await doomedReg.json();
+
+  // Seed the cached profile. Without it `boot` short-circuits on
+  // `if (!currentAuth) { showAuth(); return; }` and never reaches the consent
+  // lookup at all — which is exactly how a first attempt at this test passed
+  // while proving nothing.
+  await doomedPage.addInitScript((user) => {
+    try {
+      window.localStorage.setItem("agented:user", JSON.stringify(user));
+    } catch {
+      /* storage unavailable */
+    }
+  }, doomedUserBody.user);
+
+  // A valid session in the cookie jar, but the consent lookup is refused.
+  await doomedPage.route(`${BACKEND}/api/auth/consent`, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Authentication required." }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await doomedPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await doomedPage.waitForTimeout(5000);
+
+  check(
+    "a 401 from the consent lookup does NOT render the consent form",
+    !(await doomedPage.locator("#consent-view").isVisible()),
+    "the consent step was rendered for a session the server refused",
+  );
+  check(
+    "and the app is not opened either",
+    !(await doomedPage.locator("#app-view").isVisible()),
+    "the app opened without consent",
+  );
+  await doomedCtx.close();
+
+  // 9. Optional: assert the auth limiter's 429 path (burns 10+ auth attempts).
   if (process.env.SECURITY_TEST_RATELIMIT === "1") {
     let sawThrottle = false;
     for (let i = 0; i < 12; i += 1) {

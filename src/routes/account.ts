@@ -98,7 +98,7 @@ router.delete("/", requireAuth, async (request, response) => {
     ]);
     // The account is gone, so any live session cookie must go with it — otherwise
     // the browser keeps a credential for an account that no longer exists.
-    clearAuthCookies(response);
+    clearAuthCookies(request, response);
 
     response.json({ deleted: true });
   } catch (error) {

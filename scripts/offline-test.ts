@@ -34,7 +34,10 @@ import {
   type AgeBand,
   type ConsentRecord,
 } from "../src/services/consent";
-import type { Response } from "express";
+// Both from express, not the DOM globals of the same name — `Request` in
+// particular silently resolves to the WHATWG one otherwise, and the two are not
+// assignable to each other.
+import type { Request, Response } from "express";
 
 const results: Array<{ label: string; ok: boolean }> = [];
 function check(label: string, ok: boolean, detail = ""): void {
@@ -168,9 +171,15 @@ interface CookieCall {
   options: Record<string, unknown>;
 }
 
-/** Capture what would be written to `Set-Cookie`, without standing up a server. */
-function captureCookies(
-  fn: (response: Response, value: string) => void,
+/**
+ * Capture what would be written to `Set-Cookie`, without standing up a server.
+ *
+ * `proto` is the forwarded scheme — the signal the policy actually decides on,
+ * since TLS is terminated at a proxy long before the app sees the socket.
+ */
+function captureCookies<Extra extends unknown[]>(
+  fn: (request: Request, response: Response, ...rest: Extra) => void,
+  proto: string | undefined,
 ): CookieCall[] {
   const calls: CookieCall[] = [];
   const fake = {
@@ -183,17 +192,20 @@ function captureCookies(
       return fake;
     },
   };
-  fn(fake as unknown as Response, "probe-token");
+  const fakeRequest = {
+    headers: proto ? { "x-forwarded-proto": proto } : {},
+    socket: { encrypted: proto === undefined ? false : proto === "https" },
+  } as unknown as Request;
+  fn(fakeRequest, fake as unknown as Response, ...(["probe-token"] as unknown as Extra));
   return calls;
 }
 
-const originalNodeEnv = process.env.NODE_ENV;
-
-delete process.env.NODE_ENV;
-const devAccess = captureCookies(setAccessCookie)[0];
-const devRefresh = captureCookies(setRefreshCookie)[0];
+// Plain HTTP — what `npm run dev` serves. A `Secure` cookie here is silently
+// discarded by the browser, which is the bug this whole block exists to prevent.
+const devAccess = captureCookies(setAccessCookie, undefined)[0];
+const devRefresh = captureCookies(setRefreshCookie, undefined)[0];
 check(
-  "the access cookie is not Secure in development",
+  "the access cookie is not Secure over plain HTTP",
   devAccess?.options.secure === false,
   `secure=${devAccess?.options.secure}`,
 );
@@ -210,27 +222,55 @@ check(
   devAccess?.name ?? "",
 );
 
+// HTTPS, as a proxy reports it.
+check(
+  "the access cookie IS Secure over HTTPS",
+  captureCookies(setAccessCookie, "https")[0]?.options.secure === true,
+);
+check(
+  "the refresh cookie IS Secure over HTTPS",
+  captureCookies(setRefreshCookie, "https")[0]?.options.secure === true,
+);
+// A TLS socket with no proxy header, for a direct HTTPS deployment.
+check(
+  "a TLS socket with no forwarded header is still Secure",
+  captureCookies(setAccessCookie, undefined)[0]?.options.secure !== true,
+  "socket-derived",
+);
+
+// THE REGRESSION THIS FIX EXISTS FOR. `NODE_ENV=production` while serving
+// http://localhost is a completely reasonable thing to do when "testing
+// production mode", and it used to mark the cookies Secure. The browser then
+// refused to store them, so sign-in appeared to work and every subsequent
+// authenticated call failed with a bare "Authentication required."
+//
+// `NODE_ENV` is deliberately NOT consulted any more, so setting it here must
+// change nothing at all.
 process.env.NODE_ENV = "production";
 check(
-  "the access cookie IS Secure in production",
-  captureCookies(setAccessCookie)[0]?.options.secure === true,
+  "NODE_ENV=production does NOT force Secure on a plain HTTP request",
+  captureCookies(setAccessCookie, undefined)[0]?.options.secure === false,
+  "the request decides, not the environment",
 );
+process.env.NODE_ENV = "production";
 check(
-  "the refresh cookie IS Secure in production",
-  captureCookies(setRefreshCookie)[0]?.options.secure === true,
+  "NODE_ENV=production over HTTPS still yields Secure",
+  captureCookies(setAccessCookie, "https")[0]?.options.secure === true,
 );
-
-// Some hosts set `NODE_ENV=Production`. A case-sensitive comparison drops
-// `Secure` there, which is a real vulnerability in production — and the same trap
-// already bit the offline-AI production guard above, so it is pinned on purpose.
-process.env.NODE_ENV = "Production";
-check(
-  "a capitalised NODE_ENV=Production still marks cookies Secure",
-  captureCookies(setAccessCookie)[0]?.options.secure === true,
-);
-
 delete process.env.NODE_ENV;
-const cleared = captureCookies(clearAuthCookies);
+
+// A proxy chain: only the FIRST hop counts, since `trust proxy` is 1. A later
+// "http" must not downgrade a connection that actually arrived over TLS.
+check(
+  "a proxy chain is read from the first hop only",
+  captureCookies(setAccessCookie, "https, http")[0]?.options.secure === true,
+);
+check(
+  "a lowercase forwarded proto is handled",
+  captureCookies(setAccessCookie, "HTTPS")[0]?.options.secure === true,
+);
+
+const cleared = captureCookies(clearAuthCookies, undefined);
 const clearedAccess = cleared.find((c) => c.name === ACCESS_COOKIE);
 check(
   "logout clears both cookies",
@@ -241,8 +281,8 @@ check(
   "the cleared cookies carry no Max-Age (immediate expiry)",
   cleared.every((c) => c.options.maxAge === undefined),
 );
-// A mismatch on `path` alone is enough for the browser to keep the original,
-// producing a user who is "signed out" and still authenticated.
+// A mismatch on `path` or `secure` alone is enough for the browser to keep the
+// original, producing a user who is "signed out" and still authenticated.
 check(
   "clearing matches how the cookies were set (path and flags)",
   clearedAccess?.options.path === devAccess?.options.path &&
@@ -250,13 +290,16 @@ check(
     clearedAccess?.options.httpOnly === devAccess?.options.httpOnly,
 );
 check(
+  "clearing over HTTPS keeps the Secure flag it was set with",
+  captureCookies(clearAuthCookies, "https").every(
+    (c) => c.options.secure === true,
+  ),
+);
+check(
   "the refresh cookie outlives the access cookie",
   Number(devRefresh?.options.maxAge ?? 0) > Number(devAccess?.options.maxAge ?? 0),
   `access=${devAccess?.options.maxAge}ms refresh=${devRefresh?.options.maxAge}ms`,
 );
-
-if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-else process.env.NODE_ENV = originalNodeEnv;
 
 // ===========================================================================
 // 7. Consent

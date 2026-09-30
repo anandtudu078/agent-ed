@@ -13,3 +13,4 @@ dist
 .srv.err
 PR_DESCRIPTION.md
 *.err
+*.out
