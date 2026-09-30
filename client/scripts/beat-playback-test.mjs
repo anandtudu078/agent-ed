@@ -43,13 +43,35 @@ const SKETCH_REPLY =
   "It guesses, checks, and adjusts. " +
   "What would you guess it gets wrong first?";
 
+// A reply with a check-for-understanding question in the MIDDLE, followed by
+// more teaching. The mid-lesson position is the whole point: if the wait only
+// applied to a final question it would prove nothing, because the lesson ends
+// there anyway and the student can answer with no wait at all.
+const TURN_REPLY =
+  "Machine learning is a way for computers to learn patterns from examples. " +
+  "Think of it like a spotlight that learns where to look. " +
+  "Before I go on: what does the model actually do when it gets an example wrong? " +
+  "It nudges its internal numbers a little each time, which is where attention and gradient descent come in. " +
+  "Over many rounds those small nudges become a real skill. " +
+  "What would you guess it takes more of, examples or examples labelled well?";
+
+/** How many sentences TURN_REPLY has, for the "stopped partway" assertion. */
+const TURN_SENTENCES = TURN_REPLY.split(/(?<=[.?!])\s+/).length;
+
 const results = [];
 function check(label, ok, detail = "") {
   results.push({ label, ok, detail });
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
 }
 
-const browser = await chromium.launch({ headless: true });
+// Stability flags, not tuning. The renderer was crashing mid-run with
+// "Page crashed" on a memory-constrained Windows box, which is indistinguishable
+// from a real product failure and makes the suite unrunnable. `--disable-dev-shm-usage`
+// is the same fix CI needs on its smaller Linux runners.
+const browser = await chromium.launch({
+  headless: true,
+  args: ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"],
+});
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
@@ -252,6 +274,164 @@ try {
     transcript.includes("Machine learning is a way for computers"),
   );
 
+  // --- Turn taking: the lesson stops and waits for the student ---------------
+  // Beats alone did not fix the chatbot problem. A lesson that asks a question and
+  // then immediately talks past it is still a monologue. This runs BEFORE the
+  // interruption test on purpose: that test sends a real message, so the server's
+  // genuine AI reply lands seconds later and cancels any simulated playthrough
+  // still running here. Ordering it first is the honest fix — a second browser
+  // context was tried first and only papered over the race.
+    // ==========================================================================
+    // TURN TAKING — the lesson stops and waits for the student
+    // ==========================================================================
+    //
+    // What has to be true is that the owl WAITS: it stops speaking, says so, and
+    // does not continue until the student answers.
+    await page.evaluate(() => window.__agentedTest.setTutorMode("teach"));
+    await page.waitForTimeout(200);
+    await page.evaluate(() => window.__tts.reset());
+    await page.evaluate((reply) => {
+      window.__agentedTest.simulateReply(reply);
+    }, TURN_REPLY);
+
+    // Wait for the owl to reach the mid-lesson check and stop there.
+    await page.waitForFunction(() => window.__agentedTest.isAwaitingReply() === true, null, {
+      timeout: 20000,
+    });
+
+    const spokenBeforePause = await page.evaluate(() => window.__tts.log.length);
+    check(
+      "the lesson stops at a mid-lesson question",
+      spokenBeforePause >= 1 && spokenBeforePause < TURN_SENTENCES,
+      `${spokenBeforePause} of ${TURN_SENTENCES} sentences spoken`,
+    );
+
+    // The visible cue: the student must be able to tell the owl is waiting rather
+    // than stuck. Checked as a real, unhidden element on the board.
+    const cue = await page.evaluate(() => {
+      const el = document.querySelector("#owl-stage .owl-turn-cue");
+      if (!el) return null;
+      return {
+        hidden: el.hasAttribute("hidden"),
+        text: (el.textContent ?? "").trim(),
+        dotAnimating: getComputedStyle(el.querySelector(".owl-turn-dot")).animationName,
+      };
+    });
+    check(
+      "the owl tells the student it is their turn",
+      Boolean(cue) && cue.hidden === false && cue.text.length > 0,
+      cue ? `hidden=${cue.hidden} text="${cue.text}"` : "no cue element",
+    );
+    check(
+      "the wait is visibly alive, not a frozen owl",
+      Boolean(cue) && cue.dotAnimating !== "none",
+      cue ? `dot animation=${cue.dotAnimating}` : "no cue element",
+    );
+
+    // The decisive assertion: the lesson must still be paused a moment later, and
+    // must NOT have run on by itself.
+    await page.waitForTimeout(2500);
+    const stillWaiting = await page.evaluate(() => window.__agentedTest.isAwaitingReply());
+    const spokenWhileWaiting = await page.evaluate(() => window.__tts.log.length);
+    check(
+      "the owl stays paused instead of talking past the question",
+      stillWaiting === true && spokenWhileWaiting === spokenBeforePause,
+      `waiting=${stillWaiting}, spoke ${spokenBeforePause} then ${spokenWhileWaiting}`,
+    );
+    // The student answers.
+    await page.locator("#message-input").fill("because more context is better");
+    await page.locator("#message-input").press("Enter");
+    await page.waitForTimeout(1000);
+    check(
+      "answering releases the pause",
+      (await page.evaluate(() => window.__agentedTest.isAwaitingReply())) === false,
+    );
+    check(
+      "the owl clears the 'your turn' prompt once answered",
+      await page.evaluate(() => {
+        const el = document.querySelector("#owl-stage .owl-turn-cue");
+        return !el || el.hasAttribute("hidden");
+      }),
+    );
+
+    // Answering does NOT resume the abandoned beats. Sending a message cancels the
+    // playthrough by design, so the answer drives a FRESH tutor reply instead —
+    // which is the right behaviour: a response generated from the student's answer
+    // beats a recording played back regardless of what they said.
+    //
+    // The first version of this test asserted the old beats carried on. It failed,
+    // and it was the test that was wrong, not the product.
+    const replied = await page
+      .locator("#messages .flex.justify-start > div")
+      .last()
+      .textContent()
+      .catch(() => null);
+    check(
+      "the answer is accepted and the tutor responds afresh",
+      (replied?.trim().length ?? 0) > 0,
+      `latest tutor bubble: ${(replied ?? "none").trim().slice(0, 60)}…`,
+    );
+
+    // CONTENT. A wait that swallowed the rest of the lesson silently would pass
+    // every check above, so assert the teaching BEFORE the question was actually
+    // spoken, and the question itself was the thing that stopped it.
+    const allSpoken = await page.evaluate(() =>
+      window.__tts.log.map((e) => e.text).join(" ").toLowerCase(),
+    );
+    check(
+      "the teaching before the question was actually spoken",
+      allSpoken.includes("spotlight") && allSpoken.includes("machine learning"),
+      allSpoken.slice(0, 80),
+    );
+
+    // CONTROL: the same reply in Socratic mode must NOT pause. A Socratic reply is
+    // already a single question the student answers, so pausing there would just
+    // add a pointless step. If this passed with the mode switch doing nothing, the
+    // checks above would be vacuous.
+    await page.evaluate(() => {
+      window.__agentedTest.setTutorMode("socratic");
+      window.__tts.reset();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate((reply) => {
+      window.__agentedTest.simulateReply(reply);
+    }, TURN_REPLY);
+    await page.waitForTimeout(4000);
+    check(
+      "CONTROL: Socratic mode does not pause mid-reply",
+      (await page.evaluate(() => window.__agentedTest.isAwaitingReply())) === false,
+    );
+
+    // A new chat must not leave a lesson parked on a question that is no longer on
+    // screen — the cancel path has to release the wait, or the owl waits forever
+    // telling a student to answer something they can no longer see.
+    await page.evaluate(() => {
+      window.__agentedTest.setTutorMode("teach");
+      window.__tts.reset();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate((reply) => {
+      window.__agentedTest.simulateReply(reply);
+    }, TURN_REPLY);
+    await page.waitForFunction(() => window.__agentedTest.isAwaitingReply() === true, null, {
+      timeout: 20000,
+    });
+    await page.evaluate(() => {
+      document.querySelector("#new-chat-button")?.click();
+    });
+    await page.waitForTimeout(1500);
+    check(
+      "starting a new chat releases a paused lesson",
+      (await page.evaluate(() => window.__agentedTest.isAwaitingReply())) === false,
+    );
+    check(
+      "the 'your turn' prompt is not stranded after a new chat",
+      await page.evaluate(() => {
+        const el = document.querySelector("#owl-stage .owl-turn-cue");
+        return !el || el.hasAttribute("hidden");
+      }),
+    );
+
   // --- Interruption: a new beat must not talk over the student -------------
   // Cancelling mid-playthrough used to leave the gap timer alive, which resumed
   // the loop and the owl kept talking over whatever the student typed next.
@@ -277,6 +457,12 @@ try {
   await page.evaluate(() => window.__tts.reset());
   await page.evaluate((reply) => {
     window.__agentedTest.setVisual(null);
+    // Back to Socratic explicitly. The turn-taking block above leaves the tutor in
+    // Teach mode, and this block only cares about beat->sketch pairing — where the
+    // lesson pauses for an answer is irrelevant to it. Left implicit, this
+    // inherited Teach mode and the run timed out waiting for playback that was
+    // legitimately paused waiting for a student who was never going to answer.
+    window.__agentedTest.setTutorMode("socratic");
     window.__agentedTest.simulateReply(reply);
   }, SKETCH_REPLY);
 

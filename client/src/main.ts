@@ -705,6 +705,12 @@ async function startNewChat(): Promise<void> {
   // Invalidate anything already in flight before we clear, so a late reply
   // can't repopulate the thread we are about to discard.
   conversationEpoch += 1;
+  // Stop the owl too. Bumping the epoch alone is not enough: it invalidates
+  // incoming REPLIES, but a beat playthrough that is already running is driven
+  // locally, so it carried on regardless. Clearing the thread under a running
+  // lesson left the owl talking — or, once turn-taking landed, waiting for an
+  // answer to a question that had just been deleted from the screen.
+  stopOwlSpeech();
   const studentId = getStudentId();
   try {
     await authedFetch(`/api/sessions/${encodeURIComponent(studentId)}`, {
@@ -986,6 +992,10 @@ formEl.addEventListener("submit", (event) => {
   stopOwlSpeech();
   resumeMicAfterSpeech();
   setAiStatus("thinking");
+  // A lesson waiting on a check beat is released here: the student has answered,
+  // so the owl should stop looking expectant and carry on teaching.
+  releaseLessonWaiter();
+  mascot.setAwaitingReply(false);
 
   responseEpoch = conversationEpoch;
     socket.emit("student-message", {
@@ -1004,6 +1014,38 @@ formEl.addEventListener("submit", (event) => {
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 let micSuspendedForSpeech = false;
+
+/**
+ * Resolves when the student sends their next message, or null if nobody is
+ * waiting.
+ *
+ * This is what turns Teach mode from a lecture into a lesson. A monologue is
+ * the defining shape of a chatbot - user asks, system emits a long block of
+ * prose, user watches. Making the lesson *wait* at a check-for-understanding
+ * beat is the difference between "it told me about neural networks" and "it
+ * asked me something about them and waited".
+ *
+ * Resolved rather than polled, and released in a `finally` so a cancelled or
+ * superseded playthrough cannot leave a waiter hanging.
+ */
+let lessonWaiter: (() => void) | null = null;
+
+/** Called when the student sends a message: releases a waiting lesson. */
+function releaseLessonWaiter(): void {
+  const waiter = lessonWaiter;
+  if (!waiter) return;
+  lessonWaiter = null;
+  waiter();
+}
+
+/**
+ * How long a check beat waits for an answer before carrying on.
+ *
+ * Bounded, because a lesson that hangs forever on a student who has walked away
+ * or is thinking is worse than one that keeps going. It is generous enough to
+ * cover reading the question and typing a reply.
+ */
+const LESSON_WAIT_MS = 4 * 60 * 1000;
 
 /** Stop any guidance the owl is currently reading aloud. */
 function stopOwlSpeech(): void {
@@ -1126,9 +1168,12 @@ async function speakOwlMessage(text: string, visual: VisualSpec | null = null): 
   // segment at a time so the owl is visibly working through the idea with the
   // student rather than reciting a wall of text at them. A one-line reply (the
   // Socratic path) is a single beat and plays exactly as it always did.
+  //
+  // Turn-taking is on for Teach mode only. A Socratic reply is already a single
+  // question the student answers, so there is nothing to pause between.
   const beats = splitIntoBeats(text);
   if (beats.length > 1 && !singleUtteranceOverride) {
-    await playBeats(beats, visual);
+    await playBeats(beats, visual, tutorMode === "teach");
     return;
   }
 
@@ -1187,6 +1232,18 @@ const BEAT_LEAD_IN_MS = 120;
 let playRun = 0;
 
 /**
+ * True while a beat playthrough is between beats.
+ *
+ * Distinct from `playRun`: that counter identifies WHICH playthrough is current,
+ * while this says whether one is running at all. A test needs the second to know
+ * when the classroom has gone quiet.
+ */
+let playbackActive = false;
+
+/** The playthrough that last claimed playback, so a cancelled one can release it. */
+let playbackOwnerRun = -1;
+
+/**
  * The playthrough that last set the owl's mood.
  *
  * `curious` is a sticky mood, so whoever sets it must also clear it. Tracking
@@ -1213,10 +1270,20 @@ let singleUtteranceOverride = false;
  * student should watch the owl arrive at each idea. Awaiting each utterance's
  * end is what makes it a sequence; firing them all at once would just be the old
  * behaviour with extra steps.
+ *
+ * `turnTaking` makes the lesson stop and wait for the student at each check
+ * beat. It is off for Socratic replies, which are already a single question the
+ * student answers — pausing there would just add a pointless extra step.
  */
-async function playBeats(beats: LessonBeat[], visual: VisualSpec | null): Promise<void> {
+async function playBeats(
+  beats: LessonBeat[],
+  visual: VisualSpec | null,
+  turnTaking = false,
+): Promise<void> {
   const run = ++playRun;
   const stillCurrent = () => run === playRun;
+  playbackActive = true;
+  playbackOwnerRun = run;
 
   try {
     await new Promise((r) => window.setTimeout(r, BEAT_LEAD_IN_MS));
@@ -1266,6 +1333,17 @@ async function playBeats(beats: LessonBeat[], visual: VisualSpec | null): Promis
       // Never pause after the last beat — the student should be able to answer.
       if (index < beats.length - 1) {
         await new Promise((r) => window.setTimeout(r, BEAT_GAP_MS));
+        if (!stillCurrent()) return;
+
+        // Hand the floor back on a check beat, but only in Teach mode and only
+        // when there is genuinely more to come. This is the line between a
+        // lesson and a monologue: without it, Teach mode asks a question and
+        // then talks straight past it, which is the chatbot shape this whole
+        // loop exists to avoid.
+        if (turnTaking && beat.kind === "check") {
+          await waitForStudentBeat(run);
+          if (!stillCurrent()) return;
+        }
       }
     }
   } finally {
@@ -1283,12 +1361,67 @@ async function playBeats(beats: LessonBeat[], visual: VisualSpec | null): Promis
       mascot.setMood("neutral");
       moodOwnerRun = -1;
     }
+    // Clear the "your turn" prompt for the same reason as the mood above: every
+    // interruption path returns early into this block, so a cue left up by a
+    // cancelled lesson would sit there telling a student to answer a question
+    // that is no longer being asked.
+    mascot.setAwaitingReply(false);
     // Same rule for the board: hand it back rather than freezing on whichever
     // picture happened to be up when the lesson ended — but only if nothing
     // newer has already put its own picture up.
     if (stillCurrent()) mascot.setSketch(null);
+    // Ownership, not `stillCurrent()`, for the same reason as the mood: a
+    // cancelled run is still the last one that was playing, so it is the one that
+    // must report the classroom as idle again.
+    if (playbackOwnerRun === run) {
+      playbackActive = false;
+      playbackOwnerRun = -1;
+    }
     resumeMicAfterSpeech();
   }
+}
+
+/**
+ * Pause the lesson until the student answers, or until the wait runs out.
+ *
+ * Three ways out, and all three are needed:
+ *   - the student sends something (the normal path)
+ *   - `stopOwlSpeech` bumps `playRun` (they interrupted, or started a new chat)
+ *   - `LESSON_WAIT_MS` elapses (they walked away, or are still thinking)
+ *
+ * The timeout is why this can't be a bare `await` on the waiter: a student who
+ * closes the tab mid-lesson must not leave a promise pending forever, and one
+ * who simply doesn't know what to say should get the rest of the explanation
+ * rather than a frozen owl.
+ */
+function waitForStudentBeat(run: number): Promise<void> {
+  mascot.setAwaitingReply(true);
+  // The status goes to idle while waiting: the owl is not thinking or speaking,
+  // it is waiting, and leaving the pill on "Teaching" would be a lie the student
+  // can read. The "your turn" cue below the bubble is what replaces it.
+  setAiStatus("idle");
+
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(poll);
+      window.clearTimeout(timeout);
+      if (lessonWaiter === finish) lessonWaiter = null;
+      resolve();
+    };
+    // Registered as the waiter, so the student's next message releases it.
+    lessonWaiter = finish;
+    // Polled rather than pushed: `stopOwlSpeech` invalidates a run by bumping a
+    // counter, and hooking that would mean threading a second callback through
+    // the cancellation path. At 200ms the cost is nil and the cancellation path
+    // stays exactly as it was.
+    const poll = window.setInterval(() => {
+      if (run !== playRun) finish();
+    }, 200);
+    const timeout = window.setTimeout(finish, LESSON_WAIT_MS);
+  });
 }
 
 /**
@@ -1616,6 +1749,21 @@ if (import.meta.env.DEV) {
     forceSingleUtterance: (on: boolean) => {
       singleUtteranceOverride = on;
     },
+    // Switch the tutor between Socratic and Teach, so the turn-taking suite can
+    // drive the mode it needs instead of depending on whatever mode the previous
+    // test happened to leave behind.
+    setTutorMode: (mode: TutorMode) => {
+      tutorMode = mode;
+      mascot.setMode(mode);
+    },
+    // Whether a lesson is currently paused waiting for the student. Polled from
+    // the test rather than pushed, because the test needs to observe the state
+    // at arbitrary moments and the transition is the thing under test.
+    isAwaitingReply: () => lessonWaiter !== null,
+    // Whether a reply is in flight or a lesson is still playing, so a test can
+    // wait for the app to go quiet instead of guessing at a DOM selector and
+    // racing a reply that is still landing.
+    isIdleForTest: () => !requestInFlight && !playbackActive,
     // Drives the owl's reaction directly, so the expression + animation
     // behaviour is covered without depending on a graded answer landing.
     // Stops playback first, exactly as the graded-answer path in showDashboard
