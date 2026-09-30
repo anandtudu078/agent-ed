@@ -154,6 +154,18 @@ const PILL_TEXT: Record<MascotStatus, string> = {
   speaking: "Teaching",
 };
 
+/**
+ * Shown under the bubble while the lesson is paused waiting for an answer.
+ *
+ * Phrased as an instruction rather than a status, because a student staring at
+ * a stopped owl needs to be told what to do next, not informed that something
+ * is happening. Bilingual like every other line the owl speaks.
+ */
+const TURN_CUE: Record<TeachLanguage, string> = {
+  en: "Your turn — answer to continue",
+  hi: "अब आपकी बारी — जवाब दें और आगे बढ़ें",
+};
+
 const PILL_STYLES: Record<MascotStatus, string> = {
   idle: "border-slate-700 bg-slate-800/80 text-slate-400",
   thinking: "border-indigo-500/50 bg-indigo-500/10 text-indigo-300",
@@ -406,6 +418,14 @@ export function createMascot(
   visualStepCount: () => number;
   /** Switch the owl's own language. */
   setLanguage: (language: TeachLanguage) => void;
+  /**
+   * Show or hide the "your turn" prompt under the bubble.
+   *
+   * Set while the lesson is paused waiting for the student to answer a check
+   * beat. The owl looks expectant and says so in words, so a pause reads as
+   * "it's waiting for you" rather than "it has stopped working".
+   */
+  setAwaitingReply: (waiting: boolean) => void;
 } {
   host.innerHTML = `
     <style>
@@ -431,6 +451,10 @@ export function createMascot(
       }
       .owl-visual.owl-mood-supportive { animation: owlnod 2.4s ease-in-out infinite; }
       .owl-mood-curious .owl-brows { animation: owlbrowraise 2.6s ease-in-out infinite; }
+      /* A slow pulse on the cue dot: the one thing on screen that is still
+         moving while the lesson waits, so the wait doesn't read as a hang. */
+      .owl-awaiting .owl-turn-dot { animation: owlturnpulse 1.9s ease-in-out infinite; }
+      @keyframes owlturnpulse { 0%,100% { opacity:0.35; transform:scale(0.85); } 50% { opacity:1; transform:scale(1.15); } }
       @keyframes owlbreathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.012,1.022); } }
       @keyframes owlhop { 0% { transform: translateY(0) scaleY(1); } 30% { transform: translateY(0) scaleY(0.9); } 55% { transform: translateY(-16px) scaleY(1.07); } 100% { transform: translateY(0) scaleY(1); } }
       @keyframes owlsparkle { 0% { opacity: 0; transform: scale(0.4) rotate(0deg); } 40% { opacity: 1; transform: scale(1.15) rotate(22deg); } 100% { opacity: 0; transform: scale(0.7) rotate(45deg); } }
@@ -440,7 +464,8 @@ export function createMascot(
         .owl-blink, .owl-talking .owl-beak, .owl-body-grp,
         .owl-visual.owl-mood-excited, .owl-visual.owl-mood-proud,
         .owl-mood-excited .owl-sparkles, .owl-mood-proud .owl-sparkles,
-        .owl-visual.owl-mood-supportive, .owl-mood-curious .owl-brows { animation: none; }
+        .owl-visual.owl-mood-supportive, .owl-mood-curious .owl-brows,
+        .owl-awaiting .owl-turn-dot { animation: none; }
       }
     </style>
     <div class="owl-display" data-state="idle">
@@ -483,6 +508,14 @@ export function createMascot(
             <span class="owl-bubble-tail absolute -top-[7px] left-14 h-3 w-3 rotate-45 rounded-[2px] border-l border-t sm:left-20"></span>
             <p class="owl-message text-sm font-medium leading-relaxed sm:text-base"></p>
           </div>
+          <p
+            class="owl-turn-cue mt-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-indigo-300/90"
+            role="status"
+            hidden
+          >
+            <span class="owl-turn-dot h-1.5 w-1.5 rounded-full bg-indigo-400"></span>
+            <span class="owl-turn-text"></span>
+          </p>
         </div>
       </div>
       <div class="mx-auto h-2.5 w-28 rounded-b-lg bg-slate-800"></div>
@@ -506,6 +539,8 @@ export function createMascot(
   const bubble = display.querySelector<HTMLElement>(".owl-bubble")!;
   const tail = display.querySelector<HTMLElement>(".owl-bubble-tail")!;
   const message = display.querySelector<HTMLElement>(".owl-message")!;
+  const turnCue = display.querySelector<HTMLElement>(".owl-turn-cue")!;
+  const turnText = display.querySelector<HTMLElement>(".owl-turn-text")!;
 
   let status: MascotStatus = "idle";
   let customMessage: string | null = null;
@@ -513,6 +548,15 @@ export function createMascot(
   /** True while the owl is actually delivering a line (mouth moving). */
   let talking = false;
   let revealTimer: number | null = null;
+  /**
+   * True while the lesson is paused waiting for the student to answer.
+   *
+   * Separate from `status` for the same reason `MascotStatus` is separate from
+   * `MascotMood`: "what is the owl doing" and "how does it feel" are different
+   * axes, and a paused lesson is a third thing again. A mascot stuck in
+   * "speaking" while it waits is performing at nobody.
+   */
+  let awaitingReply = false;
   /** Topic diagram for the board, when the tutor is explaining one. */
   let topicVisual: VisualSpec | null = null;
   /**
@@ -617,6 +661,11 @@ export function createMascot(
     boardArt.innerHTML = sketch || diagram || boardSvg(boardKind);
     boardArt.classList.toggle("owl-board-visual", Boolean(sketch || diagram));
     display.classList.toggle("owl-talking", talking);
+    // The "your turn" prompt only makes sense on the full classroom display —
+    // collapsed, there is no room for it and the bubble is hidden anyway.
+    turnCue.hidden = !awaitingReply || collapsed;
+    display.classList.toggle("owl-awaiting", awaitingReply);
+    turnText.textContent = awaitingReply ? TURN_CUE[language] : "";
 
     // The display chrome (pill, glow, dataset state) follows the *visible*
     // state: while the tutor's guidance is on screen the owl keeps presenting
@@ -810,6 +859,15 @@ export function createMascot(
     return true;
   }
 
+  function setAwaitingReply(waiting: boolean): void {
+    if (awaitingReply === waiting) return;
+    awaitingReply = waiting;
+    // The owl goes expectant while it waits. `curious` is a sticky mood, so it
+    // is NOT set through setMood here — that would install a revert timer this
+    // component doesn't own. main.ts clears it when the student answers.
+    render();
+  }
+
   function setMood(next: MascotMood, options?: { holdMs?: number }): void {
     if (moodTimer !== null) {
       window.clearTimeout(moodTimer);
@@ -847,5 +905,6 @@ export function createMascot(
     setSketch,
     visualStepCount: () => visualStepCount(topicVisual),
     setLanguage,
+    setAwaitingReply,
   };
 }

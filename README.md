@@ -91,11 +91,12 @@ Or individually:
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:return` | 32 | Return detection and first run |
 | `npm run test:offline` | 30 | The offline AI gate — mostly an attack on the production refusal |
+| `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
 | `npm run test:ui` | 93 | Full browser flows (Playwright) |
-| `npm run test:playback` | 20 | Beat sequencing and sketch/board pairing (Playwright) |
+| `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
 | `npm run test:security` | 23 | Auth, authz, CORS, token rotation, XSS |
 
 The three browser suites need the app running (`npm run dev` in both terminals)
@@ -121,6 +122,56 @@ npx tsc --noEmit --project client/tsconfig.json
 > owl draws. They had no permanent coverage before — the earlier tests were a
 > throwaway script that was later deleted.
 
+### Does the tutor actually teach?
+
+Every other suite tests the app *around* the model - parsing, scheduling,
+segmentation, rendering, authorisation. `test:quality` asks the question none of
+them ask: is the teaching any good?
+
+```bash
+npm run test:quality     # needs GROQ_API_KEY or GEMINI_API_KEY
+```
+
+It calls the real `generateTutorResponse` with the real system prompts across
+eight cases - Socratic and Teach, English and Hindi, including a follow-up that
+has thread context and a student who demands the answer outright - and grades
+what comes back in two separate layers:
+
+**Contract checks (50) - deterministic, and they gate.** The promises the
+prompts make and the code depends on: Socratic mode must not hand over the
+answer, must ask something, must stay short enough to think about; Teach mode
+must explain substantively and close by checking understanding; Hindi must come
+back as Devanagari. A prompt is a request. These make some of them obligations.
+
+**Judged checks - one model call per case, reported but never gating.** Factual
+soundness, whether the withholding actually worked, whether it built on the
+thread, whether a beginner would understand it. These are a grader that is
+itself a language model, so failing a run on its opinion would produce a flaky
+suite nobody trusts. The scores are a baseline to watch for drift.
+
+Dimensions are only scored where they apply. `withholds` is not counted on a
+Teach-mode case, where explaining *is* the job, and `buildsOnThread` is not
+counted when the case has no prior turn. A baseline that punishes correct
+behaviour is worse than no baseline.
+
+Last run:
+
+```
+CONTRACT   50/50 passed
+JUDGED     withholds        5/5  (100%)
+           factuallySound   8/8  (100%)
+           onTopic          6/8  ( 75%)
+           helpsABeginner   7/8  ( 88%)
+           buildsOnThread   1/1  (100%)
+```
+
+Not in CI: it spends real provider quota and takes a few minutes. It is a manual
+gate before a release, not on every push. `QUALITY_SHOW_REPLIES=1` prints every
+reply for reading.
+
+> The honest limit: this measures whether the tutor *behaves* as specified. It
+> cannot prove the explanations are pedagogically good, and the judge shares a
+> blind spot with the model it is grading. It is a floor, not a ceiling.
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request to `master`, in
@@ -155,6 +206,37 @@ feedback, which is strictly worse than the honest `502` the routes return today.
 Its score is deliberately set below `REVIEW_PASS_SCORE`, so an offline run still
 records a weak point and a due review card. A higher score would take the happy
 path through a pipeline that would otherwise never execute in CI.
+
+### The owl takes turns
+
+Beats made the tutor's delivery readable. They did not make it a *lesson*: a
+lesson that asks a question and then talks straight past it is still a monologue,
+and a monologue is the defining shape of a chatbot — user asks, system emits a
+block of prose, user watches.
+
+So in **Teach mode** the playback loop now stops at each check-for-understanding
+beat and waits. The owl goes expectant, the status pill returns to `Idle` (it is
+not thinking or teaching, it is waiting), and a pulsing cue appears under the
+bubble: *"Your turn — answer to continue"*, in Hindi as well. The lesson
+continues only after the student replies. In **Socratic mode** nothing pauses,
+because a Socratic reply is already a single question the student answers.
+
+Three things can end a wait: an answer, an interruption, or four minutes. The
+timeout is not optional — a student who closes the tab must not leave a pending
+promise, and one who does not know what to say should get the rest of the
+explanation rather than a frozen owl.
+
+Answering *cancels* the remaining beats rather than resuming them, so the answer
+drives a fresh tutor reply. A response generated from what the student actually
+said beats a recording played back regardless — but it does mean the beats after
+a mid-lesson question are never heard. That trade is documented under
+[Known limits](#known-limits) rather than left to be discovered.
+
+This also fixed a real bug: **New Chat did not stop the owl.** Bumping
+`conversationEpoch` invalidates incoming replies, but a beat playthrough is
+driven entirely on the client, so clearing the thread under a running lesson left
+it talking — or, once turn-taking landed, waiting for an answer to a question
+that had just been deleted from the screen.
 
 ---
 
@@ -274,6 +356,13 @@ most likely things to need changing.
   list is split sensibly only because the lines happen to break. A single
   40-word sentence with no clause punctuation is broken at the least-bad comma,
   and no beat is ever re-ordered to match the diagram.
+- **A wait is not the same as a reply.** In Teach mode the lesson stops at each
+  check-for-understanding beat and waits up to four minutes for an answer. But
+  answering *cancels* the rest of that lesson rather than resuming it — the
+  answer drives a fresh tutor reply instead, which is usually what you want but
+  does mean the beats after a mid-lesson question are never heard. Making the
+  wait conditional on what the student actually said needs the tutor to be
+  re-entered mid-lesson, which it is not.
 - **Beat sketches are a keyword table, not a picture model.** Sixteen hand-drawn
   SVGs are picked by matching nouns in the beat (`client/src/components/sketches.ts`).
   A beat naming two concrete things gets whichever the cue table lists first, so
