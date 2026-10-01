@@ -31,6 +31,7 @@
     "test:sketches": "npm --prefix client run test:sketches",
     "test:render": "npm --prefix client run test:render",
     "test:ui": "node client/scripts/ui-test.mjs",
+    "test:workflow": "node client/scripts/workflow-test.mjs",
     "test:playback": "npm --prefix client run test:playback",
     "test:security": "node client/scripts/security-test.mjs"
   },

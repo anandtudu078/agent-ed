@@ -8,6 +8,15 @@ export interface CourseModule {
    * actually say out loud ("recursion"), not a slug ("module-3").
    */
   topic: string;
+  /**
+   * Descriptive breakdown shown on the course detail screen.
+   *
+   * Defaults to an empty array rather than being required, so a course seeded
+   * before this field existed still validates and still loads. A missing list
+   * and an empty one mean the same thing here: this module has no curated
+   * breakdown.
+   */
+  subtopics: string[];
 }
 
 export interface CourseDocument extends Document {
@@ -24,6 +33,7 @@ const courseModuleSchema = new Schema<CourseModule>(
   {
     title: { type: String, required: true },
     topic: { type: String, required: true },
+    subtopics: { type: [String], default: [] },
   },
   { _id: false },
 );
