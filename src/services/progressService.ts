@@ -604,6 +604,69 @@ export function mergeWeakPoints(
 }
 
 /**
+ * Apply a read-compute-write to `Progress` without losing a concurrent update.
+ *
+ * `weakPoints`, `reviewCards` and `testHistory` are arrays inside one document,
+ * and both the chat path and the assessment path fold new observations into them
+ * by reading the array, computing a new one, and `$set`-ting the whole thing.
+ * Two writers doing that concurrently — a student submitting a graded answer
+ * while their own next message is being processed — both read the same starting
+ * array and the second write silently discards the first. The lost update is
+ * invisible: no error, and a weak point the tutor was just told about vanishes
+ * from the profile that produced the next prompt.
+ *
+ * Fixed by making the write conditional on the value it was computed from. The
+ * filter requires the stored array to still equal what we read, so a writer that
+ * raced simply matches nothing and retries against the newer value. This is
+ * optimistic concurrency: no transactions, no locks, and the common case — no
+ * concurrent writer — is still a single round trip.
+ *
+ * `mutate` must be pure with respect to `current`, because it is called again on
+ * every retry with a fresh read.
+ */
+export async function updateProgressWithRetry<T>(
+  studentId: string,
+  fields: readonly string[],
+  mutate: (current: Record<string, unknown>) => { set: Record<string, unknown>; result: T },
+  attempts = 3,
+): Promise<T> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const current: Record<string, unknown> =
+      (await Progress.findOne({ studentId }).lean()) ?? {};
+
+    // Only the fields this mutation depends on participate in the guard, so an
+    // unrelated concurrent write doesn't force a pointless retry.
+    const guard: Record<string, unknown> = { studentId };
+    for (const field of fields) {
+      const value = current[field];
+      guard[field] = { $eq: value ?? null };
+    }
+
+    const { set, result } = mutate(current);
+
+    const updated = await Progress.findOneAndUpdate(
+      guard,
+      { $set: set },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    // A returned document means our guard still held, so nobody wrote in
+    // between. Null means we lost the race and must recompute from the newer
+    // value; an upsert that matched nothing also returns null, and the retry
+    // creates the row.
+    if (updated) {
+      return result;
+    }
+  }
+
+  // Every attempt was contended by a concurrent writer, so the guard never held
+  // and nothing was written. Thrown rather than silently ignored: three
+  // simultaneous writers to one student's progress is not a realistic race, and
+  // dropping a graded result on the floor is worse than a visible error.
+  throw new Error("Could not update progress after retrying.");
+}
+
+/**
  * Persist what this turn taught us about the student: their weak points and
  * their pace. Called after a tutor reply — a failure here must never take the
  * chat request down with it, so callers should treat this as best-effort.
@@ -614,22 +677,21 @@ export async function recordLearningSignal(
   masteryEstimate: number,
   topicsVisited: TopicVisit[],
 ): Promise<{ learningSpeed: number; weakPoints: WeakPoint[] }> {
-  const existing = await Progress.findOne({ studentId })
-    .select({ weakPoints: 1 })
-    .lean();
+  const mastery = clampMastery(masteryEstimate);
 
-  const weakPoints = mergeWeakPoints(
-    (existing?.weakPoints ?? []) as WeakPoint[],
-    topic,
-    clampMastery(masteryEstimate),
+  return updateProgressWithRetry<{ learningSpeed: number; weakPoints: WeakPoint[] }>(
+    studentId,
+    ["weakPoints"],
+    (current) => {
+      const weakPoints = mergeWeakPoints(
+        (current.weakPoints ?? []) as WeakPoint[],
+        topic,
+        mastery,
+      );
+      return {
+        set: { weakPoints, learningSpeed: computeLearningSpeed(topicsVisited) },
+        result: { learningSpeed: computeLearningSpeed(topicsVisited), weakPoints },
+      };
+    },
   );
-  const learningSpeed = computeLearningSpeed(topicsVisited);
-
-  await Progress.findOneAndUpdate(
-    { studentId },
-    { $set: { weakPoints, learningSpeed } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-
-  return { learningSpeed, weakPoints };
 }

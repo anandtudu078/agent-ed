@@ -44,7 +44,11 @@ router.get("/export", requireAuth, async (request, response) => {
     const [session, progress, activeSessions] = await Promise.all([
       Session.findOne({ studentId: user.username }).lean(),
       Progress.findOne({ studentId: user.username }).lean(),
-      RefreshToken.countDocuments({ userId: user.username, revokedAt: null }),
+      // Keyed by the user's `_id`, which is what `issueRefreshToken` stores —
+      // not the username. Session and Progress are keyed by username, but
+      // refresh tokens are not, and querying them the other way silently
+      // matched nothing and always reported zero active sessions.
+      RefreshToken.countDocuments({ userId: authUser.id, revokedAt: null }),
     ]);
 
     response.setHeader("Content-Disposition", 'attachment; filename="agented-data.json"');
@@ -90,12 +94,19 @@ router.delete("/", requireAuth, async (request, response) => {
       return;
     }
 
-    await Promise.all([
-      User.deleteOne({ _id: authUser.id }),
-      Session.deleteMany({ studentId: user.username }),
-      Progress.deleteMany({ studentId: user.username }),
-      RefreshToken.deleteMany({ userId: user.username }),
-    ]);
+    // Delete the account first, then everything keyed by it. Ordered rather than
+    // `Promise.all`: the user row is the thing that makes the account real, so if
+    // it goes first and a later delete fails we are left with orphaned rows that
+    // are harmless, whereas the reverse order leaves a live account that the
+    // student believes they erased. Either way the error is reported rather than
+    // swallowed — `Promise.all` rejected on the first failure while the other
+    // deletes were still in flight, so a partial failure returned an
+    // indistinguishable 500 having done an unpredictable subset of the work.
+    await User.deleteOne({ _id: authUser.id });
+    await Session.deleteMany({ studentId: user.username });
+    await Progress.deleteMany({ studentId: user.username });
+    // Refresh tokens are keyed by `_id`, unlike the two collections above.
+    await RefreshToken.deleteMany({ userId: authUser.id });
     // The account is gone, so any live session cookie must go with it — otherwise
     // the browser keeps a credential for an account that no longer exists.
     clearAuthCookies(request, response);

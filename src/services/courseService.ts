@@ -165,22 +165,6 @@ export async function enrollInCourse(
   const progress = await loadVisitedTopics(studentId);
   const derived = computeCourseProgress(course, progress);
 
-  const existing = await Progress.findOne({ studentId })
-    .select({ enrolledCourses: 1 })
-    .lean();
-  const already = (existing?.enrolledCourses ?? []).find(
-    (item) => item.courseId === courseId,
-  );
-  if (already) {
-    return { enrollment: already, created: false };
-  }
-
-  if ((existing?.enrolledCourses ?? []).length >= MAX_ENROLLMENTS) {
-    throw new Error(
-      `You can be enrolled in at most ${MAX_ENROLLMENTS} courses at once.`,
-    );
-  }
-
   const enrollment: EnrolledCourse = {
     courseId,
     title: course.title,
@@ -190,25 +174,71 @@ export async function enrollInCourse(
     enrolledAt: new Date(),
   };
 
-  await Progress.findOneAndUpdate(
-    { studentId },
+  // One atomic conditional update rather than read-then-$push.
+  //
+  // Reading the array and pushing afterwards left two races the comment above
+  // claims are prevented: a double-click could read "not enrolled" twice and
+  // push two enrollments, and two concurrent requests could both pass the
+  // MAX_ENROLLMENTS check against the same stale count and blow past the cap.
+  //
+  // Both guards live in the filter, so MongoDB evaluates them atomically against
+  // the current document: `courseId: { $ne: courseId }` makes the push a no-op
+  // when already enrolled, and `$expr` compares the live array length rather than
+  // a value read earlier.
+  //
+  // Not upserted: an upsert would try to *insert* when the filter misses (already
+  // enrolled, or at the cap) and trip the unique index on `studentId`, turning
+  // both legitimate outcomes into a 500. The progress row is created on the
+  // dashboard load and by the chat path, and `enrollInCourse` is never the first
+  // write for a new student.
+  const updated = await Progress.findOneAndUpdate(
+    {
+      studentId,
+      "enrolledCourses.courseId": { $ne: courseId },
+      $expr: {
+        $lt: [{ $size: { $ifNull: ["$enrolledCourses", []] } }, MAX_ENROLLMENTS],
+      },
+    },
     { $push: { enrolledCourses: enrollment } },
-    { upsert: true, setDefaultsOnInsert: true },
-  );
+    { new: true },
+  ).lean();
 
-  return { enrollment, created: true };
+  if (updated) {
+    return { enrollment, created: true };
+  }
+
+  // Nothing was pushed. Either the student is already enrolled (the idempotent
+  // case the dashboard's single button depends on) or the cap is reached; re-read
+  // to tell those apart rather than guessing which one happened.
+  const after = await Progress.findOne({ studentId })
+    .select({ enrolledCourses: 1 })
+    .lean();
+  const alreadyNow = (after?.enrolledCourses ?? []).find(
+    (item) => item.courseId === courseId,
+  );
+  if (alreadyNow) {
+    return { enrollment: alreadyNow, created: false };
+  }
+
+  throw new Error(
+    `You can be enrolled in at most ${MAX_ENROLLMENTS} courses at once.`,
+  );
 }
 
 export async function unenrollFromCourse(
   studentId: string,
   courseId: string,
 ): Promise<boolean> {
-  const result = await Progress.findOneAndUpdate(
-    { studentId },
+  // Report whether anything was actually removed, not merely whether the
+  // student document came back. `Boolean(result)` was true for every student
+  // who had a Progress row at all, so leaving a course you were not enrolled in
+  // answered "removed: true" — a client that trusted that would hide a real
+  // enrollment after a pull that quietly did nothing.
+  const result = await Progress.updateOne(
+    { studentId, "enrolledCourses.courseId": courseId },
     { $pull: { enrolledCourses: { courseId } } },
-    { new: true },
-  ).lean();
-  return Boolean(result);
+  );
+  return (result.modifiedCount ?? 0) > 0;
 }
 
 /**

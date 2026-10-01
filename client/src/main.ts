@@ -1515,10 +1515,62 @@ function loadVoices(): Promise<SpeechSynthesisVoice[]> {
 
 /** Does this device have a voice that can actually speak this language? */
 async function hasVoiceFor(language: TeachLanguage): Promise<boolean> {
+  return (await pickVoiceFor(language)) !== null;
+}
+
+/**
+ * The best available voice for a language, or null if the device has none.
+ *
+ * Prefers an exact `hi-IN`/`en-US` match, then any regional variant of the same
+ * base language (`hi-IN` for a student in India, `en-GB` for one in the UK).
+ * Deliberately not "any voice at all" — a fallback to an unrelated language
+ * would read Devanagari aloud as gibberish, which is worse than silence.
+ *
+ * This has to return the *voice*, not just a boolean. The device-level check and
+ * the utterance have to agree: `hasVoiceFor` confirmed a Hindi voice existed,
+ * and then the utterance was created with `lang = "en-US"` and no `.voice` set
+ * at all, so the browser picked its own default English voice and read
+ * Devanagari with English phonetics. The student got a garbled "answer" from a
+ * device that had a perfectly good Hindi voice installed.
+ */
+async function pickVoiceFor(language: TeachLanguage): Promise<SpeechSynthesisVoice | null> {
   const voices = await loadVoices();
-  if (!voices.length) return false;
+  if (!voices.length) return null;
+
   const prefix = language === "hi" ? "hi" : "en";
-  return voices.some((voice) => voice.lang?.toLowerCase().startsWith(prefix));
+  const matching = voices.filter((voice) =>
+    voice.lang?.toLowerCase().startsWith(prefix),
+  );
+  if (!matching.length) return null;
+
+  // An exact regional match first — hi-IN over hi-BD reads with the right
+  // vocabulary and pronunciation for the audience this app is built for.
+  const exact = `${prefix}-IN`;
+  return (
+    matching.find((voice) => voice.lang?.toLowerCase() === exact) ??
+    matching.find((voice) => voice.default) ??
+    matching[0]
+  );
+}
+
+/** The BCP-47 tag to request for a language, matching the voice we picked. */
+function langTagFor(language: TeachLanguage): string {
+  return language === "hi" ? "hi-IN" : "en-US";
+}
+
+/**
+ * Configure an utterance for the current teaching language.
+ *
+ * Both the tag and the voice must be set: the tag alone leaves voice selection
+ * to the browser, which is how Hindi text ended up on an English voice.
+ */
+async function applyVoice(
+  utterance: SpeechSynthesisUtterance,
+): Promise<void> {
+  const language: TeachLanguage = teachLanguage === "hi" ? "hi" : "en";
+  utterance.lang = langTagFor(language);
+  const voice = await pickVoiceFor(language);
+  if (voice) utterance.voice = voice;
 }
 
 /** The Wise Owl reads its guidance aloud, walking the diagram as it goes. */
@@ -1567,7 +1619,7 @@ async function speakOwlMessage(text: string, visual: VisualSpec | null = null): 
   const total = visualStepCount(visual);
 
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "en-US";
+  await applyVoice(utterance);
   utterance.rate = 1;
   utterance.pitch = 1.05;
   utterance.onstart = () => mascot.setSpeaking(true);
@@ -1814,16 +1866,21 @@ function waitForStudentBeat(run: number): Promise<void> {
 /**
  * Speak a single beat. Resolves true when it finished, false if it was
  * cancelled — so a playthrough stops rather than talking over the student.
+ *
+ * `async` because the voice has to be resolved before the utterance is handed
+ * to the browser, and the list populates asynchronously in Chrome. The cost is
+ * one cached lookup per call, not a round trip.
  */
-function speakOneBeat(text: string): Promise<boolean> {
+async function speakOneBeat(text: string): Promise<boolean> {
   const synth = window.speechSynthesis;
-  if (!synth) return Promise.resolve(false);
+  if (!synth) return false;
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  await applyVoice(utterance);
+  utterance.rate = 1;
+  utterance.pitch = 1.05;
 
   return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 1;
-    utterance.pitch = 1.05;
     utterance.onstart = () => mascot.setSpeaking(true);
     utterance.onend = () => {
       if (currentUtterance !== utterance) {
@@ -1920,60 +1977,91 @@ let speakingEnabled = true;
 let listeningEnabled = false;
 /** Teaching language, mirrored from the token so the UI can render immediately. */
 let teachLanguage: TeachLanguage = "en";
+/** In-flight language change, so two toggles can't interleave their writes. */
+let languageChangeInFlight: Promise<void> | null = null;
 let recognition: SpeechRecognitionLike | null = null;
+
+/**
+ * Reflect the teaching language everywhere the UI states it.
+ *
+ * One place, because the owl, the toggle label and `aria-pressed` were each
+ * being updated separately — so a failure partway through left the button
+ * advertising a language the app wasn't actually using.
+ */
+function applyTeachLanguageUi(language: TeachLanguage): void {
+  teachLanguage = language;
+  mascot.setLanguage(language);
+  languageToggleEl.setAttribute("aria-pressed", String(language === "hi"));
+  languageToggleEl.textContent = language === "hi" ? "हिंदी" : "EN";
+}
 
 /** Persist the language and re-apply it to the owl. */
 async function setTeachLanguage(next: TeachLanguage): Promise<void> {
   if (next === teachLanguage) return;
-  teachLanguage = next;
-  // Stop the owl mid-explanation before switching. A beat playthrough in flight
-  // keeps writing its already-computed English beat into the bubble, so without
-  // this the student switches to Hindi and the owl carries on talking English —
-  // and the phrase toggle appears to do nothing. This is also just correct: the
-  // student has asked for a different language, so the lesson in the old one has
-  // stopped being what they want to hear.
-  stopOwlSpeech();
-  resumeMicAfterSpeech();
-  mascot.clearMessage();
-  setAiStatus("idle");
-  mascot.setLanguage(next);
-  languageToggleEl.setAttribute("aria-pressed", String(next === "hi"));
-  languageToggleEl.textContent = next === "hi" ? "हिंदी" : "EN";
-  try {
-    const res = await authedFetch("/api/auth/language", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language: next }),
-    });
-    if (!res.ok) throw new Error("Could not save the language.");
-    const body = (await res.json()) as { token?: string; user?: StoredUser };
-    // The server re-issues the session cookie so the new language is in the JWT,
-    // and re-sends the display copy. Nothing is written to localStorage as a
-    // credential — only the name and language, which cannot authorise anything.
-    if (body.user) {
-      storeAuth({ user: body.user });
-      currentAuth = { user: body.user };
-      // Reconnect so the chat socket authenticates with the NEW session cookie.
-      //
-      // The socket decodes the token once, at handshake, and keeps
-      // `socket.data.user` for its whole life — so a socket opened in English
-      // answers in English no matter how many times the preference is saved. The
-      // owl's own phrases changed and the toggle looked half-broken, which is
-      // exactly the symptom the `stopOwlSpeech` above was added for.
-      //
-      // Cheap: one reconnect on a deliberate user action, and it is the only way
-      // the server ever sees the new language.
-      if (socket?.connected) {
-        disconnectSocket();
-        connectSocket();
+  // Re-entrant guard. Without it, two clicks in quick succession both passed the
+  // check above, both wrote `teachLanguage`, and both PATCHed — so whichever
+  // response landed last won, and the failure path below restored a value derived
+  // by flipping a string rather than the language that was actually in effect.
+  if (languageChangeInFlight) return languageChangeInFlight;
+
+  // Recorded, not re-derived, so the rollback restores the real prior value.
+  const previous = teachLanguage;
+
+  languageChangeInFlight = (async () => {
+    applyTeachLanguageUi(next);
+    // Stop the owl mid-explanation before switching. A beat playthrough in flight
+    // keeps writing its already-computed English beat into the bubble, so without
+    // this the student switches to Hindi and the owl carries on talking English —
+    // and the phrase toggle appears to do nothing. This is also just correct: the
+    // student has asked for a different language, so the lesson in the old one has
+    // stopped being what they want to hear.
+    stopOwlSpeech();
+    resumeMicAfterSpeech();
+    mascot.clearMessage();
+    setAiStatus("idle");
+    try {
+      const res = await authedFetch("/api/auth/language", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: next }),
+      });
+      if (!res.ok) throw new Error("Could not save the language.");
+      const body = (await res.json()) as { token?: string; user?: StoredUser };
+      // The server re-issues the session cookie so the new language is in the JWT,
+      // and re-sends the display copy. Nothing is written to localStorage as a
+      // credential — only the name and language, which cannot authorise anything.
+      if (body.user) {
+        storeAuth({ user: body.user });
+        currentAuth = { user: body.user };
+        // Reconnect so the chat socket authenticates with the NEW session cookie.
+        //
+        // The socket decodes the token once, at handshake, and keeps
+        // `socket.data.user` for its whole life — so a socket opened in English
+        // answers in English no matter how many times the preference is saved. The
+        // owl's own phrases changed and the toggle looked half-broken, which is
+        // exactly the symptom the `stopOwlSpeech` above was added for.
+        //
+        // Cheap: one reconnect on a deliberate user action, and it is the only way
+        // the server ever sees the new language.
+        if (socket?.connected) {
+          disconnectSocket();
+          connectSocket();
+        }
       }
+    } catch (error) {
+      // Roll the whole UI back, button included — a toggle still reading "हिंदी"
+      // while the tutor answers in English is the bug this replaces.
+      applyTeachLanguageUi(previous);
+      voiceHintEl.textContent =
+        error instanceof Error ? error.message : "Could not change the language.";
+      voiceHintEl.classList.remove("hidden");
     }
-  } catch (error) {
-    teachLanguage = next === "hi" ? "en" : "hi";
-    mascot.setLanguage(teachLanguage);
-    voiceHintEl.textContent =
-      error instanceof Error ? error.message : "Could not change the language.";
-    voiceHintEl.classList.remove("hidden");
+  })();
+
+  try {
+    await languageChangeInFlight;
+  } finally {
+    languageChangeInFlight = null;
   }
 }
 
@@ -1987,7 +2075,11 @@ function getRecognition(): SpeechRecognitionLike | null {
   if (!Ctor) return null;
 
   const instance = new Ctor();
-  instance.lang = "en-US";
+  // The recognition language follows the teaching language, same as the owl's
+  // own speech. Hardcoded to en-US, a Hindi student holding the mic had their
+  // Hindi question transcribed by an English recogniser — or returned as
+  // nothing at all — and then had to type what they had just said aloud.
+  instance.lang = langTagFor(teachLanguage === "hi" ? "hi" : "en");
   instance.interimResults = false;
   instance.continuous = true;
 
@@ -2222,7 +2314,11 @@ async function boot(): Promise<void> {
       storeAuth({ user: body.user });
       currentAuth = { user: body.user };
       userBadgeEl.textContent = `👤 ${body.user.displayName}`;
-      mascot.setLanguage(body.user.language ?? "en");
+      // Through the shared helper, so the toggle label and `aria-pressed` match
+      // the owl. Only `mascot.setLanguage` was called here, so a student whose
+      // stored language was Hindi from another device saw a Hindi owl beside a
+      // button reading "EN".
+      applyTeachLanguageUi(body.user.language ?? "en");
     }
     // Confirmed. Now the socket and the saved conversation are safe to ask for.
     startSessionServices();

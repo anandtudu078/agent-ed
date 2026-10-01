@@ -32,18 +32,22 @@ function utcDay(): string {
  * problem into a total outage, and the minute-level rate limit is still in
  * front of us either way. The failure is logged so it is visible.
  */
-export async function aiSpendLimit(
-  request: AuthenticatedRequest,
-  response: Response,
-  next: NextFunction,
-): Promise<void> {
-  const authUser = request.authUser;
-  if (!authUser?.id) {
-    // requireAuth runs first; if it somehow didn't, don't meter anything.
-    next();
-    return;
-  }
-
+/**
+ * Charge one call against a student's daily budget.
+ *
+ * Split out of the middleware so the socket chat path can meter identically —
+ * `processStudentMessage` is reached from both `POST /api/chat` and the
+ * `student-message` socket event, and the client uses the socket. Metering only
+ * the HTTP route left the cap unenforced on the path students actually take, so
+ * the bill it exists to protect was unbounded in practice.
+ *
+ * Fails *open* on a database error: blocking every student because a usage
+ * counter was briefly unreachable turns a bookkeeping problem into an outage,
+ * and the minute-level rate limit is still in front of us either way.
+ *
+ * Returns true when the call is within budget.
+ */
+export async function consumeDailyAiCall(userId: string): Promise<boolean> {
   const cap = dailyCallLimit();
   const day = utcDay();
 
@@ -60,23 +64,36 @@ export async function aiSpendLimit(
     // under the cap. The increment is a single atomic operation, so two
     // concurrent requests cannot both read "cap - 1" and both write "cap".
     await AiUsage.updateOne(
-      { userId: authUser.id, day },
-      { $setOnInsert: { userId: authUser.id, day, calls: 0 } },
+      { userId, day },
+      { $setOnInsert: { userId, day, calls: 0 } },
       { upsert: true },
     );
 
     const counted = await AiUsage.findOneAndUpdate(
-      { userId: authUser.id, day, calls: { $lt: cap } },
+      { userId, day, calls: { $lt: cap } },
       { $inc: { calls: 1 } },
       { new: true },
     );
-
-    if (counted) {
-      next();
-      return;
-    }
+    return Boolean(counted);
   } catch (error) {
     console.error("AI spend metering failed; allowing the request.", error);
+    return true;
+  }
+}
+
+export async function aiSpendLimit(
+  request: AuthenticatedRequest,
+  response: Response,
+  next: NextFunction,
+): Promise<void> {
+  const authUser = request.authUser;
+  if (!authUser?.id) {
+    // requireAuth runs first; if it somehow didn't, don't meter anything.
+    next();
+    return;
+  }
+
+  if (await consumeDailyAiCall(authUser.id)) {
     next();
     return;
   }
