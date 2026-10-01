@@ -95,3 +95,17 @@ export const Session: Model<SessionDocument> = model<SessionDocument>(
   "Session",
   sessionSchema,
 );
+
+/**
+ * How many topic visits are retained per student.
+ *
+ * Lives here rather than in `server.ts` because two writers append to
+ * `topicsVisited` — the chat path and the assessment path — and a cap enforced
+ * in only one of them is not a cap. The assessment route used to `$push`
+ * unbounded, so a student taking many checks grew this array inside the same
+ * document as `conversationHistory` until MongoDB's 16 MB ceiling made the
+ * account unable to chat at all.
+ *
+ * Applied with `$push: { each, slice: -N }`, keeping the most recent entries.
+ */
+export const MAX_STORED_TOPIC_VISITS = 500;

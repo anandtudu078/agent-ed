@@ -88,6 +88,12 @@ export function createSocketLimiter(options: {
     bucket.count += 1;
 
     // Opportunistic cleanup so the map does not grow unbounded.
+    //
+    // The threshold is not a limit on memory but a trigger: past it we sweep the
+    // expired buckets. Entries are keyed per distinct student, so a busy school
+    // accumulates one per user per minute, and the sweep is what keeps that from
+    // being permanent. Entries younger than the window are kept — deleting them
+    // would hand a student a fresh budget mid-window and let them exceed `max`.
     if (hits.size > 1000) {
       for (const [k, v] of hits) {
         if (now >= v.resetAt) hits.delete(k);
@@ -102,8 +108,3 @@ export function createSocketLimiter(options: {
 }
 
 export type SocketRateLimiter = ReturnType<typeof createSocketLimiter>;
-
-export function socketClientKey(request: Request & { authUser?: unknown }): string {
-  const user = request.authUser as { username?: string } | undefined;
-  return user?.username ?? request.ip ?? "unknown";
-}

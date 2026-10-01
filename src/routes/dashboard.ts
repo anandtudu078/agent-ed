@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import { Course } from "../models/Course";
 import { Progress } from "../models/Progress";
+import { Session } from "../models/Session";
 import {
   AuthenticatedRequest,
   AuthUser,
@@ -13,6 +14,7 @@ import {
 } from "../services/courseService";
 import { dueCards, dueLabel, rootCauseTopic } from "../services/progressService";
 import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
+import { awayLabel, returnState } from "../services/returnState";
 
 const router = Router();
 
@@ -25,6 +27,35 @@ const router = Router();
  * `modules` being present (it's the denominator for "how far through am I"),
  * so a stale syllabus isn't cosmetic — it quietly corrupts percentages.
  */
+/**
+ * Seed the catalog once, and share the result across concurrent requests.
+ *
+ * The dashboard used to call `ensureStarterCourses()` inline on every request,
+ * which meant a full catalog `bulkWrite` + `find` + `insertMany` + prune ran per
+ * page load — on the single hottest route in the app — despite the function's
+ * own doc comment describing it as happening "on boot". Worse, two requests
+ * arriving together both found a course missing and both inserted it, because
+ * `Course.title` carries no unique index to make the second one fail.
+ *
+ * Now a boot-time task with a single in-flight promise: concurrent callers await
+ * the same work, and later callers reuse the settled result rather than
+ * re-running it. A failure is not cached, so a transient database error on boot
+ * doesn't leave the catalog permanently unseeded for the life of the process.
+ */
+let seedPromise: Promise<void> | null = null;
+
+export function seedCatalogOnce(): Promise<void> {
+  if (!seedPromise) {
+    seedPromise = ensureStarterCourses().catch((error: unknown) => {
+      // Clear the cache so the next request retries rather than inheriting a
+      // failure that happened before the database was reachable.
+      seedPromise = null;
+      throw error;
+    });
+  }
+  return seedPromise;
+}
+
 async function ensureStarterCourses(): Promise<void> {
   const titles = new Set(CURRICULUM.map((course) => course.title));
 
@@ -57,7 +88,29 @@ async function ensureStarterCourses(): Promise<void> {
     (course) => !existingTitles.has(course.title),
   );
   if (toInsert.length) {
-    await Course.insertMany(toInsert);
+    // Upsert rather than `insertMany`. Now that `title` is uniquely indexed a
+    // plain insert is safe from duplicates, but an upsert also removes the
+    // read-then-insert race entirely, so two seeds running concurrently can
+    // never both try to create the same course. `ordered: false` lets the rest
+    // of the batch land even if one title collides.
+    await Course.bulkWrite(
+      toInsert.map((course) => ({
+        updateOne: {
+          filter: { title: course.title },
+          update: {
+            $setOnInsert: {
+              title: course.title,
+              category: course.category,
+              description: course.description,
+              level: course.level,
+              modules: course.modules,
+            },
+          },
+          upsert: true,
+        },
+      })),
+      { ordered: false },
+    );
     console.log(`Seeded ${toInsert.length} starter course(s).`);
   }
 
@@ -133,7 +186,9 @@ router.get(
         return;
       }
 
-      await ensureStarterCourses();
+      // Seeding is a boot-time concern now, not a per-request one — see
+      // ensureStarterCourses.
+      await seedCatalogOnce();
       // Derive course progress on read rather than trusting the stored copy.
       // Chat-time updates are best-effort, so this is what guarantees the
       // dashboard is correct even after a failed background write.
@@ -174,7 +229,21 @@ router.get(
         ? rootCauseTopic(weakestTopic, PREREQUISITE_GRAPH, weakTopics)
         : null;
 
-      response.json({ progress, courses, dueReviews, focusRootCause });
+      // "How long were you away", for the dashboard header. Derived from the
+      // conversation's own timestamps here because the client has no access to
+      // them. Empty for a short break or a brand-new student — `awayLabel`
+      // returns "" in both cases rather than inventing a duration.
+      const session = await Session.findOne({ studentId })
+        .select({ conversationHistory: 1 })
+        .lean();
+
+      response.json({
+        progress,
+        courses,
+        dueReviews,
+        focusRootCause,
+        awayLabel: awayLabel(returnState({ conversation: session?.conversationHistory }).awayMs),
+      });
     } catch (error) {
       console.error("Failed to load dashboard.", error);
       response.status(500).json({ error: "Unable to load dashboard." });

@@ -30,7 +30,10 @@ const courseModuleSchema = new Schema<CourseModule>(
 
 const courseSchema = new Schema<CourseDocument>(
   {
-    title: { type: String, required: true },
+    // Unique, because the catalog is keyed by title: `ensureStarterCourses`
+    // matches on it to decide what to sync, and two concurrent seeds would both
+    // insert the same course without an index to make the second one fail.
+    title: { type: String, required: true, unique: true },
     category: { type: String, required: true, index: true },
     description: { type: String, required: true },
     level: {

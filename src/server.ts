@@ -8,7 +8,12 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 
 import { connectDB } from "./config/db";
-import { ConversationMessage, Session, TopicVisit } from "./models/Session";
+import {
+  ConversationMessage,
+  MAX_STORED_TOPIC_VISITS,
+  Session,
+  TopicVisit,
+} from "./models/Session";
 import {
   analyzeStudentInput,
   generateTutorResponse,
@@ -22,7 +27,7 @@ import authRouter from "./routes/auth";
 import accountRouter from "./routes/account";
 import assessmentRouter from "./routes/assessment";
 import coursesRouter from "./routes/courses";
-import dashboardRouter from "./routes/dashboard";
+import dashboardRouter, { seedCatalogOnce } from "./routes/dashboard";
 import {
   AuthenticatedRequest,
   AuthUser,
@@ -35,7 +40,7 @@ import {
   chatRateLimit,
   createSocketLimiter,
 } from "./middleware/rateLimit";
-import { aiSpendLimit, pruneOldUsage } from "./middleware/aiSpendLimit";
+import { aiSpendLimit, consumeDailyAiCall, pruneOldUsage } from "./middleware/aiSpendLimit";
 import { Progress } from "./models/Progress";
 import { User } from "./models/User";
 import { assertConsent, requireConsent } from "./middleware/consent";
@@ -47,6 +52,7 @@ import {
 } from "./services/progressService";
 import { flowGuidance, flowSignals } from "./services/flowSignals";
 import {
+  awayLabel,
   isFirstRun,
   recommendedStarterCourse,
   returnState,
@@ -97,7 +103,8 @@ app.set("trust proxy", 1);
  * (see aiService), so trimming the tail costs the tutor nothing.
  */
 const MAX_STORED_MESSAGES = 200; // ~100 exchange pairs
-const MAX_STORED_TOPIC_VISITS = 500;
+// MAX_STORED_TOPIC_VISITS now lives in models/Session.ts: the assessment route
+// appends to topicsVisited too, and a cap only the chat path applied is not one.
 
 // Security headers (CSP defaults, nosniff, frameguard, HSTS…).
 app.use(helmet());
@@ -271,6 +278,17 @@ async function processStudentMessage(
     console.error("Failed to build the learner profile.", error);
   }
 
+  // Is this student going in circles *right now*? A different question from the
+  // learner briefing above, which is built from stored progress: this one reads
+  // the shape of the last few messages. Both are pure functions over data we
+  // already hold, so a failure here costs nothing and must not cost the reply.
+  let guidance = "";
+  try {
+    guidance = flowGuidance(flowSignals(priorMessages, studentMessage));
+  } catch (error) {
+    console.error("Failed to derive flow guidance.", error);
+  }
+
   const analysis = await analyzeStudentInput(studentMessage, priorMessages);
   const response = await generateTutorResponse(
     analysis,
@@ -279,6 +297,7 @@ async function processStudentMessage(
     mode,
     language,
     learnerBriefing,
+    guidance,
   );
 
   // The model names the topic far better than the client's first 60 characters
@@ -419,6 +438,9 @@ app.get("/api/sessions/:studentId", requireAuth, async (request, response) => {
         resumeTopic: returning.resumeTopic,
         leftMidQuestion: returning.leftMidQuestion,
         greeting: returning.greeting,
+        // The dashboard's "how long were you away" line. Computed here rather
+        // than in the client, which has no conversation timestamps to work from.
+        awayLabel: awayLabel(returning.awayMs),
       },
       starterCourse: recommendedStarterCourse(),
       createdAt: session.createdAt,
@@ -536,6 +558,16 @@ io.on("connection", (socket) => {
         );
         return;
       }
+      // The daily budget is enforced here as well as on `POST /api/chat`, because
+      // the socket is the path the client actually uses — metering only the route
+      // left the cap that protects the AI bill unenforced for every real student.
+      if (!(await consumeDailyAiCall(user.id))) {
+        socket.emit("ai-error", {
+          message:
+            "You've used a lot of the tutor today. It resets tomorrow — come back then, or keep reviewing what you already have.",
+        });
+        return;
+      }
       try {
         const result = await processStudentMessage(payload, user);
         socket.emit("socratic-response", result);
@@ -551,13 +583,36 @@ io.on("connection", (socket) => {
   });
 });
 
+/** How often stale usage rows are swept. */
+const USAGE_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 async function startServer(): Promise<void> {
   await connectDB();
+
+  // Seed the catalog before accepting traffic, rather than on the first
+  // dashboard request as it used to be. Housekeeping only — never let it stop
+  // the server from coming up, since a student can still sign in and chat
+  // without the catalog.
+  void seedCatalogOnce().catch((error: unknown) => {
+    console.error("Failed to seed the course catalog.", error);
+  });
 
   // Housekeeping only — never let it stop the server from coming up.
   void pruneOldUsage().catch((error: unknown) => {
     console.error("Failed to prune old AI usage rows.", error);
   });
+
+  // …and repeat it. Pruning only at boot meant an instance that stayed up for
+  // months kept every usage row ever written, well past the 30-day retention
+  // window the function documents — the rows are one per student per day, so
+  // that grows without bound on a long-lived deployment.
+  const pruneTimer = setInterval(() => {
+    void pruneOldUsage().catch((error: unknown) => {
+      console.error("Failed to prune old AI usage rows.", error);
+    });
+  }, USAGE_PRUNE_INTERVAL_MS);
+  // Don't hold the process open on this alone.
+  pruneTimer.unref();
 
   httpServer.listen(port, () => {
     console.log(`AgentEd server listening on port ${port}.`);

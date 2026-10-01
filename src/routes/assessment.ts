@@ -1,8 +1,13 @@
 import { Router, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 
-import { Progress, TestEvaluation } from "../models/Progress";
-import { Session } from "../models/Session";
+import {
+  Progress,
+  ReviewCard,
+  TestEvaluation,
+  WeakPoint,
+} from "../models/Progress";
+import { MAX_STORED_TOPIC_VISITS, Session } from "../models/Session";
 import {
   AuthenticatedRequest,
   AuthUser,
@@ -14,6 +19,7 @@ import { requireConsent } from "../middleware/consent";
 import { aiSpendLimit } from "../middleware/aiSpendLimit";
 import {
   difficultyForTopic,
+  updateProgressWithRetry,
   upsertReviewCard,
   type DifficultyBand,
 } from "../services/progressService";
@@ -34,6 +40,9 @@ const ATTEMPT_TTL_SECONDS = 15 * 60;
 const MAX_TEST_HISTORY = 20;
 /** Guard rail against piping a novel into a billable grading call. */
 const MAX_ANSWER_LENGTH = 4000;
+/** Same guard on the misconception list carried in an attempt ticket. */
+const MAX_MISCONCEPTIONS = 5;
+const MAX_MISCONCEPTION_LENGTH = 200;
 
 interface AttemptPayload {
   studentId: string;
@@ -58,10 +67,37 @@ function verifyAttempt(token: string): AttemptPayload {
   const decoded = jwt.verify(token, requireJwtSecret(), {
     algorithms: ["HS256"],
   });
-  if (typeof decoded === "string" || !decoded.topic || !decoded.question) {
+  if (typeof decoded === "string") {
     throw new Error("Malformed assessment attempt.");
   }
-  return decoded as unknown as AttemptPayload;
+  const payload = decoded as Record<string, unknown>;
+  // Every field is shape-checked, not just the two the old check looked at.
+  // `studentId` and `misconceptions` were blind-cast straight out of a signed
+  // token into an ownership comparison and into the grading prompt. Signing stops
+  // forgery, not a malformed claim — so validate everything we are about to
+  // trust rather than assuming our own `sign` produced a well-formed payload.
+  if (
+    typeof payload.studentId !== "string" ||
+    !payload.studentId ||
+    typeof payload.topic !== "string" ||
+    typeof payload.question !== "string" ||
+    (payload.misconceptions !== undefined &&
+      !Array.isArray(payload.misconceptions))
+  ) {
+    throw new Error("Malformed assessment attempt.");
+  }
+  return {
+    studentId: payload.studentId,
+    topic: payload.topic,
+    question: payload.question,
+    // Bounded and string-only, because this array is spliced into a billable
+    // grading prompt.
+    misconceptions: ((payload.misconceptions as unknown[]) ?? [])
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim().slice(0, MAX_MISCONCEPTION_LENGTH))
+      .filter(Boolean)
+      .slice(0, MAX_MISCONCEPTIONS),
+  };
 }
 
 function parseTopic(body: unknown): string {
@@ -247,38 +283,58 @@ router.post(
         { studentId },
         {
           $set: { activeTopic: attempt.topic },
-          $push: { topicsVisited: { topic: attempt.topic, firstSeenAt: now } },
+          // `$slice` keeps the array bounded, exactly as the chat path does with
+          // MAX_STORED_TOPIC_VISITS. Without it this push grows the Session
+          // document without limit, and conversationHistory shares the same
+          // document — so one student testing many topics could push the record
+          // past MongoDB's 16 MB ceiling and silently lose the ability to chat
+          // at all. `$each` + `$slice` keeps the most recent N.
+          $push: {
+            topicsVisited: {
+              each: { topic: attempt.topic, firstSeenAt: now },
+              slice: -MAX_STORED_TOPIC_VISITS,
+            },
+          },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
     }
 
-    const existing = await Progress.findOne({ studentId }).lean();
-    const history = [...(existing?.testHistory ?? []), evaluation]
-      // Cap the history too — a student's own record shouldn't grow forever.
-      .slice(-MAX_TEST_HISTORY);
+    // Conditional on the arrays this computation read, so a chat turn landing
+    // between the read and the write is not overwritten. See
+    // updateProgressWithRetry for why a plain read-then-$set loses data.
+    await updateProgressWithRetry(
+      studentId,
+      ["testHistory", "weakPoints", "reviewCards"],
+      (current) => {
+        const history = [
+          ...((current.testHistory as TestEvaluation[]) ?? []),
+          evaluation,
+          // Cap the history too — a student's own record shouldn't grow forever.
+        ].slice(-MAX_TEST_HISTORY);
 
-    // A graded answer is a far better mastery signal than a chat turn, so it
-    // drives the same rolling weak-point list.
-    const weakPoints = mergeWeakPoints(
-      existing?.weakPoints ?? [],
-      attempt.topic,
-      clampMastery(grade.masteryEstimate),
-    );
-    // ...and it is the only real signal we have for *when* to bring the topic
-    // back, so it also drives the review schedule.
-    const reviewCards = upsertReviewCard(
-      existing?.reviewCards ?? [],
-      attempt.topic,
-      grade.score,
-      now,
-    );
-    const learningSpeed = computeLearningSpeed(topicsVisited, now);
+        // A graded answer is a far better mastery signal than a chat turn, so it
+        // drives the same rolling weak-point list.
+        const weakPoints = mergeWeakPoints(
+          (current.weakPoints as WeakPoint[]) ?? [],
+          attempt.topic,
+          clampMastery(grade.masteryEstimate),
+        );
+        // ...and it is the only real signal we have for *when* to bring the topic
+        // back, so it also drives the review schedule.
+        const reviewCards = upsertReviewCard(
+          (current.reviewCards as ReviewCard[]) ?? [],
+          attempt.topic,
+          grade.score,
+          now,
+        );
+        const learningSpeed = computeLearningSpeed(topicsVisited, now);
 
-    await Progress.findOneAndUpdate(
-      { studentId },
-      { $set: { testHistory: history, weakPoints, reviewCards, learningSpeed } },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+        return {
+          set: { testHistory: history, weakPoints, reviewCards, learningSpeed },
+          result: undefined,
+        };
+      },
     );
 
     response.json({ evaluation, misconceptions: grade.misconceptions });

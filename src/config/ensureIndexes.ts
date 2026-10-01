@@ -1,8 +1,9 @@
 import mongoose from "mongoose";
 import { Session } from "../models/Session";
+import { Progress } from "../models/Progress";
 
 /**
- * Make `Session.studentId` genuinely unique.
+ * Make a `studentId` index genuinely unique on a collection.
  *
  * Declaring `unique: true` in the schema is not enough: any database created
  * before that change already has a plain non-unique index on the same key, and
@@ -12,12 +13,19 @@ import { Session } from "../models/Session";
  *
  * So do it explicitly: check for duplicates (refusing rather than silently
  * deleting a student's history), then swap the index.
+ *
+ * `label` names the collection in the error, because this now runs for more
+ * than one collection and "Cannot enforce unique studentId" is not actionable
+ * without knowing which.
  */
-export async function ensureSessionIndexes(): Promise<void> {
+async function enforceUniqueStudentId(
+  collectionName: string,
+  model: typeof Session | typeof Progress,
+): Promise<void> {
   const db = mongoose.connection.db;
   if (!db) return;
 
-  const duplicates = await Session.aggregate<{ _id: string; n: number }>([
+  const duplicates = await model.aggregate<{ _id: string; n: number }>([
     { $group: { _id: "$studentId", n: { $sum: 1 } } },
     { $match: { n: { $gt: 1 } } },
   ]);
@@ -30,12 +38,12 @@ export async function ensureSessionIndexes(): Promise<void> {
       .map((d) => `${d._id} (${d.n})`)
       .join(", ");
     throw new Error(
-      `Cannot enforce unique Session.studentId: ${duplicates.length} student(s) ` +
-        `have duplicate sessions, e.g. ${sample}. Merge them manually first.`,
+      `Cannot enforce unique ${collectionName}.studentId: ${duplicates.length} student(s) ` +
+        `have duplicate documents, e.g. ${sample}. Merge them manually first.`,
     );
   }
 
-  const collection = db.collection("sessions");
+  const collection = db.collection(collectionName);
   // Driver's own type: `key` values may be strings (e.g. "text") as well as
   // numbers, and `name` is optional on some drivers' index descriptions.
   let indexes: Array<{
@@ -56,5 +64,19 @@ export async function ensureSessionIndexes(): Promise<void> {
 
   await collection.dropIndex("studentId_1");
   await collection.createIndex({ studentId: 1 }, { unique: true, name: "studentId_1" });
-  console.log("Migration: Session.studentId index is now unique.");
+  console.log(`Migration: ${collectionName}.studentId index is now unique.`);
+}
+
+/**
+ * Ensure the uniqueness both one-record-per-student collections depend on.
+ *
+ * `Session` is the one the history-corruption bug was found on, but `Progress`
+ * has exactly the same contract — every path does `findOne({studentId})` and
+ * `findOneAndUpdate({studentId}, ..., {upsert})`. Left unmigrated, a pre-existing
+ * database could hold two Progress rows for one student, and a chat turn would
+ * then update whichever one the upsert happened to reach.
+ */
+export async function ensureSessionIndexes(): Promise<void> {
+  await enforceUniqueStudentId("sessions", Session);
+  await enforceUniqueStudentId("progresses", Progress);
 }

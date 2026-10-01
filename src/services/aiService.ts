@@ -296,12 +296,24 @@ export async function generateTutorResponse(
    * "they have no gaps".
    */
   learnerBriefing: string = "",
+  /**
+   * Advice about *how* to answer right now, derived from the shape of the
+   * conversation rather than from stored knowledge.
+   *
+   * Separate from `learnerBriefing` on purpose: that one describes the student
+   * across sessions, this one describes the last few minutes. A student who has
+   * asked the same thing four times is stuck *now*, and repeating an explanation
+   * that already failed is the specific failure this steers around. Empty means
+   * "nothing to add", which is the normal case.
+   */
+  flowGuidance: string = "",
 ): Promise<string> {
   const history = selectHistoryWindow(priorMessages);
   const transcript = renderTranscript(history);
 
   const promptText =
     (learnerBriefing ? `${learnerBriefing}\n\n` : "") +
+    (flowGuidance ? `${flowGuidance}\n\n` : "") +
     `Student analysis:\n${JSON.stringify(analysis)}\n\n` +
     `Earlier conversation:\n${transcript}\n\n` +
     `New message:\n${studentQuery}`;
