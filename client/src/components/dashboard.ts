@@ -3,6 +3,8 @@
 // feedback/recommended focus), a quick action for starting an AI evaluation
 // test, and a searchable course catalog with Continue Learning actions.
 
+import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
+
 export interface CourseInfo {
   _id: string;
   title: string;
@@ -93,6 +95,13 @@ export function createDashboard(
    * feels like it's not actually watching.
    */
   onGraded?: (score: number) => void,
+  /**
+   * The student's teaching language, read at the moment of use rather than
+   * captured at construction. The toggle can fire while the dashboard is already
+   * mounted, and a downloaded notes file that silently came out in the other
+   * language would be a small, confusing betrayal.
+   */
+  getLanguage?: () => "en" | "hi",
 ): { refresh: () => Promise<void>; destroy: () => void } {
   let data: DashboardData | null = null;
   let loading = false;
@@ -276,7 +285,20 @@ export function createDashboard(
 
         <div class="course-detail-body flex-1 overflow-y-auto p-5"></div>
 
-        <div class="course-detail-foot border-t border-slate-800 p-4">
+        <div class="course-detail-foot space-y-2 border-t border-slate-800 p-4">
+          <!--
+            Notes are a secondary action, so they sit above the primary button
+            rather than beside it: a student opening the dialog to start a lesson
+            should not have two equally-weighted buttons to choose between. The
+            download needs no enrolment and no round trip — the syllabus is
+            already in the payload this dialog rendered from.
+          -->
+          <button
+            type="button"
+            class="course-detail-notes w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-indigo-500/50 hover:bg-slate-800 hover:text-white active:scale-[0.99]"
+          >
+            Download notes
+          </button>
           <button
             type="button"
             class="course-detail-start w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99]"
@@ -308,6 +330,9 @@ export function createDashboard(
   const courseDetailBodyEl = host.querySelector<HTMLElement>(".course-detail-body")!;
   const courseDetailStartBtn = host.querySelector<HTMLButtonElement>(
     ".course-detail-start",
+  )!;
+  const courseDetailNotesBtn = host.querySelector<HTMLButtonElement>(
+    ".course-detail-notes",
   )!;
   const courseDetailCloseBtn = host.querySelector<HTMLButtonElement>(
     ".course-detail-close",
@@ -702,6 +727,44 @@ export function createDashboard(
     courseDetailCloseBtn.focus();
   }
 
+  /**
+   * Hand the student the open course as a Markdown file.
+   *
+   * Synchronous and entirely local: the syllabus is already in `data`, so this
+   * cannot fail on a network call and there is nothing to await. The dialog stays
+   * open on purpose — a download is not a navigation, and closing it would throw
+   * away the module list they were reading.
+   */
+  function downloadOpenCourseNotes(): void {
+    if (!openCourse) return;
+    const enrolled = data?.progress.enrolledCourses.find(
+      (item) => item.courseId === openCourse?._id,
+    );
+    const language = getLanguage?.() ?? "en";
+    try {
+      const markdown = buildCourseNotes(
+        {
+          title: openCourse.title,
+          category: openCourse.category,
+          description: openCourse.description,
+          level: openCourse.level,
+          modules: openCourse.modules ?? [],
+        },
+        enrolled?.completedModules ?? [],
+        language,
+      );
+      downloadTextFile(`${slugify(openCourse.title)}-notes.md`, markdown);
+    } catch (error) {
+      // A failed download must not take the dialog down with it. This is a
+      // convenience; the syllabus is still on screen and readable.
+      console.error("Failed to build course notes.", error);
+      statusEl.textContent =
+        language === "hi"
+          ? "नोट्स डाउनलोड नहीं हो सके।"
+          : "Could not build the notes just now.";
+    }
+  }
+
   function closeCourseDetail(): void {
     courseDetailEl.classList.add("hidden");
     courseDetailEl.classList.remove("flex");
@@ -1068,6 +1131,8 @@ export function createDashboard(
   // closed first because `startCourse` re-renders the dashboard on enroll, which
   // would otherwise leave a dialog floating over a list the student can no
   // longer see the context of.
+  courseDetailNotesBtn.addEventListener("click", downloadOpenCourseNotes);
+
   courseDetailStartBtn.addEventListener("click", () => {
     if (!openCourse) return;
     const course = openCourse;

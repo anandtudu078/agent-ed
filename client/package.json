@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test:render": "node scripts/visual-render-test.ts",
     "test:beats": "node scripts/beats-test.ts",
+    "test:notes": "node scripts/notes-test.ts",
     "test:sketches": "node scripts/sketch-test.ts",
     "test:playback": "node scripts/beat-playback-test.mjs"
   },
