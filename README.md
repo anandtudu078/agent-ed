@@ -66,12 +66,31 @@ npm run dev                  # API on http://localhost:3000
 npm run dev --prefix client   # app on http://localhost:5173
 ```
 
-Open **http://localhost:5173** and create an account.
+Open **http://localhost:5173** for the landing page; the tutor is at
+**http://localhost:5173/app.html**.
 
 The catalog seeds itself on first dashboard load — no migration step.
 
-**No AI key?** Registration, sign-in, the course catalog and the dashboard all
-work. Only the tutor, assessments and diagrams need one.
+### Picking a course
+
+Clicking **Details** on any course card opens the full syllabus: every module,
+and the subtopics each one covers, so a student can see what a lesson is about
+before deciding to start it rather than finding out halfway through. The dialog
+carries the student's real progress — completed modules ticked, the next one
+marked — and its button says what it will actually do: *Start learning*,
+*Continue with "Variables and types"*, or *Review this course* once everything is
+done.
+
+Starting from there enrols the student and opens a Socratic chat aimed at the
+right module. The existing card buttons are unchanged, so this is an addition
+rather than a replacement.
+
+Subtopics are authored per module in `src/data/curriculum.ts` and are purely
+descriptive: the tutor never sees them, and progress is still counted per
+module, so adding or removing one can never move a student's percentage.
+
+**No AI key?** Registration, sign-in, the course catalog, the course detail view
+and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ---
 
@@ -100,15 +119,17 @@ Or individually:
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
 | `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |
+| `npm run test:workflow` | 55 | The first-run journey: landing → sign-up → consent → course detail → lesson |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
-| `npm run test:security` | 53 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
+| `npm run test:security` | 94 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
 
-The three browser suites need the app running (`npm run dev` in both terminals)
+The four browser suites need the app running (`npm run dev` in both terminals)
 and a reachable MongoDB:
 
 ```bash
 npm run test:security   # first: it can burn the auth rate-limit budget
 npm run test:ui
+npm run test:workflow
 npm run test:playback
 ```
 
@@ -281,7 +302,7 @@ mention the repetition.
 ```
 src/
   server.ts                    API + socket
-  data/curriculum.ts           186 modules, 9 AI branches + maths spine
+  data/curriculum.ts           186 modules (each with 3 subtopics), 9 AI branches + maths spine
   services/
     aiService.ts               tutor prompt; takes the learner briefing
     progressService.ts         learner profile, difficulty, prerequisites
@@ -295,7 +316,7 @@ client/src/
   main.ts                      chat, speech, return path, first run
   components/mascot.ts         the owl - six moods, real reactions
   components/diagrams.ts       hand-written SVG, every string escaped
-  components/dashboard.ts      reviews, weak points, root cause
+  components/dashboard.ts      reviews, weak points, root cause, course detail
 
 scripts/                       the test suites
 ```

@@ -25,6 +25,25 @@ const router = Router();
  * `modules` being present (it's the denominator for "how far through am I"),
  * so a stale syllabus isn't cosmetic — it quietly corrupts percentages.
  */
+/**
+ * The authored curriculum shape, as the stored shape.
+ *
+ * `subtopics` is optional when authored — a module we haven't written a
+ * breakdown for is a normal state, not an error — but the stored module always
+ * carries the key, defaulting to an empty list. Normalising here rather than
+ * relying on the schema default matters because this is a `bulkWrite`: schema
+ * defaults are not applied to a raw update, so without this a module authored
+ * without subtopics would be persisted as a missing field and the client would
+ * have to defend against both shapes forever.
+ */
+function toStoredModules(course: (typeof CURRICULUM)[number]) {
+  return course.modules.map((module) => ({
+    title: module.title,
+    topic: module.topic,
+    subtopics: module.subtopics ?? [],
+  }));
+}
+
 async function ensureStarterCourses(): Promise<void> {
   const titles = new Set(CURRICULUM.map((course) => course.title));
 
@@ -39,7 +58,7 @@ async function ensureStarterCourses(): Promise<void> {
             category: course.category,
             description: course.description,
             level: course.level,
-            modules: course.modules,
+            modules: toStoredModules(course),
           },
         },
       },
@@ -55,7 +74,13 @@ async function ensureStarterCourses(): Promise<void> {
   );
   const toInsert = CURRICULUM.filter(
     (course) => !existingTitles.has(course.title),
-  );
+  ).map((course) => ({
+    title: course.title,
+    category: course.category,
+    description: course.description,
+    level: course.level,
+    modules: toStoredModules(course),
+  }));
   if (toInsert.length) {
     await Course.insertMany(toInsert);
     console.log(`Seeded ${toInsert.length} starter course(s).`);
