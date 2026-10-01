@@ -5,6 +5,7 @@
 
 import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
 import { matchSubtopic, subtopicPrompt } from "./subtopics";
+import { buildAlerts, type LearningAlert } from "./alerts";
 
 export interface CourseInfo {
   _id: string;
@@ -139,6 +140,8 @@ export function createDashboard(
             class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
           >â€¦</button>
         </section>
+
+        <div class="dash-alerts space-y-2"></div>
 
         <!-- At a glance: three numbers, each in plain words -->
         <div class="grid grid-cols-3 gap-3">
@@ -319,6 +322,119 @@ export function createDashboard(
         </div>
       </div>
     </div>`;
+
+  const alertsEl = host.querySelector<HTMLElement>(".dash-alerts")!;
+
+  /** Tone → colours. One place, so an alert can't look like a random badge. */
+  const ALERT_TONES: Record<LearningAlert["tone"], string> = {
+    due: "border-amber-500/40 bg-amber-500/10",
+    warning: "border-rose-500/40 bg-rose-500/10",
+    success: "border-emerald-500/40 bg-emerald-500/10",
+    info: "border-indigo-500/40 bg-indigo-500/10",
+  };
+  const ALERT_ACCENTS: Record<LearningAlert["tone"], string> = {
+    due: "text-amber-300",
+    warning: "text-rose-300",
+    success: "text-emerald-300",
+    info: "text-indigo-300",
+  };
+  const ALERT_ICONS: Record<LearningAlert["tone"], string> = {
+    due: "⏰",
+    warning: "◎",
+    success: "✓",
+    info: "→",
+  };
+
+  /**
+   * Render the alerts for the current data.
+   *
+   * `buildAlerts` already caps and orders them, so this only has to draw. The
+   * button carries the action and its target as data attributes rather than via a
+   * closure per alert — the list is re-rendered on every refresh, and a handler
+   * bound per render is a handler that leaks per refresh.
+   */
+  function renderAlerts(): void {
+    if (!data) return;
+    const alerts = buildAlerts({
+      dueReviews: data.dueReviews ?? [],
+      weakPoints: data.progress.weakPoints ?? [],
+      enrolledCourses: data.progress.enrolledCourses ?? [],
+      // The course list is the authority on how many modules a course has. Using
+      // the stored completedModules length instead would let a stale title from a
+      // renamed module report a half-finished course as done.
+      courseSizes: Object.fromEntries(
+        (data.courses ?? []).map((course) => [course._id, (course.modules ?? []).length]),
+      ),
+      testHistory: data.progress.testHistory ?? [],
+      learningSpeed: data.progress.learningSpeed ?? 0,
+      awayLabel: data.awayLabel ?? "",
+      language: getLanguage?.() ?? "en",
+    });
+
+    alertsEl.innerHTML = alerts
+      .map(
+        (alert) => `
+        <div class="animate-fadeup flex items-start gap-3 rounded-2xl border p-4 ${ALERT_TONES[alert.tone]}" data-alert-id="${esc(alert.id)}">
+          <span class="mt-0.5 shrink-0 text-base ${ALERT_ACCENTS[alert.tone]}" aria-hidden="true">${ALERT_ICONS[alert.tone]}</span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold ${ALERT_ACCENTS[alert.tone]}">${esc(alert.title)}</p>
+            <p class="mt-0.5 text-xs leading-relaxed text-slate-300">${esc(alert.body)}</p>
+          </div>
+          <button
+            type="button"
+            class="dash-alert-action shrink-0 self-center rounded-lg border border-slate-600/70 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-400 hover:text-white"
+            data-alert-kind="${esc(alert.action.kind)}"
+            data-alert-target="${esc(alert.action.target ?? "")}"
+          >${esc(alert.action.label)}</button>
+        </div>`,
+      )
+      .join("");
+  }
+
+  /**
+   * Do what an alert's button says.
+   *
+   * Every branch routes into something the student already does elsewhere — the
+   * review panel, the assessment panel, the course dialog, or the chat. An alert
+   * that opened a dead end would be worse than no alert, because the student
+   * clicked it on purpose.
+   */
+  function runAlertAction(
+    kind: LearningAlert["action"]["kind"],
+    target: string,
+  ): void {
+    switch (kind) {
+      case "review": {
+        // No visibility call: the dashboard is by definition already on screen when
+        // one of its alerts is pressed, and it may not be mounted at all if the
+        // student dismissed it — so don't reach for a control we don't own.
+        const first = data?.dueReviews?.[0];
+        if (first?.topic) void startAssessment(first.topic);
+        return;
+      }
+      case "test": {
+        if (!target) return;
+        void startAssessment(target);
+        return;
+      }
+      case "course": {
+        if (!target) return;
+        const course = data?.courses?.find((item) => item._id === target);
+        if (!course) return;
+        openCourseDetail(course, null);
+        return;
+      }
+      case "learn-topic": {
+        // No specific topic to open, so hand the choice to the student rather than
+        // guessing one — an alert that starts a lesson they didn't ask for is the
+        // wrong kind of eager.
+        onLearnTopic?.(target || "");
+        return;
+      }
+      default:
+        return;
+    }
+  }
 
   const statusEl = host.querySelector<HTMLElement>(".dash-status")!;
   const speedEl = host.querySelector<HTMLElement>(".dash-speed")!;
@@ -979,6 +1095,9 @@ export function createDashboard(
   function renderData(): void {
     if (!data) return;
 
+    // Alerts lead: they are the conclusion, everything below is the evidence.
+    renderAlerts();
+
     // --- At a glance: words, not raw numbers ---
     const pace = describeSpeed(data.progress.learningSpeed);
     speedEl.textContent = pace;
@@ -1156,6 +1275,19 @@ export function createDashboard(
   // closed first because `startCourse` re-renders the dashboard on enroll, which
   // would otherwise leave a dialog floating over a list the student can no
   // longer see the context of.
+  // Alerts: one delegated listener for the whole list, rather than a handler per
+  // alert. The list is re-rendered on every refresh, so per-alert handlers would
+  // accumulate on every page load.
+  alertsEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".dash-alert-action",
+    );
+    if (!button) return;
+    const kind = button.dataset.alertKind as LearningAlert["action"]["kind"] | undefined;
+    if (!kind) return;
+    runAlertAction(kind, button.dataset.alertTarget ?? "");
+  });
+
   /**
    * F5: open a lesson on one named subtopic.
    *
