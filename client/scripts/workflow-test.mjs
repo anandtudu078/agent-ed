@@ -122,6 +122,105 @@ try {
   await page.locator("#dashboard-view").waitFor({ state: "visible", timeout: 20000 });
   check("the learning dashboard is reachable", await page.locator("#dashboard-view").isVisible());
 
+  // ------------------------------------- 6b. a course opens into its full detail
+  //
+  // The detail dialog is the step between "I picked a course" and "I am learning
+  // it", and it is the only place subtopics are ever shown. Asserted here rather
+  // than in the UI suite because this suite is the one that walks the real path a
+  // person takes, so a detail view that renders but is unreachable from the card
+  // would still be caught.
+  step("6b. Opening a course shows its topics and subtopics");
+  await page.locator(".dash-courses .dash-course").first().waitFor({ timeout: 20000 });
+  const card = page.locator(".dash-courses .dash-course").first();
+  const courseTitle = ((await card.locator("h3").textContent()) ?? "").trim();
+  check("the card is for a real course", courseTitle.length > 0, courseTitle);
+
+  // Nothing may be shown before it is asked for: an always-open dialog would
+  // cover the dashboard the moment the student signed in.
+  check("no course detail is open on arrival", !(await page.locator(".course-detail").isVisible()));
+
+  await card.locator(".dash-details").click();
+  await page.locator(".course-detail:not(.hidden)").waitFor({ timeout: 10000 });
+  check("clicking Details opens the course", await page.locator(".course-detail").isVisible());
+  check(
+    "the dialog is for the course that was clicked",
+    ((await page.locator(".course-detail-title").textContent()) ?? "").trim() === courseTitle,
+    courseTitle,
+  );
+
+  const detailModules = await page.locator(".course-detail-module").count();
+  const detailSubtopics = await page.locator(".course-detail-subtopics").count();
+  // A module with no curated breakdown still renders its title, so this asserts
+  // the list exists rather than that every module has one.
+  check("the full syllabus is listed", detailModules > 0, `${detailModules} modules`);
+  check(
+    "modules list their subtopics",
+    detailSubtopics >= detailModules,
+    `${detailSubtopics} subtopic lists across ${detailModules} modules`,
+  );
+  const firstModule = ((await page.locator(".course-detail-module").first().textContent()) ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  check(
+    "a subtopic is real text, not a placeholder",
+    firstModule.length > 20,
+    firstModule.slice(0, 60),
+  );
+
+  // Escape has to work, and it has to leave the student on the dashboard.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  check("Escape closes the course detail", !(await page.locator(".course-detail").isVisible()));
+  check("closing it returns to the course list", await page.locator("#dashboard-view").isVisible());
+
+  // Reopening and pressing Start is the whole point of the feature: read the
+  // syllabus, then begin. Asserted through to the chat, because a Start button
+  // that closes the dialog without enrolling would look identical until the
+  // student noticed they had no course.
+  step("6c. Starting the course from its detail view");
+  await card.locator(".dash-details").click();
+  await page.locator(".course-detail:not(.hidden)").waitFor({ timeout: 10000 });
+  const startLabel = ((await page.locator(".course-detail-start").textContent()) ?? "").trim();
+  check("the detail view offers a way to start", startLabel.length > 0, startLabel);
+  await page.locator(".course-detail-start").click();
+  await page.locator("#chat-container").waitFor({ state: "visible", timeout: 20000 });
+  check("starting from the detail view opens the tutor", await page.locator("#chat-container").isVisible());
+  check(
+    "the dialog is gone once the lesson begins",
+    !(await page.locator(".course-detail").isVisible().catch(() => false)),
+  );
+  const firstMessage = ((await page.locator("#messages").textContent()) ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  check(
+    "the tutor was aimed at the chosen course",
+    firstMessage.includes(courseTitle),
+    courseTitle,
+  );
+
+  // Back to the dashboard: the course must now read as enrolled, which is what
+  // proves the enrolment actually persisted rather than just the chat opening.
+  await page.locator("#dashboard-toggle").click();
+  await page.locator("#dashboard-view").waitFor({ state: "visible", timeout: 20000 });
+  await page
+    .waitForFunction(() => document.querySelectorAll(".dash-leave").length > 0, { timeout: 20000 })
+    .catch(() => {});
+  check("starting from the detail view enrolled the student", (await page.locator(".dash-leave").count()) > 0);
+  const enrolledCard = page.locator(".dash-course", { hasText: courseTitle }).first();
+  check(
+    "the card now offers Continue",
+    ((await enrolledCard.locator(".dash-continue").textContent()) ?? "").includes("Continue"),
+  );
+  await enrolledCard.locator(".dash-details").click();
+  await page.locator(".course-detail:not(.hidden)").waitFor({ timeout: 10000 });
+  const resumeLabel = ((await page.locator(".course-detail-start").textContent()) ?? "").trim();
+  check(
+    "reopening names the module it will resume into",
+    resumeLabel.includes("Continue with") || resumeLabel.includes("Review"),
+    resumeLabel,
+  );
+  await page.keyboard.press("Escape");
+
   // ------------------------------------------- 7. sign out lands back on login
   step("7. Signing out returns to the login screen");
   await page.locator("#sign-out-button").click();

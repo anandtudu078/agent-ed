@@ -9,7 +9,15 @@ export interface CourseInfo {
   category: string;
   description: string;
   level: "beginner" | "intermediate" | "advanced";
-  modules: Array<{ title: string; topic: string }>;
+  /**
+   * `subtopics` is optional on purpose, even though the server always sends the
+   * key. It was added after the catalog was first seeded, so a course stored
+   * before it — or a payload from a server that predates it — has no such
+   * field, and the detail view renders a module without one perfectly well.
+   * Typing it as required would push that defence into every call site for a
+   * shape we cannot guarantee across versions.
+   */
+  modules: Array<{ title: string; topic: string; subtopics?: string[] }>;
 }
 
 export interface TestEvaluation {
@@ -217,6 +225,60 @@ export function createDashboard(
 
         <p class="dash-status min-h-[1.25rem] text-sm text-rose-400"></p>
       </div>
+    </div>
+
+    <!--
+      Course detail. A dialog rather than a route, because the dashboard is the
+      only place a course is chosen from and the student is never deep enough in
+      to need a back button or a link they could share — a course has no state
+      outside this session's progress, which is already on the server.
+
+      Rendered empty and filled on open, rather than once at build time, so a
+      186-module catalog costs nothing until a single course is actually looked
+      at. Starts hidden via a class rather than being absent, because the element
+      has to be queryable before it can be shown.
+    -->
+    <div
+      class="course-detail fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="course-detail-title"
+    >
+      <div
+        class="course-detail-panel flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
+      >
+        <div class="flex items-start justify-between gap-4 border-b border-slate-800 p-5">
+          <div class="min-w-0">
+            <p class="course-detail-category text-[10px] font-semibold uppercase tracking-widest text-indigo-300/80"></p>
+            <h2
+              id="course-detail-title"
+              class="course-detail-title mt-1 text-xl font-bold leading-snug text-slate-50"
+            ></h2>
+          </div>
+          <button
+            type="button"
+            class="course-detail-close shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+            aria-label="Close course details"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div class="course-detail-body flex-1 overflow-y-auto p-5"></div>
+
+        <div class="course-detail-foot border-t border-slate-800 p-4">
+          <button
+            type="button"
+            class="course-detail-start w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99]"
+          >
+            Start learning
+          </button>
+        </div>
+      </div>
     </div>`;
 
   const statusEl = host.querySelector<HTMLElement>(".dash-status")!;
@@ -232,6 +294,18 @@ export function createDashboard(
   const reviewsEl = host.querySelector<HTMLElement>(".dash-reviews-body")!;
   const feedbackEl = host.querySelector<HTMLElement>(".dash-feedback-body")!;
   const coursesEl = host.querySelector<HTMLElement>(".dash-courses")!;
+  const courseDetailEl = host.querySelector<HTMLElement>(".course-detail")!;
+  const courseDetailCategoryEl = host.querySelector<HTMLElement>(
+    ".course-detail-category",
+  )!;
+  const courseDetailTitleEl = host.querySelector<HTMLElement>(".course-detail-title")!;
+  const courseDetailBodyEl = host.querySelector<HTMLElement>(".course-detail-body")!;
+  const courseDetailStartBtn = host.querySelector<HTMLButtonElement>(
+    ".course-detail-start",
+  )!;
+  const courseDetailCloseBtn = host.querySelector<HTMLButtonElement>(
+    ".course-detail-close",
+  )!;
   const searchEl = host.querySelector<HTMLInputElement>(".dash-search")!;
   const startTestBtn = host.querySelector<HTMLButtonElement>(".dash-start-test")!;
   const testPanelEl = host.querySelector<HTMLElement>("#dash-test-panel")!;
@@ -558,6 +632,148 @@ export function createDashboard(
     };
   }
 
+  function renderCourseDetail(): void {
+    if (!openCourse) return;
+    const course = openCourse;
+
+    courseDetailCategoryEl.textContent = `${course.category} · ${course.level}`;
+    courseDetailTitleEl.textContent = course.title;
+
+    const enrolled = data?.progress.enrolledCourses.find(
+      (item) => item.courseId === course._id,
+    );
+    const done = new Set(enrolled?.completedModules ?? []);
+    const modules = course.modules ?? [];
+    const percent = Math.min(100, Math.max(0, enrolled?.progressPercent ?? 0));
+    // Finished when every module is done, so there is no sensible module to
+    // resume into. The button restarts at the top rather than handing `null` to
+    // the tutor and having it ask a generic "what would you like to do".
+    const finished = modules.length > 0 && done.size >= modules.length;
+    const target = resumeModuleFor(course);
+
+    courseDetailBodyEl.innerHTML = `
+      <p class="text-sm leading-relaxed text-slate-300">${esc(course.description)}</p>
+      ${
+        enrolled
+          ? `<div class="mt-4">
+               <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                 <div class="h-full rounded-full bg-indigo-500" style="width:${percent}%"></div>
+               </div>
+               <p class="mt-1.5 text-xs text-slate-400">${done.size} of ${modules.length} modules done</p>
+             </div>`
+          : `<p class="mt-4 text-xs text-slate-500">${modules.length} modules · not enrolled yet</p>`
+      }
+      <h3 class="mt-5 text-xs font-semibold uppercase tracking-widest text-slate-400">
+        What you'll cover
+      </h3>
+      <ol class="course-detail-modules mt-2 flex flex-col gap-1.5">
+        ${modules
+          .map((module, index) =>
+            moduleRowHtml(module, index, done.has(module.title), target?.title === module.title),
+          )
+          .join("")}
+      </ol>`;
+
+    // Say what will actually happen. A button labelled "Start learning" that
+    // silently opens module 4 is worse than one that names it.
+    courseDetailStartBtn.textContent = finished
+      ? "Review this course"
+      : enrolled && target
+        ? `Continue with “${target.title}”`
+        : "Start learning";
+  }
+
+  function openCourseDetail(course: CourseInfo, trigger: HTMLElement | null): void {
+    openCourse = course;
+    lastFocused = trigger;
+    renderCourseDetail();
+    courseDetailEl.classList.remove("hidden");
+    courseDetailEl.classList.add("flex");
+    // Focus Close, not Start: a dialog that focuses its own primary action
+    // invites an accidental Enter to enrol the student in a course they were
+    // only reading about.
+    courseDetailCloseBtn.focus();
+  }
+
+  function closeCourseDetail(): void {
+    courseDetailEl.classList.add("hidden");
+    courseDetailEl.classList.remove("flex");
+    openCourse = null;
+    // Returning focus is what makes Escape and the close button usable from a
+    // keyboard. Without it focus falls to <body> and the student has to Tab
+    // back across the whole dashboard to find where they were.
+    lastFocused?.focus();
+    lastFocused = null;
+  }
+
+  /**
+   * The course currently open in the detail dialog, or null when it is closed.
+   *
+   * Held as state rather than read back out of the DOM, because the Start button
+   * needs the course object — not just an id — to hand to `onSelectCourse`, and
+   * rebuilding it from the markup would mean serialising the whole course into
+   * attributes and parsing it straight back out again.
+   */
+  let openCourse: CourseInfo | null = null;
+  /** The element focus returns to when the dialog closes. */
+  let lastFocused: HTMLElement | null = null;
+
+  /** Which module Start will open, given where the student actually is. */
+  function resumeModuleFor(course: CourseInfo): CourseInfo["modules"][number] | null {
+    const enrolled = data?.progress.enrolledCourses.find(
+      (item) => item.courseId === course._id,
+    );
+    const done = new Set(enrolled?.completedModules ?? []);
+    return (course.modules ?? []).find((module) => !done.has(module.title)) ?? null;
+  }
+
+  /** One module row: title, completion state, and its subtopics when curated. */
+  function moduleRowHtml(
+    module: CourseInfo["modules"][number],
+    index: number,
+    isDone: boolean,
+    isNext: boolean,
+  ): string {
+    const subtopics = module.subtopics ?? [];
+    const marker = isDone ? "✓" : isNext ? "▸" : String(index + 1);
+    const markerTone = isDone
+      ? "text-emerald-400"
+      : isNext
+        ? "text-indigo-300"
+        : "text-slate-600";
+    return `
+      <li class="course-detail-module rounded-lg border ${
+        isNext
+          ? "border-indigo-500/50 bg-indigo-950/30"
+          : "border-slate-800 bg-slate-950/40"
+      } px-3 py-2.5">
+        <div class="flex items-start gap-2">
+          <span class="mt-0.5 shrink-0 text-xs ${markerTone}">${marker}</span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium ${
+              isDone ? "text-slate-400 line-through" : "text-slate-100"
+            }">${esc(module.title)}</p>
+            ${
+              // A module with no curated breakdown shows its title alone. An
+              // invented or padded list would be worse than none.
+              subtopics.length
+                ? `<ul class="course-detail-subtopics mt-1.5 flex flex-col gap-0.5">
+                     ${subtopics
+                       .map(
+                         (sub) => `<li class="flex items-start gap-1.5 text-xs text-slate-400">
+                           <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-slate-600"></span>
+                           <span>${esc(sub)}</span>
+                         </li>`,
+                       )
+                       .join("")}
+                   </ul>`
+                : ""
+            }
+          </div>
+        </div>
+      </li>`;
+  }
+
   /** Enrolled courses first — the ones the student is actually working on. */
   function sortEnrolledFirst(list: CourseInfo[]): CourseInfo[] {
     const enrolledIds = new Set(
@@ -636,6 +852,19 @@ export function createDashboard(
             >
               ${enrollment ? "Continue" : "Start learning"}
             </button>
+            <!--
+              Details is a separate button rather than making the whole card
+              clickable. A card-wide click handler would have to check on every
+              click whether the target was the Start button or Leave, and would
+              still swallow text selection — dragging to copy a course title
+              would open a dialog.
+            -->
+            <button
+              type="button"
+              data-course-id="${esc(course._id)}"
+              class="dash-details shrink-0 rounded-lg border border-slate-700 px-2.5 py-2.5 text-xs font-medium text-slate-300 transition hover:border-indigo-500/50 hover:text-white"
+              title="See topics and subtopics"
+            >Details</button>
             ${
               enrollment
                 ? `<button
@@ -802,11 +1031,52 @@ export function createDashboard(
       return;
     }
 
+    // Details → open the syllabus, and keep the card as the element to return
+    // focus to. Checked before Start because a click on Details must never also
+    // enroll the student in the course.
+    const details = target.closest<HTMLButtonElement>(".dash-details");
+    if (details?.dataset.courseId) {
+      const course = data.courses.find((c) => c._id === details.dataset.courseId);
+      if (course) openCourseDetail(course, details);
+      return;
+    }
+
     const button = target.closest<HTMLButtonElement>(".dash-continue");
     if (!button?.dataset.courseId) return;
     const course = data.courses.find((c) => c._id === button.dataset.courseId);
     if (course) void startCourse(course);
   });
+
+  // The detail dialog's Start button runs the same path as the card's, so
+  // enrolling, resuming and the tutor handoff stay in one place. The dialog is
+  // closed first because `startCourse` re-renders the dashboard on enroll, which
+  // would otherwise leave a dialog floating over a list the student can no
+  // longer see the context of.
+  courseDetailStartBtn.addEventListener("click", () => {
+    if (!openCourse) return;
+    const course = openCourse;
+    closeCourseDetail();
+    void startCourse(course);
+  });
+
+  courseDetailCloseBtn.addEventListener("click", closeCourseDetail);
+
+  // Click the backdrop to dismiss. Guarded on the target being the backdrop
+  // itself, so a click inside the panel — or on the scrollable body — does not
+  // close it and lose the student's place in a 186-module list.
+  courseDetailEl.addEventListener("click", (event) => {
+    if (event.target === courseDetailEl) closeCourseDetail();
+  });
+
+  // Escape closes, which is the one key a dialog is expected to answer without
+  // the student having to find the close button. Named so `destroy` can remove
+  // it — every other listener here hangs off an element that goes away with the
+  // host, but this one is on `document` and would outlive the dashboard, firing
+  // against a closed component on every later Escape press.
+  const onDocumentKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && openCourse) closeCourseDetail();
+  };
+  document.addEventListener("keydown", onDocumentKeydown);
 
   // The primary button does whatever the dashboard currently recommends, so
   // the student never has to decide which of several buttons to press.
@@ -882,6 +1152,7 @@ export function createDashboard(
     refresh,
     destroy: () => {
       destroyed = true;
+      document.removeEventListener("keydown", onDocumentKeydown);
     },
   };
 }

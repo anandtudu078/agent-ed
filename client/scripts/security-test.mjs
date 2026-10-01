@@ -983,12 +983,18 @@ try {
     "the landing page exists but nothing in the app points to it",
   );
   await linkBack.close();
-  await landingCtx.close();
 
   // The old landing URL was shared before the move, so it must still land
   // somewhere useful rather than 404. Asserted against the live server, because
   // a redirect that exists in the source but is dropped from the build is the
   // failure this whole section is about.
+  //
+  // Reuses `landingCtx` rather than opening a new one, and the context is closed
+  // only at the very end of this section. Closing it here and calling newPage()
+  // on it below threw "Target page, context or browser has been closed", which
+  // surfaced as a bare "unexpected failure" and cost this suite its last two
+  // checks — including the build-entry assertions, which are the ones that catch
+  // a page being added and never shipped.
   const oldLink = await landingCtx.newPage();
   const oldRes = await oldLink.goto(`${FRONTEND}/landing.html`, {
     waitUntil: "domcontentloaded",
@@ -1005,6 +1011,7 @@ try {
     `landed on ${oldLink.url()}`,
   );
   await oldLink.close();
+  await landingCtx.close();
 
   // 11. Both pages survive a production build.
   //
@@ -1025,11 +1032,42 @@ try {
   const viteConfig = fs.existsSync(viteConfigPath)
     ? fs.readFileSync(viteConfigPath, "utf8")
     : "";
-  // Match inside the `input: { ... }` block specifically, not the whole file.
-  // A bare `includes(page)` also matches the page's name in a comment, so the
-  // check would stay green while the page was dropped from the build — the exact
+  // Match the `input: { ... }` block specifically, not the whole file. A bare
+  // `includes(page)` also matches the page's name in a comment, so the check
+  // would stay green while the page was dropped from the build — the exact
   // failure it exists to catch.
-  const inputBlock = (viteConfig.match(/input\s*:\s*\{[\s\S]*?\}/) ?? [""])[0];
+  //
+  // The block is located by the `input:` KEY, then read by brace COUNT. Two
+  // things went wrong before:
+  //
+  //   - A non-greedy `[\s\S]*?\}` stopped at the first `}`, which closes a
+  //     single entry, so it captured only the head of the object.
+  //   - Searching for the bare word "input" found it inside this file's own
+  //     doc comment, then took the `{` from that comment's braces and matched
+  //     a block containing no entries at all. Every check below then passed
+  //     against the comment text — including when a page was genuinely removed
+  //     from the build.
+  //
+  // So: anchor on `input` followed by a colon and optional space (which no prose
+  // in a comment has), then walk braces to the one that closes the object.
+  function readObjectBlock(source, key) {
+    // The colon is what distinguishes the real key from the word appearing in
+    // prose. `input:` is not something a sentence about a build config writes.
+    const keyMatch = new RegExp(`${key}\\s*:\\s*\\{`).exec(source);
+    if (!keyMatch) return "";
+    const open = keyMatch.index + keyMatch[0].length - 1;
+    let depth = 0;
+    for (let i = open; i < source.length; i += 1) {
+      const ch = source[i];
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) return source.slice(open, i + 1);
+      }
+    }
+    return source.slice(open);
+  }
+  const inputBlock = readObjectBlock(viteConfig, "input");
   for (const page of ["index.html", "app.html", "landing.html"]) {
     check(
       `${page} is a declared build entry`,
@@ -1037,10 +1075,13 @@ try {
       `${page} is not in the client/vite.config.ts input block — it will be omitted from dist/`,
     );
   }
-  // And the entry must be declared as an INPUT, not merely mentioned in a comment.
+  // And the entry must be declared as an INPUT, not merely mentioned in a
+  // comment. Asserted against the whole file, because the block above is the
+  // `input` object — it cannot contain the `rollupOptions` that wraps it, so
+  // looking for that inside it was guaranteed to fail.
   check(
     "the build actually declares a rollup input",
-    /rollupOptions[\s\S]*input[\s\S]*landing/.test(inputBlock),
+    /rollupOptions[\s\S]*input\s*:/.test(viteConfig) && inputBlock.includes("resolve("),
     "no rollupOptions.input found, so Vite will fall back to index.html only",
   );
 
