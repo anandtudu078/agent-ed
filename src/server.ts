@@ -52,6 +52,11 @@ import {
 } from "./services/progressService";
 import { flowGuidance, flowSignals } from "./services/flowSignals";
 import {
+  looksLikeQuestion,
+  tutorReaction,
+  type TutorReaction,
+} from "./services/tutorReaction";
+import {
   awayLabel,
   isFirstRun,
   recommendedStarterCourse,
@@ -151,6 +156,13 @@ interface StudentMessagePayload {
 interface ChatResult {
   response: string;
   analysis: string;
+  /**
+   * The mood the owl wears for this reply, decided from the student's turn.
+   *
+   * Typed as the server's `TutorReaction` so the two ends cannot drift, and
+   * re-validated by the client because it arrives over the wire.
+   */
+  reaction: TutorReaction;
   mode: TutorMode;
   /** Diagram for the lesson board, or null when none fits. */
   visual: VisualSpec | null;
@@ -376,6 +388,24 @@ async function processStudentMessage(
   return {
     response,
     analysis: JSON.stringify(analysis),
+    /**
+     * How the owl should look while it delivers this reply.
+     *
+     * Computed here rather than in the browser so the rule is testable without a
+     * DOM, and so both chat paths (socket and `POST /api/chat`) agree. The client
+     * previously received the student's `masteryEstimate` inside a JSON *string*
+     * it never parsed, so the owl had no reaction to how the turn actually went —
+     * it reacted only to the graded score, and only after a test.
+     *
+     * Confidence is deliberately part of the signal: one good turn is not proof
+     * the student has understood anything, and an owl that beams after a lucky
+     * guess teaches them to trust a reaction that isn't earned.
+     */
+    reaction: tutorReaction({
+      masteryEstimate: analysis.masteryEstimate,
+      coreMisunderstandings: analysis.coreMisunderstandings,
+      isQuestion: looksLikeQuestion(response),
+    }),
     mode,
     visual,
     session: {

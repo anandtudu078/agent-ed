@@ -6,7 +6,10 @@ import {
   ReviewCard,
   TestEvaluation,
   WeakPoint,
+  type CourseTestRecord,
 } from "../models/Progress";
+import { Course } from "../models/Course";
+import { mergeCourseTest, checkpointStatus } from "../services/checkpoints";
 import { MAX_STORED_TOPIC_VISITS, Session } from "../models/Session";
 import {
   AuthenticatedRequest,
@@ -43,12 +46,22 @@ const MAX_ANSWER_LENGTH = 4000;
 /** Same guard on the misconception list carried in an attempt ticket. */
 const MAX_MISCONCEPTIONS = 5;
 const MAX_MISCONCEPTION_LENGTH = 200;
+/** A checkpoint covers a handful of modules, not a whole syllabus. */
+const MAX_MODULES_COVERED = 10;
 
 interface AttemptPayload {
   studentId: string;
   topic: string;
   question: string;
   misconceptions: string[];
+  /**
+   * Set only for a checkpoint test: the course it belongs to, and the modules it
+   * stands in for. Signed rather than sent back by the client, so the coverage
+   * recorded on submit is the coverage the server itself decided — otherwise a
+   * client could mark a whole course tested by claiming it covered everything.
+   */
+  courseId?: string;
+  modulesCovered?: string[];
 }
 
 /**
@@ -82,7 +95,12 @@ function verifyAttempt(token: string): AttemptPayload {
     typeof payload.topic !== "string" ||
     typeof payload.question !== "string" ||
     (payload.misconceptions !== undefined &&
-      !Array.isArray(payload.misconceptions))
+      !Array.isArray(payload.misconceptions)) ||
+    // Checkpoint fields are optional, but if present they must be the right shape.
+    // They decide which course gets marked as tested, so a malformed value has to
+    // fail the ticket rather than be coerced into something writable.
+    (payload.courseId !== undefined && typeof payload.courseId !== "string") ||
+    (payload.modulesCovered !== undefined && !Array.isArray(payload.modulesCovered))
   ) {
     throw new Error("Malformed assessment attempt.");
   }
@@ -97,6 +115,21 @@ function verifyAttempt(token: string): AttemptPayload {
       .map((item) => item.trim().slice(0, MAX_MISCONCEPTION_LENGTH))
       .filter(Boolean)
       .slice(0, MAX_MISCONCEPTIONS),
+    ...(typeof payload.courseId === "string" && payload.courseId
+      ? { courseId: payload.courseId }
+      : {}),
+    ...(Array.isArray(payload.modulesCovered)
+      ? {
+          // Module titles are bounded for the same reason as the rest: this list
+          // is written into the student's record, and a signed ticket is still not
+          // proof the values are sensible.
+          modulesCovered: (payload.modulesCovered as unknown[])
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim().slice(0, 200))
+            .filter(Boolean)
+            .slice(0, MAX_MODULES_COVERED),
+        }
+      : {}),
   };
 }
 
@@ -195,6 +228,130 @@ router.post(
     console.error("Failed to start assessment.", error);
     response.status(502).json({
       error: "Could not start an evaluation right now. Please try again.",
+    });
+  }
+  },
+);
+
+/**
+ * POST /api/assessment/checkpoint
+ * Body: { courseId }
+ *
+ * Starts a checkpoint test for a course — the interval test the student is owed.
+ *
+ * The whole point is that it decides *what* to ask from where the student actually
+ * is, rather than trusting a topic from the client: the modules they have finished,
+ * minus the ones a previous checkpoint already covered, determine the question. A
+ * client could otherwise ask to be "tested" on a module it has never reached, and
+ * be marked down for it.
+ *
+ * Returns the same `attemptToken` shape as `/start`, so the client reuses one test
+ * panel and one submit path for both kinds of test.
+ */
+router.post(
+  "/checkpoint",
+  requireAuth,
+  requireConsent,
+  chatRateLimit,
+  aiSpendLimit,
+  async (request: Request, response: Response) => {
+  try {
+    const authUser = (request as AuthenticatedRequest).authUser as AuthUser;
+    const courseId =
+      typeof (request.body as { courseId?: unknown })?.courseId === "string"
+        ? String((request.body as { courseId: string }).courseId).trim()
+        : "";
+    if (!courseId) {
+      response.status(400).json({ error: "courseId is required." });
+      return;
+    }
+
+    const studentId = authUser.username;
+    const [progress, course] = await Promise.all([
+      Progress.findOne({ studentId })
+        .select({ enrolledCourses: 1, courseTests: 1, weakPoints: 1, testHistory: 1 })
+        .lean(),
+      Course.findById(courseId).lean(),
+    ]);
+
+    if (!course) {
+      response.status(404).json({ error: "That course no longer exists." });
+      return;
+    }
+    // Owner-only, exactly as the dashboard is: a checkpoint must not be startable
+    // against a course another student is enrolled in.
+    const enrollment = (progress?.enrolledCourses ?? []).find(
+      (item) => item.courseId === courseId,
+    );
+    if (!enrollment) {
+      response.status(403).json({
+        error: "Enrol in that course before taking its checkpoint test.",
+      });
+      return;
+    }
+
+    const status = checkpointStatus(
+      courseId,
+      course.modules ?? [],
+      enrollment.completedModules ?? [],
+      (progress?.courseTests ?? []).find((test) => test.courseId === courseId) ?? null,
+    );
+
+    // Refuse rather than inventing a question. A checkpoint with nothing to ask
+    // about means the student has not finished enough modules yet, and inventing
+    // one would produce a test whose result could never be attributed to anything.
+    if (!status.due || !status.nextModule) {
+      response.status(409).json({
+        error: "No checkpoint test is due for that course right now.",
+        modulesUntilNext: status.modulesUntilNext,
+      });
+      return;
+    }
+
+    // Misconceptions already recorded for this module steer the question, so the
+    // checkpoint asks about the gap rather than re-asking what went wrong before.
+    const key = status.nextModule.topic.toLowerCase();
+    const misconceptions = (progress?.testHistory ?? [])
+      .filter((evaluation) => evaluation.topic?.trim().toLowerCase() === key)
+      .flatMap((evaluation) => evaluation.misconceptions ?? [])
+      .filter(Boolean)
+      .slice(0, 5);
+
+    const difficulty = difficultyForTopic(
+      { weakPoints: progress?.weakPoints ?? [], reviewCards: [] },
+      status.nextModule.topic,
+    );
+
+    const { question } = await generateAssessmentQuestion(
+      status.nextModule.topic,
+      misconceptions,
+      authUser.language,
+      difficulty,
+    );
+
+    const attemptToken = signAttempt({
+      studentId,
+      topic: status.nextModule.topic,
+      question,
+      misconceptions,
+      courseId,
+      modulesCovered: status.untestedModules.map((module) => module.title),
+    });
+
+    response.json({
+      attemptToken,
+      topic: status.nextModule.topic,
+      question,
+      courseId,
+      // Which modules this checkpoint is standing in for. Signed into the ticket
+      // so the submit path can record coverage it can trust, rather than trusting
+      // a list the client sends back.
+      modulesCovered: status.untestedModules.map((module) => module.title),
+    });
+  } catch (error) {
+    console.error("Failed to start a checkpoint test.", error);
+    response.status(502).json({
+      error: "Could not start the checkpoint test right now. Please try again.",
     });
   }
   },
@@ -305,7 +462,7 @@ router.post(
     // updateProgressWithRetry for why a plain read-then-$set loses data.
     await updateProgressWithRetry(
       studentId,
-      ["testHistory", "weakPoints", "reviewCards"],
+      ["testHistory", "weakPoints", "reviewCards", "courseTests"],
       (current) => {
         const history = [
           ...((current.testHistory as TestEvaluation[]) ?? []),
@@ -330,8 +487,27 @@ router.post(
         );
         const learningSpeed = computeLearningSpeed(topicsVisited, now);
 
+        // Record the checkpoint this attempt covered, so the next one knows where
+        // to pick up. Only for a checkpoint ticket — an ordinary topic test must
+        // not mark any course as tested, or a student could clear their whole
+        // course's checkpoints by taking unrelated topic tests.
+        const courseTests = attempt.courseId
+          ? mergeCourseTest((current.courseTests as CourseTestRecord[]) ?? [], {
+              courseId: attempt.courseId,
+              testedModules: attempt.modulesCovered ?? [],
+              score: grade.score,
+              testedAt: now,
+            })
+          : ((current.courseTests as CourseTestRecord[]) ?? []);
+
         return {
-          set: { testHistory: history, weakPoints, reviewCards, learningSpeed },
+          set: {
+            testHistory: history,
+            weakPoints,
+            reviewCards,
+            learningSpeed,
+            courseTests,
+          },
           result: undefined,
         };
       },
