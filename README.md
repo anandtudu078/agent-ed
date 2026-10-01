@@ -13,6 +13,10 @@ their weak concepts, their specific wrong ideas, what is holding them up, and ho
 they are behaving right now — and feeds that into the prompt that writes the
 next reply.
 
+Around that loop: alerts that tell the student what to do next, course notes they
+can take away, checkpoint tests that fall due as they work through a course, and
+an owl whose face is a function of how the last turn actually went.
+
 ---
 
 ## Quick start
@@ -85,9 +89,44 @@ Starting from there enrols the student and opens a Socratic chat aimed at the
 right module. The existing card buttons are unchanged, so this is an addition
 rather than a replacement.
 
-Subtopics are authored per module in `src/data/curriculum.ts` and are purely
-descriptive: the tutor never sees them, and progress is still counted per
-module, so adding or removing one can never move a student's percentage.
+Subtopics are authored per module in `src/data/curriculum.ts`. They are
+*descriptive and, since each one is also a learning entry point, clickable*: click
+any subtopic in the dialog and the tutor opens a Socratic chat scoped to exactly
+that part rather than to the whole module. The request is matched fuzzily against
+the syllabus (`client/src/components/subtopics.ts`) because a student types "backprop"
+where the course says "Backpropagation and gradient flow" — and the match refuses
+to fire on a word that would match half the catalog.
+
+Progress is still counted per module, so adding or removing a subtopic can never
+move a student's percentage.
+
+### Downloadable notes
+
+The course dialog also has **Download notes**, which writes the whole syllabus to a
+Markdown file: every module, its subtopics, which ones are done, and a summary.
+Built entirely in the browser from the payload the dialog already rendered from,
+so it costs no round trip and cannot drift from what the student was shown. Hindi
+notes are translated; the module titles stay as the syllabus words them, since the
+tutor will never say a transliterated version of them.
+
+### Checkpoint tests
+
+A student halfway through a twelve-module course could take a test on whatever they
+felt like, or take six tests on the same first module. Neither number meant
+anything, because nothing tied a test to *where they were in the course*.
+
+A **checkpoint** is the honest middle: test what has accumulated since you last
+did. Every three completed modules, a test comes round; courses under four modules
+get a single test at the end rather than meaningless intervals. The schedule is
+derived on read from the live syllabus and the last recorded test, so it can never
+go stale or claim a test is due on a module the student has not reached. What is
+stored is the test event — which modules it covered — not a schedule.
+
+The server decides what to ask and refuses when nothing is due, so a test can
+never be invented for a result that could not be attributed to anything. The
+coverage is signed into the attempt ticket rather than sent back by the client, and
+an ordinary topic test records no checkpoint at all — otherwise a student could
+clear a whole course's checkpoints by taking unrelated tests.
 
 **No AI key?** Registration, sign-in, the course catalog, the course detail view
 and the dashboard all work. Only the tutor, assessments and diagrams need one.
@@ -96,10 +135,10 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-560 checks across fourteen suites. Start here.
+876 checks across twenty suites. Start here.
 
 ```bash
-npm test              # runs every suite that needs no browser (10 suites, ~40s)
+npm test              # runs every suite that needs no browser (15 suites, ~50s)
 ```
 
 Or individually:
@@ -112,10 +151,14 @@ Or individually:
 | `npm run test:difficulty` | 20 | Adaptive difficulty bands |
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
+| `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
+| `npm run test:checkpoints` | 40 | Course checkpoint intervals and coverage |
 | `npm run test:return` | 32 | Return detection and first run |
-| `npm run test:offline` | 98 | The offline AI gate, the auth cookie policy, and the consent rules |
+| `npm run test:offline` | 107 | The offline AI gate, the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
+| `npm run test:notes` | 27 | Downloadable course notes (Markdown) |
+| `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
 | `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |
@@ -263,6 +306,61 @@ driven entirely on the client, so clearing the thread under a running lesson lef
 it talking — or, once turn-taking landed, waiting for an answer to a question
 that had just been deleted from the screen.
 
+### The owl reacts to the student
+
+The owl's face is not decoration. It is a function of how the student's turn
+actually went (`src/services/tutorReaction.ts`), computed server-side so the rule
+is testable without a DOM and so the socket and the HTTP route cannot disagree.
+Previously the server sent the student's `masteryEstimate` inside a JSON string the
+client never parsed, so the only thing that ever moved the mascot's face was a
+graded test score — a student could have three turns go badly and the owl looked
+identical to one who had just had a breakthrough.
+
+Three decisions are load-bearing:
+
+- **A strong turn with open misconceptions gets `happy`, never `excited`.** A high
+  score with an unaddressed wrong idea is not a success, and an owl that
+  congratulates it teaches the student to trust a reaction that isn't earned.
+- **A question never reads as excitement.** When the tutor replies with a question
+  it is engaging the student's idea, not grading it — worth warmth, but not evidence
+  of understanding either way.
+- **Missing or malformed input returns `neutral`, never enthusiasm.** The estimate
+  comes from a model; if it is absent, `NaN`, or non-finite, the owl goes quiet.
+  Inventing a mood is worse than no mood. (A *finite* out-of-range value like 500 is
+  a model scoring on the wrong scale, and is clamped.)
+
+The vocabulary the tutor may use is deliberately narrower than the mascot's own
+(`proud` and `curious` are set locally): what the tutor reports is a judgement about
+the *student*, and letting a remote payload drive `proud` would let a garbled reply
+make the owl congratulate someone for nothing.
+
+## Alerts
+
+The dashboard had the raw material for every alert — due reviews, weak points,
+progress, pace — and showed it as *evidence*: counts, percentages, lists. What was
+missing was the *conclusion*. An alert states what is true and carries the button
+that does something about it (`client/src/components/alerts.ts`), routed into flows
+that already existed. An alert with no action is a notification, and notifications
+get muted.
+
+The rules that matter are all about not lying to a student:
+
+- **Course completion is judged against the live syllabus**, never the stored count.
+  A renamed module leaves a stale title in `completedModules` forever, so comparing
+  set sizes would report a half-finished course as done.
+- **Only the most recent test result** feeds the "poor score" alert. Walking
+  backwards through history would re-nag about a topic the student has since gone
+  on to ace — the most demoralising thing this component could do.
+- **One gap raises one alert.** A weak point and a poor score describing the same
+  topic reads as nagging.
+- **Absence never displaces something actionable.** Telling someone with three
+  reviews due that you missed them is simply the wrong priority order.
+- **A student with nothing due still gets exactly one alert**, pointing somewhere to
+  go, rather than an empty panel that reads as "nothing to do here".
+
+Alerts are derived on read and capped at three. A page of eleven alerts is a page
+nobody reads, and the weakest one is what trains people to dismiss the rest.
+
 ---
 
 ## How the adaptive loop works
@@ -307,6 +405,8 @@ src/
     aiService.ts               tutor prompt; takes the learner briefing
     progressService.ts         learner profile, difficulty, prerequisites
     flowSignals.ts             repetition and pacing
+    tutorReaction.ts           how the owl reacts to a student's turn
+    checkpoints.ts             course checkpoint intervals
     returnState.ts             "welcome back"
     visualService.ts           validates model output into a diagram spec
   models/                      User, Session, Progress, Course, tokens, usage
@@ -316,15 +416,24 @@ client/src/
   main.ts                      chat, speech, return path, first run
   components/mascot.ts         the owl - six moods, real reactions
   components/diagrams.ts       hand-written SVG, every string escaped
-  components/dashboard.ts      reviews, weak points, root cause, course detail
+  components/dashboard.ts      alerts, checkpoints, reviews, course detail
+  components/alerts.ts         what the student should know right now
+  components/subtopics.ts      fuzzy match from a request to a subtopic
+  components/notes.ts          course notes as a Markdown download
 
 scripts/                       the test suites
 ```
 
-**The seam worth reading first** is `generateTutorResponse` in
-`src/services/aiService.ts`. Its `learnerBriefing` parameter is what turns this
-from a textbook with a dashboard into a tutor — before it existed, none of the
+**The seams worth reading first.** `generateTutorResponse` in
+`src/services/aiService.ts` — its `learnerBriefing` parameter is what turns this
+from a textbook with a dashboard into a tutor; before it existed, none of the
 collected telemetry reached the model at all.
+
+`tutorReaction` and `checkpoints` are the other two, and they share a shape: both
+are pure functions over data the server already holds, both decide something a
+student acts on, and both are the kind of rule that is easy to get subtly wrong and
+impossible to notice. Keeping them out of the routes is what let them get a suite
+instead of a paragraph.
 
 ---
 
@@ -465,7 +574,9 @@ most likely things to need changing.
 - Refresh tokens rotate on use and are stored only as a SHA-256 hash. Replaying
   a spent token revokes the whole family.
 - A daily AI spend cap per student, which fails open so a database blip can't
-  take the app down.
+  take the app down. It is charged on **both** entry points — `POST /api/chat` and
+  the socket — because the client uses the socket, and capping only the route left
+  the bill unbounded in practice.
 
 ---
 
@@ -506,4 +617,23 @@ most likely things to need changing.
 - Gemini's free tier is exhausted on the development account, so Groq has been
   carrying everything. Both paths work; only the fallback has been exercised
   recently.
+
+### Added late, and not yet proven the way the rest is
+
+- **Hindi speech is verified by code, not by ear.** The owl now resolves and assigns
+  an actual `SpeechSynthesisVoice` instead of hardcoding `en-US`, and the recogniser
+  follows the teaching language. That fix was real — the old code confirmed a Hindi
+  voice existed and then spoke through an English one — but no suite exercises it,
+  because this environment has no voices and the browser suites stub `getVoices()`
+  with a single fake English entry. **Check it on a real device.** On Windows,
+  Hindi text-to-speech is an optional feature: Settings → Time & language → Language
+  → Hindi → Language options → Speech.
+- **A checkpoint is interval-by-module-count, not by time.** A test comes round every
+  three completed modules. A calendar interval ("every two weeks") is a different
+  feature needing a stored schedule, which would break this codebase's rule that
+  everything time-dependent is derived on read.
+- **The concurrency fixes are reasoned, not load-tested.** Enrollment is now one
+  atomic conditional update and the progress array folds retry on a guard
+  (`updateProgressWithRetry`). Both are sound in theory and typecheck, but have not
+  been exercised against a running MongoDB under real contention.
 

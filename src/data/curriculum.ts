@@ -22,9 +22,15 @@ export interface CurriculumModule {
    *
    * Shown on the course detail screen so a student can see the shape of a
    * module before committing to it, rather than discovering what a lesson
-   * covers only once they are halfway through it. Purely descriptive — the
-   * tutor is not given these, and progress is still counted per module, not
-   * per subtopic, so adding or removing one never moves a student's percentage.
+   * covers only once they are halfway through it.
+   *
+   * Each one is also a learning entry point: clicking it opens the tutor scoped to
+   * that part alone (see `client/src/components/subtopics.ts`). They are *not*
+   * passed to the model as a syllabus — the tutor is given the one subtopic the
+   * student chose, matched fuzzily from their request, rather than the whole list.
+   *
+   * Progress is still counted per module, not per subtopic, so adding or removing
+   * one never moves a student's percentage.
    *
    * Optional, and the UI renders a module without them perfectly well. That is
    * deliberate: an uncurated subtopic list is a worse thing to show than no
