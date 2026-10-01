@@ -13,6 +13,9 @@ import path from "node:path";
 
 const BACKEND = "http://localhost:3000";
 const FRONTEND = "http://localhost:5173";
+// The tutor is /app.html, not the bare origin. The root URL is deliberately the
+// landing page, and this suite asserts that below.
+const APP = `${FRONTEND}/app.html`;
 const results = [];
 function check(label, ok, detail = "") {
   results.push({ label, ok });
@@ -580,7 +583,7 @@ try {
       /* storage unavailable — the assertion below still holds */
     }
   }, staleBody.user);
-  await stalePage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await stalePage.goto(APP, { waitUntil: "domcontentloaded" });
   // Give the boot sequence (me -> refresh -> consent) room to settle.
   await stalePage.waitForTimeout(5000);
 
@@ -647,7 +650,7 @@ try {
     }
     await route.continue();
   });
-  await doomedPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await doomedPage.goto(APP, { waitUntil: "domcontentloaded" });
   await doomedPage.waitForTimeout(5000);
 
   check(
@@ -671,7 +674,7 @@ try {
   // repeating console pattern this was diagnosed from.
   const stuckCtx = await browser.newContext();
   const stuckPage = await stuckCtx.newPage();
-  await stuckPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await stuckPage.goto(APP, { waitUntil: "domcontentloaded" });
   await stuckPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
 
   // Reveal the notice directly; it is normally gated behind a valid session, and
@@ -733,7 +736,7 @@ try {
     const path = res.url().replace(BACKEND, "").split("?")[0];
     if (path.startsWith("/api/")) anonCalls.push(`${res.status()} ${path}`);
   });
-  await anonPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await anonPage.goto(APP, { waitUntil: "domcontentloaded" });
   await anonPage.waitForTimeout(6000);
 
   const anonOffending = anonCalls.filter(
@@ -776,7 +779,7 @@ try {
     const path = res.url().replace(BACKEND, "").split("?")[0];
     if (path.startsWith("/api/")) aboutCalls.push(`${res.status()} ${path}`);
   });
-  await aboutPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await aboutPage.goto(APP, { waitUntil: "domcontentloaded" });
   await aboutPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
   await aboutPage.waitForTimeout(1000);
 
@@ -873,7 +876,7 @@ try {
   await brokenPage.route(`${BACKEND}/api/auth/consent/policy`, (route) =>
     route.fulfill({ status: 500, body: "boom" }),
   );
-  await brokenPage.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await brokenPage.goto(APP, { waitUntil: "domcontentloaded" });
   await brokenPage.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
   await brokenPage.locator("#about-link").click();
   await brokenPage.waitForTimeout(1800);
@@ -895,17 +898,18 @@ try {
   // The point of these is restraint, not decoration. A judge reads a privacy page
   // against the source, so the claims that matter are the LIMITS: if guardian
   // consent is described as verified anywhere, and it is not, the page is worse
-  // than no page. And the page must stay a separate document — `/` is the app,
-  // and every suite here hardcodes localhost:5173 as the app URL.
+  // than no page. And the page must own the root URL: pasting the tool's link
+  // should land on the landing page, not straight in the sign-in form. The tutor
+  // itself is /app.html, which is what the rest of this suite drives.
   const landingCtx = await browser.newContext();
   const landingPage = await landingCtx.newPage();
   const landingErrors = [];
   landingPage.on("pageerror", (e) => landingErrors.push(e.message.slice(0, 80)));
-  const landingRes = await landingPage.goto(`${FRONTEND}/landing.html`, {
+  const landingRes = await landingPage.goto(FRONTEND, {
     waitUntil: "domcontentloaded",
   });
   check(
-    "the landing page is served",
+    "the root URL serves the landing page",
     landingRes?.status() === 200,
     String(landingRes?.status()),
   );
@@ -917,18 +921,21 @@ try {
     landingErrors.join(" | ") || "clean",
   );
   check(
-    "it does not replace the app at the root URL",
+    "the landing page owns the root URL, not the app",
     await (async () => {
       const root = await landingCtx.newPage();
       await root.goto(FRONTEND, { waitUntil: "domcontentloaded" });
       await root.waitForTimeout(1200);
-      const stillApp = (await root.locator("#auth-view").count()) > 0;
+      // No sign-in form at the root: pasting the link should introduce the tool,
+      // not demand an account before saying anything about it.
+      const notApp = (await root.locator("#auth-view").count()) === 0;
       await root.close();
-      return stillApp;
+      return notApp;
     })(),
-    "the root URL no longer serves the app — every suite assumes it does",
+    "the root URL serves the app — pasting the link must land on the landing page",
   );
-  const appLinks = await landingPage.locator('a[href="/index.html"]').count();
+  // The app is still reachable at its own URL, or nothing else can reach it.
+  const appLinks = await landingPage.locator('a[href="/app.html"]').count();
   check("the landing page links into the app", appLinks >= 2, `${appLinks} links`);
   check(
     "the privacy anchor resolves to a real section",
@@ -968,15 +975,36 @@ try {
   );
   // And the app links back, or the page is unreachable from the product.
   const linkBack = await landingCtx.newPage();
-  await linkBack.goto(FRONTEND, { waitUntil: "domcontentloaded" });
+  await linkBack.goto(APP, { waitUntil: "domcontentloaded" });
   await linkBack.waitForFunction(() => window.__agentedTest !== undefined, { timeout: 20000 });
   check(
     "the app links to the landing page",
-    (await linkBack.locator('a[href="/landing.html"]').count()) === 1,
+    (await linkBack.locator('a[href="/index.html"]').count()) === 1,
     "the landing page exists but nothing in the app points to it",
   );
   await linkBack.close();
   await landingCtx.close();
+
+  // The old landing URL was shared before the move, so it must still land
+  // somewhere useful rather than 404. Asserted against the live server, because
+  // a redirect that exists in the source but is dropped from the build is the
+  // failure this whole section is about.
+  const oldLink = await landingCtx.newPage();
+  const oldRes = await oldLink.goto(`${FRONTEND}/landing.html`, {
+    waitUntil: "domcontentloaded",
+  });
+  check(
+    "the old /landing.html URL still resolves",
+    oldRes?.status() === 200,
+    String(oldRes?.status()),
+  );
+  await oldLink.waitForTimeout(1200);
+  check(
+    "/landing.html redirects to the landing page",
+    oldLink.url().replace(/\/$/, "") === FRONTEND.replace(/\/$/, ""),
+    `landed on ${oldLink.url()}`,
+  );
+  await oldLink.close();
 
   // 11. Both pages survive a production build.
   //
@@ -997,17 +1025,22 @@ try {
   const viteConfig = fs.existsSync(viteConfigPath)
     ? fs.readFileSync(viteConfigPath, "utf8")
     : "";
-  for (const page of ["index.html", "landing.html"]) {
+  // Match inside the `input: { ... }` block specifically, not the whole file.
+  // A bare `includes(page)` also matches the page's name in a comment, so the
+  // check would stay green while the page was dropped from the build — the exact
+  // failure it exists to catch.
+  const inputBlock = (viteConfig.match(/input\s*:\s*\{[\s\S]*?\}/) ?? [""])[0];
+  for (const page of ["index.html", "app.html", "landing.html"]) {
     check(
       `${page} is a declared build entry`,
-      viteConfig.includes(page),
-      `${page} is not in client/vite.config.ts — it will be omitted from dist/`,
+      inputBlock.includes(page),
+      `${page} is not in the client/vite.config.ts input block — it will be omitted from dist/`,
     );
   }
   // And the entry must be declared as an INPUT, not merely mentioned in a comment.
   check(
     "the build actually declares a rollup input",
-    /rollupOptions[\s\S]*input[\s\S]*landing/.test(viteConfig),
+    /rollupOptions[\s\S]*input[\s\S]*landing/.test(inputBlock),
     "no rollupOptions.input found, so Vite will fall back to index.html only",
   );
 

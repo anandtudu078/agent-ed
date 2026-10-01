@@ -20,6 +20,9 @@ import { chromium } from "playwright";
 import { acceptConsent } from "./test-helpers.mjs";
 
 const FRONTEND = "http://localhost:5173";
+// The root URL is the landing page; the tutor lives at /app.html. Every suite
+// here drives the app, so it targets the app URL rather than the bare origin.
+const APP = `${FRONTEND}/app.html`;
 const USER = `journey${Date.now().toString(36).slice(-6)}`;
 const PASS = "journey-pass-123";
 const NAME = "Priya Sharma";
@@ -73,7 +76,7 @@ try {
 
   // ---------------------------------------------------------------- 1. sign up
   step("1. A brand-new student signs up");
-  await page.goto(FRONTEND);
+  await page.goto(APP);
   await page.waitForFunction(() => window.__agentedTest !== undefined);
   check("app loads to the sign-in screen", await page.locator("#auth-view").isVisible());
   await page.locator("#auth-toggle").click();
@@ -386,7 +389,7 @@ try {
   // into the app.
   const otherContext = await browser.newContext();
   const page2 = await otherContext.newPage();
-  await page2.goto(FRONTEND);
+  await page2.goto(APP);
   await page2.waitForFunction(() => window.__agentedTest !== undefined);
   await page2.locator("#auth-toggle").click();
   await page2.locator("#display-name-input").fill("Impostor");

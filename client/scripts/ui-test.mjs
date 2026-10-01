@@ -5,6 +5,9 @@ import { chromium } from "playwright";
 import { acceptConsent } from "./test-helpers.mjs";
 
 const FRONTEND = "http://localhost:5173";
+// The root URL is the landing page; the tutor lives at /app.html. Every suite
+// here drives the app, so it targets the app URL rather than the bare origin.
+const APP = `${FRONTEND}/app.html`;
 const USER = `uitest${Date.now().toString(36).slice(-5)}`;
 const PASS = "uitest-pass-123";
 const NAME = "UI Tester";
@@ -22,7 +25,7 @@ try {
   page.setDefaultTimeout(20000);
 
   // 1. Auth view shows first
-  await page.goto(FRONTEND);
+  await page.goto(APP);
   // Wait for the app module to finish wiring listeners (dev-only boot signal
   // set at the end of main.ts) — avoids racing Vite's cold transforms.
   await page.waitForFunction(() => window.__agentedTest !== undefined);
@@ -567,7 +570,7 @@ try {
     window.SpeechSynthesisUtterance = FakeUtterance;
     window.__ttsCalls = calls;
   });
-  await voicePage.goto(FRONTEND);
+  await voicePage.goto(APP);
   await voicePage.locator("#app-view").waitFor({ state: "visible" });
   await voicePage.locator("#voice-toggle").click();
   await voicePage.locator("#voice-hint").waitFor({ state: "visible" });
@@ -654,7 +657,7 @@ try {
   // Sign in through the real API so the context receives a genuine session
   // cookie. Reusing the desktop page's cookie jar would not work — contexts do
   // not share one — and faking it would test nothing.
-  await mobilePage.goto(FRONTEND);
+  await mobilePage.goto(APP);
   await mobilePage.waitForFunction(() => window.__agentedTest !== undefined);
   await mobilePage.locator("#auth-view").waitFor({ state: "visible" });
   await mobilePage.locator("#auth-toggle").click();

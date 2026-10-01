@@ -21,6 +21,9 @@ import { chromium } from "playwright";
 import { acceptConsent } from "./test-helpers.mjs";
 
 const FRONTEND = "http://localhost:5173";
+// The root URL is the landing page; the tutor lives at /app.html. Every suite
+// here drives the app, so it targets the app URL rather than the bare origin.
+const APP = `${FRONTEND}/app.html`;
 const USER = `beat${Date.now().toString(36).slice(-5)}`;
 const PASS = "beat-pass-123";
 const NAME = "Beat Tester";
@@ -144,7 +147,7 @@ try {
 
 
 
-  await page.goto(FRONTEND);
+  await page.goto(APP);
   await page.waitForFunction(() => window.__agentedTest !== undefined);
 
   // --- Register -----------------------------------------------------------
