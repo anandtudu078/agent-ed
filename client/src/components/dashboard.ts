@@ -4,8 +4,8 @@
 // test, and a searchable course catalog with Continue Learning actions.
 
 import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
-import { buildAlerts, type LearningAlert } from "./alerts";
 import { matchSubtopic, subtopicPrompt } from "./subtopics";
+import { buildAlerts, type LearningAlert } from "./alerts";
 
 export interface CourseInfo {
   _id: string;
@@ -106,13 +106,13 @@ export function createDashboard(
   /** Sends the student back to the tutor on a topic the test just flagged. */
   onDiscussTopic?: (topic: string) => void,
   /**
-   * Opens the tutor on a topic or course the student chose from an alert.
+   * Opens the tutor on a topic or subtopic the student deliberately chose.
    *
    * Separate from `onDiscussTopic` because the intent differs: that one follows a
-   * grade ("we just found your weak area"), this one follows a deliberate choice
-   * ("I want to learn this"). Same destination, different framing — and the tutor
-   * prompt says which, so the owl doesn't sound as though it is scolding someone
-   * who simply asked a question.
+   * grade ("we just found your weak area"), this one follows a request ("I want to
+   * learn this"). Same destination, different framing — and the tutor prompt says
+   * which, so the owl does not sound as though it is scolding someone who simply
+   * asked a question.
    */
   onLearnTopic?: (topicOrCourse: string) => void,
   /**
@@ -378,9 +378,9 @@ export function createDashboard(
    * Render the alerts for the current data.
    *
    * `buildAlerts` already caps and orders them, so this only has to draw. The
-   * button carries the alert id, the action and the target as data attributes
-   * rather than via a closure per alert — the list is re-rendered on every
-   * refresh, and a handler bound per render is a handler that leaks per refresh.
+   * button carries the action and its target as data attributes rather than via a
+   * closure per alert — the list is re-rendered on every refresh, and a handler
+   * bound per render is a handler that leaks per refresh.
    */
   function renderAlerts(): void {
     if (!data) return;
@@ -424,9 +424,9 @@ export function createDashboard(
    * Do what an alert's button says.
    *
    * Every branch routes into something the student already does elsewhere — the
-   * review panel, the assessment panel, or the chat. A new alert that opened a
-   * dead end would be worse than no alert, because the student clicked it on
-   * purpose.
+   * review panel, the assessment panel, the course dialog, or the chat. An alert
+   * that opened a dead end would be worse than no alert, because the student
+   * clicked it on purpose.
    */
   function runAlertAction(
     kind: LearningAlert["action"]["kind"],
@@ -454,9 +454,9 @@ export function createDashboard(
         return;
       }
       case "learn-topic": {
-        // No specific topic to open, so hand the choice to the student rather
-        // than guessing one — an alert that starts a lesson they didn't ask for is
-        // the wrong kind of eager.
+        // No specific topic to open, so hand the choice to the student rather than
+        // guessing one — an alert that starts a lesson they didn't ask for is the
+        // wrong kind of eager.
         onLearnTopic?.(target || "");
         return;
       }
@@ -988,10 +988,10 @@ export function createDashboard(
                        .map(
                          // Each subtopic is a button, not text: this is what makes
                          // a student able to learn one part of a module rather than
-                         // only the whole of it (F5). The bullet stays a separate
-                         // span so the list still reads as a list, and the row's
-                         // hover state is the affordance rather than an arrow that
-                         // would compete with the module ticks above.
+                         // only the whole of it. The bullet stays a separate span
+                         // so the list still reads as a list, and the row's hover
+                         // state is the affordance rather than an arrow that would
+                         // compete with the module ticks above.
                          (sub) => `<li>
                            <button
                              type="button"
@@ -1430,8 +1430,8 @@ export function createDashboard(
     onLearnTopic?.(prompt);
   }
 
-  // Subtopics in the course detail are individually learnable. Delegated, for the
-  // same reason as the alert buttons: the body is re-rendered on every open.
+  // Subtopics in the course detail are individually learnable. Delegated, because
+  // the dialog body is re-rendered on every open.
   courseDetailBodyEl.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
       ".course-detail-subtopic",

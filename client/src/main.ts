@@ -465,10 +465,10 @@ function setDashboardVisible(visible: boolean): void {
           studentMessage: prompt,
         });
       },
-      // F5 / alert routing: the dashboard hands over a fully-formed prompt naming
-      // the exact subtopic, module and course the student chose. Keeping the
-      // wording in the dashboard means the choice is described in one place and
-      // the chat path stays a plain sender.
+      // A deliberate choice — "I want to learn this part" — as opposed to the
+      // grade-driven path above. The dashboard hands over a fully-formed prompt
+      // naming the exact subtopic, module and course, so the wording lives in one
+      // place and this stays a plain sender.
       (prompt: string) => {
         if (!prompt.trim()) return;
         setDashboardVisible(false);
