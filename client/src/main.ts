@@ -445,6 +445,28 @@ function setDashboardVisible(visible: boolean): void {
           studentMessage: prompt,
         });
       },
+      // A deliberate choice — "I want to learn this part" — as opposed to the
+      // grade-driven path above. The dashboard hands over a fully-formed prompt
+      // naming the exact subtopic, module and course, so the wording lives in one
+      // place and this stays a plain sender.
+      (prompt: string) => {
+        if (!prompt.trim()) return;
+        setDashboardVisible(false);
+        if (!socket?.connected) return;
+        appendMessage("student", prompt);
+        setBusy(true);
+        mascot.clearMessage();
+        stopOwlSpeech();
+        resumeMicAfterSpeech();
+        setAiStatus("thinking");
+        responseEpoch = conversationEpoch;
+        socket.emit("student-message", {
+          studentId: getStudentId(),
+          activeTopic: prompt.slice(0, 60),
+          mode: tutorMode,
+          studentMessage: prompt,
+        });
+      },
       (topic: string) => {
         // "Work on this with the tutor" → reopen the chat on the flagged topic.
         setDashboardVisible(false);

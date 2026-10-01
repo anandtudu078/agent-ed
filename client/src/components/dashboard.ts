@@ -4,6 +4,7 @@
 // test, and a searchable course catalog with Continue Learning actions.
 
 import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
+import { matchSubtopic, subtopicPrompt } from "./subtopics";
 
 export interface CourseInfo {
   _id: string;
@@ -89,6 +90,16 @@ export function createDashboard(
   ) => void,
   /** Sends the student back to the tutor on a topic the test just flagged. */
   onDiscussTopic?: (topic: string) => void,
+  /**
+   * Opens the tutor on a topic or subtopic the student deliberately chose.
+   *
+   * Separate from `onDiscussTopic` because the intent differs: that one follows a
+   * grade ("we just found your weak area"), this one follows a request ("I want to
+   * learn this"). Same destination, different framing — and the tutor prompt says
+   * which, so the owl does not sound as though it is scolding someone who simply
+   * asked a question.
+   */
+  onLearnTopic?: (topicOrCourse: string) => void,
   /**
    * Fired when an answer is graded, with the score. The owl uses this to react
    * â€” a character that congratulates you but never acknowledges a wrong answer
@@ -830,9 +841,23 @@ export function createDashboard(
                 ? `<ul class="course-detail-subtopics mt-1.5 flex flex-col gap-0.5">
                      ${subtopics
                        .map(
-                         (sub) => `<li class="flex items-start gap-1.5 text-xs text-slate-400">
-                           <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-slate-600"></span>
-                           <span>${esc(sub)}</span>
+                         // Each subtopic is a button, not text: this is what makes
+                         // a student able to learn one part of a module rather than
+                         // only the whole of it. The bullet stays a separate span
+                         // so the list still reads as a list, and the row's hover
+                         // state is the affordance rather than an arrow that would
+                         // compete with the module ticks above.
+                         (sub) => `<li>
+                           <button
+                             type="button"
+                             class="course-detail-subtopic flex w-full items-start gap-1.5 rounded-md px-1 py-0.5 text-left text-xs text-slate-400 transition hover:bg-slate-800/70 hover:text-indigo-300"
+                             data-subtopic="${esc(sub)}"
+                             data-module-title="${esc(module.title)}"
+                             title="Learn just this part"
+                           >
+                             <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-slate-600"></span>
+                             <span>${esc(sub)}</span>
+                           </button>
                          </li>`,
                        )
                        .join("")}
@@ -1131,6 +1156,43 @@ export function createDashboard(
   // closed first because `startCourse` re-renders the dashboard on enroll, which
   // would otherwise leave a dialog floating over a list the student can no
   // longer see the context of.
+  /**
+   * F5: open a lesson on one named subtopic.
+   *
+   * The request is matched against the whole course rather than only the module
+   * the student clicked, so "gradient descent" finds its subtopic wherever it
+   * sits. A `none` match falls back to the module's own topic — better to teach the
+   * module than to refuse a request that was plainly about it.
+   */
+  function learnSubtopic(
+    course: CourseInfo,
+    module: CourseInfo["modules"][number],
+    subtopic: string,
+  ): void {
+    const match = matchSubtopic(subtopic, course.modules ?? []);
+    const chosen = match.subtopic ?? subtopic ?? module.topic;
+    const moduleTitle = match.moduleTitle ?? module.title;
+    const prompt = subtopicPrompt(moduleTitle, chosen, course.title);
+    onLearnTopic?.(prompt);
+  }
+
+  // Subtopics in the course detail are individually learnable. Delegated, because
+  // the dialog body is re-rendered on every open.
+  courseDetailBodyEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".course-detail-subtopic",
+    );
+    if (!button || !openCourse) return;
+    const subtopic = button.dataset.subtopic?.trim();
+    const moduleTitle = button.dataset.moduleTitle?.trim();
+    if (!subtopic || !moduleTitle) return;
+    const course = openCourse;
+    const module = (course.modules ?? []).find((item) => item.title === moduleTitle);
+    if (!module) return;
+    closeCourseDetail();
+    learnSubtopic(course, module, subtopic);
+  });
+
   courseDetailNotesBtn.addEventListener("click", downloadOpenCourseNotes);
 
   courseDetailStartBtn.addEventListener("click", () => {
