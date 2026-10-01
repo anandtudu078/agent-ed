@@ -3,6 +3,10 @@
 // feedback/recommended focus), a quick action for starting an AI evaluation
 // test, and a searchable course catalog with Continue Learning actions.
 
+import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
+import { buildAlerts, type LearningAlert } from "./alerts";
+import { matchSubtopic, subtopicPrompt } from "./subtopics";
+
 export interface CourseInfo {
   _id: string;
   title: string;
@@ -53,6 +57,20 @@ export interface DashboardData {
    */
   focusRootCause: string | null;
   /**
+   * Checkpoint tests this student is owed, per course. Derived server-side on read
+   * from the live syllabus and the last test taken, so nothing here can be stale.
+   */
+  checkpoints: Array<{
+    courseId: string;
+    courseTitle: string;
+    /** Finished modules not yet covered by a checkpoint test. */
+    untestedModules: Array<{ title: string; topic: string }>;
+    due: boolean;
+    modulesUntilNext: number;
+    allTested: boolean;
+    nextModule: { title: string; topic: string } | null;
+  }>;
+  /**
    * How long the student has been away, phrased for display ("Away 3 days").
    * Empty for a short break or when we genuinely don't know â€” see `awayLabel`,
    * which was written for this and previously had no caller.
@@ -88,11 +106,28 @@ export function createDashboard(
   /** Sends the student back to the tutor on a topic the test just flagged. */
   onDiscussTopic?: (topic: string) => void,
   /**
+   * Opens the tutor on a topic or course the student chose from an alert.
+   *
+   * Separate from `onDiscussTopic` because the intent differs: that one follows a
+   * grade ("we just found your weak area"), this one follows a deliberate choice
+   * ("I want to learn this"). Same destination, different framing — and the tutor
+   * prompt says which, so the owl doesn't sound as though it is scolding someone
+   * who simply asked a question.
+   */
+  onLearnTopic?: (topicOrCourse: string) => void,
+  /**
    * Fired when an answer is graded, with the score. The owl uses this to react
    * â€” a character that congratulates you but never acknowledges a wrong answer
    * feels like it's not actually watching.
    */
   onGraded?: (score: number) => void,
+  /**
+   * The student's teaching language, read at the moment of use rather than
+   * captured at construction. The toggle can fire while the dashboard is already
+   * mounted, and a downloaded notes file that silently came out in the other
+   * language would be a small, confusing betrayal.
+   */
+  getLanguage?: () => "en" | "hi",
 ): { refresh: () => Promise<void>; destroy: () => void } {
   let data: DashboardData | null = null;
   let loading = false;
@@ -119,6 +154,22 @@ export function createDashboard(
             class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
           >â€¦</button>
         </section>
+
+        <!--
+          Alerts first, above the numbers. Everything below this panel is
+          evidence — pace, focus areas, the review list — and an alert is the
+          conclusion drawn from that evidence. Putting it after the statistics
+          would mean a student scrolls past three numbers before finding out that
+          something is actually due.
+        -->
+        <div class="dash-alerts space-y-2"></div>
+
+        <!--
+          Checkpoint tests, between the alerts and the statistics. A due test is
+          time-sensitive in the same way a review is, so it belongs with the alerts
+          rather than buried under "Your last check".
+        -->
+        <div class="dash-checkpoints space-y-2"></div>
 
         <!-- At a glance: three numbers, each in plain words -->
         <div class="grid grid-cols-3 gap-3">
@@ -276,7 +327,20 @@ export function createDashboard(
 
         <div class="course-detail-body flex-1 overflow-y-auto p-5"></div>
 
-        <div class="course-detail-foot border-t border-slate-800 p-4">
+        <div class="course-detail-foot space-y-2 border-t border-slate-800 p-4">
+          <!--
+            Notes are a secondary action, so they sit above the primary button
+            rather than beside it: a student opening the dialog to start a lesson
+            should not have two equally-weighted buttons to choose between. The
+            download needs no enrolment and no round trip — the syllabus is
+            already in the payload this dialog rendered from.
+          -->
+          <button
+            type="button"
+            class="course-detail-notes w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-indigo-500/50 hover:bg-slate-800 hover:text-white active:scale-[0.99]"
+          >
+            Download notes
+          </button>
           <button
             type="button"
             class="course-detail-start w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99]"
@@ -286,6 +350,120 @@ export function createDashboard(
         </div>
       </div>
     </div>`;
+
+  const alertsEl = host.querySelector<HTMLElement>(".dash-alerts")!;
+  const checkpointEl = host.querySelector<HTMLElement>(".dash-checkpoints")!;
+
+  /** Tone → colours. One place, so an alert can't look like a random badge. */
+  const ALERT_TONES: Record<LearningAlert["tone"], string> = {
+    due: "border-amber-500/40 bg-amber-500/10",
+    warning: "border-rose-500/40 bg-rose-500/10",
+    success: "border-emerald-500/40 bg-emerald-500/10",
+    info: "border-indigo-500/40 bg-indigo-500/10",
+  };
+  const ALERT_ACCENTS: Record<LearningAlert["tone"], string> = {
+    due: "text-amber-300",
+    warning: "text-rose-300",
+    success: "text-emerald-300",
+    info: "text-indigo-300",
+  };
+  const ALERT_ICONS: Record<LearningAlert["tone"], string> = {
+    due: "⏰",
+    warning: "◎",
+    success: "✓",
+    info: "→",
+  };
+
+  /**
+   * Render the alerts for the current data.
+   *
+   * `buildAlerts` already caps and orders them, so this only has to draw. The
+   * button carries the alert id, the action and the target as data attributes
+   * rather than via a closure per alert — the list is re-rendered on every
+   * refresh, and a handler bound per render is a handler that leaks per refresh.
+   */
+  function renderAlerts(): void {
+    if (!data) return;
+    const alerts = buildAlerts({
+      dueReviews: data.dueReviews ?? [],
+      weakPoints: data.progress.weakPoints ?? [],
+      enrolledCourses: data.progress.enrolledCourses ?? [],
+      // The course list is the authority on how many modules a course has. Using
+      // the stored completedModules length instead would let a stale title from a
+      // renamed module report a half-finished course as done.
+      courseSizes: Object.fromEntries(
+        (data.courses ?? []).map((course) => [course._id, (course.modules ?? []).length]),
+      ),
+      testHistory: data.progress.testHistory ?? [],
+      learningSpeed: data.progress.learningSpeed ?? 0,
+      awayLabel: data.awayLabel ?? "",
+      language: getLanguage?.() ?? "en",
+    });
+
+    alertsEl.innerHTML = alerts
+      .map(
+        (alert) => `
+        <div class="animate-fadeup flex items-start gap-3 rounded-2xl border p-4 ${ALERT_TONES[alert.tone]}" data-alert-id="${esc(alert.id)}">
+          <span class="mt-0.5 shrink-0 text-base ${ALERT_ACCENTS[alert.tone]}" aria-hidden="true">${ALERT_ICONS[alert.tone]}</span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold ${ALERT_ACCENTS[alert.tone]}">${esc(alert.title)}</p>
+            <p class="mt-0.5 text-xs leading-relaxed text-slate-300">${esc(alert.body)}</p>
+          </div>
+          <button
+            type="button"
+            class="dash-alert-action shrink-0 self-center rounded-lg border border-slate-600/70 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-400 hover:text-white"
+            data-alert-kind="${esc(alert.action.kind)}"
+            data-alert-target="${esc(alert.action.target ?? "")}"
+          >${esc(alert.action.label)}</button>
+        </div>`,
+      )
+      .join("");
+  }
+
+  /**
+   * Do what an alert's button says.
+   *
+   * Every branch routes into something the student already does elsewhere — the
+   * review panel, the assessment panel, or the chat. A new alert that opened a
+   * dead end would be worse than no alert, because the student clicked it on
+   * purpose.
+   */
+  function runAlertAction(
+    kind: LearningAlert["action"]["kind"],
+    target: string,
+  ): void {
+    switch (kind) {
+      case "review": {
+        // No visibility call: the dashboard is by definition already on screen when
+        // one of its alerts is pressed, and it may not be mounted at all if the
+        // student dismissed it — so don't reach for a control we don't own.
+        const first = data?.dueReviews?.[0];
+        if (first?.topic) void startAssessment(first.topic);
+        return;
+      }
+      case "test": {
+        if (!target) return;
+        void startAssessment(target);
+        return;
+      }
+      case "course": {
+        if (!target) return;
+        const course = data?.courses?.find((item) => item._id === target);
+        if (!course) return;
+        openCourseDetail(course, null);
+        return;
+      }
+      case "learn-topic": {
+        // No specific topic to open, so hand the choice to the student rather
+        // than guessing one — an alert that starts a lesson they didn't ask for is
+        // the wrong kind of eager.
+        onLearnTopic?.(target || "");
+        return;
+      }
+      default:
+        return;
+    }
+  }
 
   const statusEl = host.querySelector<HTMLElement>(".dash-status")!;
   const speedEl = host.querySelector<HTMLElement>(".dash-speed")!;
@@ -308,6 +486,9 @@ export function createDashboard(
   const courseDetailBodyEl = host.querySelector<HTMLElement>(".course-detail-body")!;
   const courseDetailStartBtn = host.querySelector<HTMLButtonElement>(
     ".course-detail-start",
+  )!;
+  const courseDetailNotesBtn = host.querySelector<HTMLButtonElement>(
+    ".course-detail-notes",
   )!;
   const courseDetailCloseBtn = host.querySelector<HTMLButtonElement>(
     ".course-detail-close",
@@ -702,6 +883,44 @@ export function createDashboard(
     courseDetailCloseBtn.focus();
   }
 
+  /**
+   * Hand the student the open course as a Markdown file.
+   *
+   * Synchronous and entirely local: the syllabus is already in `data`, so this
+   * cannot fail on a network call and there is nothing to await. The dialog stays
+   * open on purpose — a download is not a navigation, and closing it would throw
+   * away the module list they were reading.
+   */
+  function downloadOpenCourseNotes(): void {
+    if (!openCourse) return;
+    const enrolled = data?.progress.enrolledCourses.find(
+      (item) => item.courseId === openCourse?._id,
+    );
+    const language = getLanguage?.() ?? "en";
+    try {
+      const markdown = buildCourseNotes(
+        {
+          title: openCourse.title,
+          category: openCourse.category,
+          description: openCourse.description,
+          level: openCourse.level,
+          modules: openCourse.modules ?? [],
+        },
+        enrolled?.completedModules ?? [],
+        language,
+      );
+      downloadTextFile(`${slugify(openCourse.title)}-notes.md`, markdown);
+    } catch (error) {
+      // A failed download must not take the dialog down with it. This is a
+      // convenience; the syllabus is still on screen and readable.
+      console.error("Failed to build course notes.", error);
+      statusEl.textContent =
+        language === "hi"
+          ? "नोट्स डाउनलोड नहीं हो सके।"
+          : "Could not build the notes just now.";
+    }
+  }
+
   function closeCourseDetail(): void {
     courseDetailEl.classList.add("hidden");
     courseDetailEl.classList.remove("flex");
@@ -767,9 +986,23 @@ export function createDashboard(
                 ? `<ul class="course-detail-subtopics mt-1.5 flex flex-col gap-0.5">
                      ${subtopics
                        .map(
-                         (sub) => `<li class="flex items-start gap-1.5 text-xs text-slate-400">
-                           <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-slate-600"></span>
-                           <span>${esc(sub)}</span>
+                         // Each subtopic is a button, not text: this is what makes
+                         // a student able to learn one part of a module rather than
+                         // only the whole of it (F5). The bullet stays a separate
+                         // span so the list still reads as a list, and the row's
+                         // hover state is the affordance rather than an arrow that
+                         // would compete with the module ticks above.
+                         (sub) => `<li>
+                           <button
+                             type="button"
+                             class="course-detail-subtopic flex w-full items-start gap-1.5 rounded-md px-1 py-0.5 text-left text-xs text-slate-400 transition hover:bg-slate-800/70 hover:text-indigo-300"
+                             data-subtopic="${esc(sub)}"
+                             data-module-title="${esc(module.title)}"
+                             title="Learn just this part"
+                           >
+                             <span class="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-slate-600"></span>
+                             <span>${esc(sub)}</span>
+                           </button>
                          </li>`,
                        )
                        .join("")}
@@ -888,8 +1121,104 @@ export function createDashboard(
       .join("");
   }
 
+  /**
+   * Start a checkpoint test for a course.
+   *
+   * The server decides what to ask and refuses when nothing is due, so this only
+   * has to start the panel — which is the same panel an ordinary topic test uses,
+   * so the student sees no difference in how a test is taken, only in what it
+   * covers.
+   */
+  async function startCheckpointTest(courseId: string): Promise<void> {
+    if (testBusy) return;
+    testPanelEl.classList.remove("hidden");
+    testResultEl.classList.add("hidden");
+    testResultEl.innerHTML = "";
+    testAnswerEl.value = "";
+    setTestStatus("");
+    setTestBusy(true);
+    testTopicEl.textContent = "Checkpoint test…";
+    testQuestionEl.textContent = "";
+
+    try {
+      const res = await fetch(`${SERVER_URL}/api/assessment/checkpoint`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ courseId }),
+      });
+      const body = (await res.json()) as {
+        attemptToken?: string;
+        topic?: string;
+        question?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.attemptToken || !body.question) {
+        throw new Error(body.error ?? "Could not start the checkpoint test.");
+      }
+      attemptToken = body.attemptToken;
+      testTopic = body.topic ?? "";
+      testTopicEl.textContent = `Checkpoint: ${body.topic ?? ""}`;
+      testQuestionEl.textContent = body.question;
+      setTestBusy(false);
+      testAnswerEl.focus();
+    } catch (error) {
+      setTestBusy(false);
+      closeTestPanel();
+      setTestStatus(
+        error instanceof Error ? error.message : "Could not start the checkpoint test.",
+      );
+    }
+  }
+
+  /** The courses currently owed a checkpoint test, with their titles. */
+  function renderCheckpoints(): void {
+    if (!data) return;
+    const due = (data.checkpoints ?? []).filter(
+      (checkpoint) => checkpoint.due && checkpoint.nextModule,
+    );
+    if (!due.length) {
+      checkpointEl.innerHTML = "";
+      return;
+    }
+    checkpointEl.innerHTML = due
+      .slice(0, 2)
+      .map((checkpoint) => {
+        const modules = checkpoint.untestedModules ?? [];
+        const shown = modules.slice(0, 3).map((module) => module.title);
+        const extra = modules.length - shown.length;
+        return `
+        <div class="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 p-4">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-indigo-300">Checkpoint test · ${esc(checkpoint.courseTitle)}</p>
+            <p class="mt-0.5 text-xs text-slate-300">
+              ${shown.map((title) => esc(title)).join(", ")}${extra > 0 ? ` +${extra} more` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="dash-checkpoint shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+            data-checkpoint-course="${esc(checkpoint.courseId)}"
+          >Take it</button>
+        </div>`;
+      })
+      .join("");
+  }
+
+  checkpointEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".dash-checkpoint",
+    );
+    const courseId = button?.dataset.checkpointCourse;
+    if (courseId) void startCheckpointTest(courseId);
+  });
+
   function renderData(): void {
     if (!data) return;
+
+    // Alerts lead: they are the conclusion, everything below is the evidence.
+    renderAlerts();
+    renderCheckpoints();
 
     // --- At a glance: words, not raw numbers ---
     const pace = describeSpeed(data.progress.learningSpeed);
@@ -1068,6 +1397,58 @@ export function createDashboard(
   // closed first because `startCourse` re-renders the dashboard on enroll, which
   // would otherwise leave a dialog floating over a list the student can no
   // longer see the context of.
+  // Alerts: one delegated listener for the whole list, rather than a handler per
+  // alert. The list is re-rendered on every refresh, so per-alert handlers would
+  // accumulate on every page load.
+  alertsEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".dash-alert-action",
+    );
+    if (!button) return;
+    const kind = button.dataset.alertKind as LearningAlert["action"]["kind"] | undefined;
+    if (!kind) return;
+    runAlertAction(kind, button.dataset.alertTarget ?? "");
+  });
+
+  /**
+   * F5: open a lesson on one named subtopic.
+   *
+   * The request is matched against the whole course rather than only the module
+   * the student clicked, so "gradient descent" finds its subtopic wherever it
+   * sits. A `none` match falls back to the module's own topic — better to teach the
+   * module than to refuse a request that was plainly about it.
+   */
+  function learnSubtopic(
+    course: CourseInfo,
+    module: CourseInfo["modules"][number],
+    subtopic: string,
+  ): void {
+    const match = matchSubtopic(subtopic, course.modules ?? []);
+    const chosen = match.subtopic ?? subtopic ?? module.topic;
+    const moduleTitle = match.moduleTitle ?? module.title;
+    const prompt = subtopicPrompt(moduleTitle, chosen, course.title);
+    onLearnTopic?.(prompt);
+  }
+
+  // Subtopics in the course detail are individually learnable. Delegated, for the
+  // same reason as the alert buttons: the body is re-rendered on every open.
+  courseDetailBodyEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".course-detail-subtopic",
+    );
+    if (!button || !openCourse) return;
+    const subtopic = button.dataset.subtopic?.trim();
+    const moduleTitle = button.dataset.moduleTitle?.trim();
+    if (!subtopic || !moduleTitle) return;
+    const course = openCourse;
+    const module = (course.modules ?? []).find((item) => item.title === moduleTitle);
+    if (!module) return;
+    closeCourseDetail();
+    learnSubtopic(course, module, subtopic);
+  });
+
+  courseDetailNotesBtn.addEventListener("click", downloadOpenCourseNotes);
+
   courseDetailStartBtn.addEventListener("click", () => {
     if (!openCourse) return;
     const course = openCourse;

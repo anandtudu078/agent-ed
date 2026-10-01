@@ -55,6 +55,23 @@ export interface EnrolledCourse {
   enrolledAt: Date;
 }
 
+/**
+ * One checkpoint test taken against a course.
+ *
+ * Stored rather than derived, because a test is an event in time — unlike the
+ * checkpoint *schedule*, which is recomputed from this on every read. Keeping the
+ * record is what lets the app say "you've covered Modules 1–3, here's the next
+ * one" instead of asking the same student the same three questions forever.
+ */
+export interface CourseTestRecord {
+  courseId: string;
+  /** Module titles this checkpoint covered. Union across attempts. */
+  testedModules: string[];
+  /** 0–100 from the most recent attempt. Null before the first score. */
+  score: number | null;
+  testedAt: Date | null;
+}
+
 export interface ProgressDocument extends Document {
   studentId: string;
   enrolledCourses: EnrolledCourse[];
@@ -62,6 +79,11 @@ export interface ProgressDocument extends Document {
   weakPoints: WeakPoint[];
   testHistory: TestEvaluation[];
   reviewCards: ReviewCard[];
+  /**
+   * Checkpoint tests taken per course. Bounded by the number of courses a student
+   * can be enrolled in, so this cannot grow without limit.
+   */
+  courseTests: CourseTestRecord[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +141,16 @@ const testEvaluationSchema = new Schema<TestEvaluation>(
   { _id: false },
 );
 
+const courseTestSchema = new Schema<CourseTestRecord>(
+  {
+    courseId: { type: String, required: true },
+    testedModules: { type: [String], default: [] },
+    score: { type: Number, default: null, min: 0, max: 100 },
+    testedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const progressSchema = new Schema<ProgressDocument>(
   {
     studentId: { type: String, required: true, index: true, unique: true },
@@ -127,6 +159,7 @@ const progressSchema = new Schema<ProgressDocument>(
     weakPoints: { type: [weakPointSchema], default: [] },
     testHistory: { type: [testEvaluationSchema], default: [] },
     reviewCards: { type: [reviewCardSchema], default: [] },
+    courseTests: { type: [courseTestSchema], default: [] },
   },
   { timestamps: true },
 );

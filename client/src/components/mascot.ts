@@ -427,6 +427,27 @@ export function createMascot(
    */
   setAwaitingReply: (waiting: boolean) => void;
 } {
+  /*
+   * The owl's own size and mood are the product's face, so both are decided in
+   * this template rather than by whatever the layout happens to give them.
+   *
+   * Size: the owl was h-28/w-28 (sm:h-36/sm:w-36), which left the lesson board
+   * the larger of the two panels — the teacher was the smaller thing on a screen
+   * whose whole purpose is watching the teacher. It now scales to h-32 base,
+   * h-44 at sm and h-52 at lg, stopping there so the bubble and board keep a
+   * usable measure on a wide monitor. The SVG is a viewBox with h-full/w-full, so
+   * it scales without redrawing; `transition-all` keeps the surrounding card from
+   * jumping as the breakpoints are crossed.
+   *
+   * Mood: `setMood` (see the module's MascotMood) swaps the face, and the tutor's
+   * own reaction to a student's turn arrives over the socket and drives it — so
+   * the expression tracks how the student is actually doing, not just what the
+   * owl happens to be doing.
+   *
+   * Note: keep prose comments like this one OUTSIDE the template literal. A
+   * backtick inside it (as in `transition-all` above) silently terminates the
+   * string and the build fails with a syntax error nowhere near the real cause.
+   */
   host.innerHTML = `
     <style>
       /* Blink runs always — a still-eyed owl reads as a mascot, not a teacher.
@@ -482,7 +503,7 @@ export function createMascot(
             <span class="owl-state-pill rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider transition-colors sm:text-[10px]"></span>
           </div>
           <div class="flex items-center gap-4 sm:gap-5">
-            <div class="owl-visual h-28 w-28 shrink-0 sm:h-36 sm:w-36"></div>
+            <div class="owl-visual h-32 w-32 shrink-0 transition-all duration-300 sm:h-44 sm:w-44 lg:h-52 lg:w-52"></div>
             <div
               class="owl-board relative hidden min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 sm:flex"
               style="background-image:linear-gradient(rgba(99,102,241,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(99,102,241,0.05) 1px,transparent 1px);background-size:18px 18px;"

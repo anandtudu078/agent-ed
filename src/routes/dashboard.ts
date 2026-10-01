@@ -15,6 +15,7 @@ import {
 import { dueCards, dueLabel, rootCauseTopic } from "../services/progressService";
 import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
 import { awayLabel, returnState } from "../services/returnState";
+import { dueCheckpoints } from "../services/checkpoints";
 
 const router = Router();
 
@@ -262,11 +263,39 @@ router.get(
         .select({ conversationHistory: 1 })
         .lean();
 
+      // Checkpoint tests the student is owed, per course. Derived on read from
+      // the live syllabus and the last recorded test — nothing is scheduled ahead
+      // of time and stored, so a checkpoint can't go stale or claim a test is due
+      // on a module the student hasn't reached.
+      const checkpoints = dueCheckpoints(
+        (progress.enrolledCourses ?? []).map((enrollment) => ({
+          courseId: enrollment.courseId,
+          // Only what the student has actually finished counts toward a test.
+          completedModules: enrollment.completedModules ?? [],
+        })).map((enrollment) => ({
+          ...enrollment,
+          modules:
+            courses.find((course) => String(course._id) === enrollment.courseId)
+              ?.modules ?? [],
+        })),
+        progress.enrolledCourses ?? [],
+        progress.courseTests ?? [],
+      ).map((status) => {
+        const enrollment = (progress.enrolledCourses ?? []).find(
+          (item) => item.courseId === status.courseId,
+        );
+        return {
+          ...status,
+          courseTitle: enrollment?.title ?? "This course",
+        };
+      });
+
       response.json({
         progress,
         courses,
         dueReviews,
         focusRootCause,
+        checkpoints,
         awayLabel: awayLabel(returnState({ conversation: session?.conversationHistory }).awayMs),
       });
     } catch (error) {
