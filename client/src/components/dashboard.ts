@@ -57,6 +57,20 @@ export interface DashboardData {
    */
   focusRootCause: string | null;
   /**
+   * Checkpoint tests this student is owed, per course. Derived server-side on read
+   * from the live syllabus and the last test taken, so nothing here can be stale.
+   */
+  checkpoints: Array<{
+    courseId: string;
+    courseTitle: string;
+    /** Finished modules not yet covered by a checkpoint test. */
+    untestedModules: Array<{ title: string; topic: string }>;
+    due: boolean;
+    modulesUntilNext: number;
+    allTested: boolean;
+    nextModule: { title: string; topic: string } | null;
+  }>;
+  /**
    * How long the student has been away, phrased for display ("Away 3 days").
    * Empty for a short break or when we genuinely don't know â€” see `awayLabel`,
    * which was written for this and previously had no caller.
@@ -141,7 +155,21 @@ export function createDashboard(
           >â€¦</button>
         </section>
 
+        <!--
+          Alerts first, above the numbers. Everything below this panel is
+          evidence — pace, focus areas, the review list — and an alert is the
+          conclusion drawn from that evidence. Putting it after the statistics
+          would mean a student scrolls past three numbers before finding out that
+          something is actually due.
+        -->
         <div class="dash-alerts space-y-2"></div>
+
+        <!--
+          Checkpoint tests, between the alerts and the statistics. A due test is
+          time-sensitive in the same way a review is, so it belongs with the alerts
+          rather than buried under "Your last check".
+        -->
+        <div class="dash-checkpoints space-y-2"></div>
 
         <!-- At a glance: three numbers, each in plain words -->
         <div class="grid grid-cols-3 gap-3">
@@ -324,6 +352,7 @@ export function createDashboard(
     </div>`;
 
   const alertsEl = host.querySelector<HTMLElement>(".dash-alerts")!;
+  const checkpointEl = host.querySelector<HTMLElement>(".dash-checkpoints")!;
 
   /** Tone → colours. One place, so an alert can't look like a random badge. */
   const ALERT_TONES: Record<LearningAlert["tone"], string> = {
@@ -1092,11 +1121,104 @@ export function createDashboard(
       .join("");
   }
 
+  /**
+   * Start a checkpoint test for a course.
+   *
+   * The server decides what to ask and refuses when nothing is due, so this only
+   * has to start the panel — which is the same panel an ordinary topic test uses,
+   * so the student sees no difference in how a test is taken, only in what it
+   * covers.
+   */
+  async function startCheckpointTest(courseId: string): Promise<void> {
+    if (testBusy) return;
+    testPanelEl.classList.remove("hidden");
+    testResultEl.classList.add("hidden");
+    testResultEl.innerHTML = "";
+    testAnswerEl.value = "";
+    setTestStatus("");
+    setTestBusy(true);
+    testTopicEl.textContent = "Checkpoint test…";
+    testQuestionEl.textContent = "";
+
+    try {
+      const res = await fetch(`${SERVER_URL}/api/assessment/checkpoint`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ courseId }),
+      });
+      const body = (await res.json()) as {
+        attemptToken?: string;
+        topic?: string;
+        question?: string;
+        error?: string;
+      };
+      if (!res.ok || !body.attemptToken || !body.question) {
+        throw new Error(body.error ?? "Could not start the checkpoint test.");
+      }
+      attemptToken = body.attemptToken;
+      testTopic = body.topic ?? "";
+      testTopicEl.textContent = `Checkpoint: ${body.topic ?? ""}`;
+      testQuestionEl.textContent = body.question;
+      setTestBusy(false);
+      testAnswerEl.focus();
+    } catch (error) {
+      setTestBusy(false);
+      closeTestPanel();
+      setTestStatus(
+        error instanceof Error ? error.message : "Could not start the checkpoint test.",
+      );
+    }
+  }
+
+  /** The courses currently owed a checkpoint test, with their titles. */
+  function renderCheckpoints(): void {
+    if (!data) return;
+    const due = (data.checkpoints ?? []).filter(
+      (checkpoint) => checkpoint.due && checkpoint.nextModule,
+    );
+    if (!due.length) {
+      checkpointEl.innerHTML = "";
+      return;
+    }
+    checkpointEl.innerHTML = due
+      .slice(0, 2)
+      .map((checkpoint) => {
+        const modules = checkpoint.untestedModules ?? [];
+        const shown = modules.slice(0, 3).map((module) => module.title);
+        const extra = modules.length - shown.length;
+        return `
+        <div class="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 p-4">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold text-indigo-300">Checkpoint test · ${esc(checkpoint.courseTitle)}</p>
+            <p class="mt-0.5 text-xs text-slate-300">
+              ${shown.map((title) => esc(title)).join(", ")}${extra > 0 ? ` +${extra} more` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="dash-checkpoint shrink-0 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+            data-checkpoint-course="${esc(checkpoint.courseId)}"
+          >Take it</button>
+        </div>`;
+      })
+      .join("");
+  }
+
+  checkpointEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+      ".dash-checkpoint",
+    );
+    const courseId = button?.dataset.checkpointCourse;
+    if (courseId) void startCheckpointTest(courseId);
+  });
+
   function renderData(): void {
     if (!data) return;
 
     // Alerts lead: they are the conclusion, everything below is the evidence.
     renderAlerts();
+    renderCheckpoints();
 
     // --- At a glance: words, not raw numbers ---
     const pace = describeSpeed(data.progress.learningSpeed);
