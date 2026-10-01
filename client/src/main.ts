@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { createMascot, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
+import { createMascot, type MascotMood, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
 import { splitIntoBeats, type LessonBeat } from "./components/beats";
 import { sketchForBeat } from "./components/sketches";
 import { visualStepCount, type VisualSpec } from "./components/diagrams";
@@ -50,6 +50,26 @@ interface AuthResponse {
 
 /** The header that proves a request came from this app. See `requireCsrfHeader`. */
 const CSRF_HEADER = { "X-Requested-With": "AgentEd" };
+
+/**
+ * Moods the tutor is allowed to ask the owl to wear.
+ *
+ * A deliberately narrow subset of `MascotMood`: "proud" and "curious" are the
+ * owl's own states, set locally by the grade handler and by a pending question.
+ * What the tutor reports is a judgement about the *student*, and letting a remote
+ * payload drive `proud` would let a garbled reply make the owl congratulate
+ * someone for nothing.
+ *
+ * Kept as a runtime list because the value arrives over the socket, so it needs
+ * validating rather than asserting.
+ */
+const TUTOR_REACTIONS: readonly MascotMood[] = [
+  "neutral",
+  "happy",
+  "excited",
+  "supportive",
+];
+type TutorReaction = (typeof TUTOR_REACTIONS)[number];
 
 /**
  * Only the non-secret half of the session is persisted.
@@ -619,7 +639,18 @@ let conversationEpoch = 0;
 let responseEpoch = 0;
 
 /** Shared handler so tests can drive the exact same client path (DEV only). */
-function handleSocraticResponse(payload: { response: string; visual?: VisualSpec | null }): void {
+function handleSocraticResponse(payload: {
+  response: string;
+  visual?: VisualSpec | null;
+  /**
+   * How the owl should look, decided server-side from the student's turn.
+   *
+   * Validated on arrival rather than cast: it crosses a socket, so an older or
+   * newer server could send a mood this build doesn't know. An unrecognised value
+   * leaves the owl neutral instead of rendering a broken face.
+   */
+  reaction?: string;
+}): void {
   // Drop a reply that was already in flight when the student started a new
   // chat: it belongs to a conversation they deliberately discarded.
   if (conversationEpoch !== responseEpoch) return;
@@ -630,6 +661,13 @@ function handleSocraticResponse(payload: { response: string; visual?: VisualSpec
   mascot.setMessage(payload.response);
   // …draws a diagram for the topic when the tutor sent one…
   mascot.setVisual(payload.visual ?? null);
+  // …reacts to how the student's turn actually went. This is the engagement
+  // lever: the owl is no longer the same face whatever the student just said,
+  // which is what makes it read as listening rather than decorating. Set before
+  // the beat loop starts so the first beat is already animated by the mood.
+  if (TUTOR_REACTIONS.includes(payload.reaction as TutorReaction)) {
+    mascot.setMood(payload.reaction as TutorReaction);
+  }
   // …and explains it aloud. Speaking is on by default; the microphone stays
   // opt-in, because listening is a permission prompt the student should choose.
   if (speakingEnabled) {
