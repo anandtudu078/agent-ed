@@ -176,6 +176,14 @@ jobs:
       - name: UI suite
         run: npm run test:ui
 
+      # The first-run journey: landing -> sign-up -> consent -> course detail ->
+      # lesson -> sign out. This one was documented in the README and had a root
+      # script, but nothing ran it -- and it was the only thing covering sign-out
+      # clearing the credentials, which it duly caught. A browser suite nobody
+      # executes is a comment, not coverage.
+      - name: Workflow suite
+        run: npm run test:workflow
+
       - name: Beat playback
         run: npm run test:playback
 
