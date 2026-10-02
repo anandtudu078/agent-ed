@@ -135,10 +135,10 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## Tests
 
-876 checks across twenty suites. Start here.
+902 checks across twenty-one suites. Start here.
 
 ```bash
-npm test              # runs every suite that needs no browser (15 suites, ~50s)
+npm test              # runs every suite that needs no browser (16 suites, ~50s)
 ```
 
 Or individually:
@@ -154,6 +154,7 @@ Or individually:
 | `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
 | `npm run test:checkpoints` | 40 | Course checkpoint intervals and coverage |
 | `npm run test:return` | 32 | Return detection and first run |
+| `npm run test:course` | 26 | Course progress derivation, including malformed stored topics |
 | `npm run test:offline` | 107 | The offline AI gate, the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
