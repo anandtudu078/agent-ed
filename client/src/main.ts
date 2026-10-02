@@ -1232,6 +1232,22 @@ async function signOut(message?: string): Promise<void> {
   messagesEl.replaceChildren();
   setEmptyStateVisible(true);
   inputEl.value = "";
+  // Clear the credentials themselves, not just the conversation.
+  //
+  // `showAuth()` only repaints the screen. Without this the previous student's
+  // username and password stay sitting in the form, so on a shared machine the
+  // next person is shown them pre-filled and is one click from being signed in as
+  // somebody else — the sign-out button becomes decorative. The workflow suite
+  // asserts exactly this ("the credentials were cleared, not left for the next
+  // person") and had been failing it.
+  //
+  // Registering clears the display name too, so it has the same problem.
+  usernameInputEl.value = "";
+  passwordInputEl.value = "";
+  displayNameInputEl.value = "";
+  // The strength meter is derived from the password; leaving it scoring a field
+  // that is now empty would just be a stale lie.
+  updatePasswordStrength();
   updateCharCount();
   updateScrollButton();
   stopOwlSpeech();
