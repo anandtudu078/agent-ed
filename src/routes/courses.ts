@@ -19,6 +19,27 @@ function currentUser(request: Request): AuthUser {
   return (request as AuthenticatedRequest).authUser as AuthUser;
 }
 
+/**
+ * The real reason behind a 500, outside production.
+ *
+ * "Unable to enroll right now." is true and useless: it told us a student was
+ * refused and nothing about why. A failure that only reproduces in CI, against
+ * a standalone mongod, is exactly the failure you cannot afford to have a
+ * single sentence about — the server's own console.error goes to a backgrounded
+ * process's stderr, which is the first thing to get swallowed. Echoing the
+ * message in the body puts it in front of whoever is reading, and the browser
+ * suites print it.
+ *
+ * Production keeps the generic wording: an unexpected error message is
+ * attacker-influenced text (a malformed id lands here too) and does not belong
+ * in a response body.
+ */
+function errorDetail(error: unknown): string | undefined {
+  if (process.env.NODE_ENV === "production") return undefined;
+  const message = error instanceof Error ? error.message : String(error);
+  return message ? ` (${message})` : undefined;
+}
+
 /** GET /api/courses — the catalog, with each course's module count. */
 router.get("/", requireAuth, async (_request: Request, response: Response) => {
   try {
@@ -73,7 +94,9 @@ router.post(
         return;
       }
       console.error("Failed to enroll in course.", error);
-      response.status(500).json({ error: "Unable to enroll right now." });
+      response
+        .status(500)
+        .json({ error: `Unable to enroll right now.${errorDetail(error) ?? ""}` });
     }
   },
 );
