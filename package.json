@@ -2,6 +2,7 @@
   "name": "agented",
   "version": "1.0.0",
   "description": "A Personalised mentor to teach AI.",
+  "license": "MIT",
   "homepage": "https://github.com/anandtudu078/agent-ed#readme",
   "bugs": {
     "url": "https://github.com/anandtudu078/agent-ed/issues"
