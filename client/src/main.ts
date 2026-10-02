@@ -1555,24 +1555,71 @@ function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   if (cachedVoices) return Promise.resolve(cachedVoices);
 
   return new Promise((resolve) => {
-    const existing = synth.getVoices();
-    if (existing.length) {
-      cachedVoices = existing;
-      resolve(existing);
+    // Enumerating voices is a *convenience*, and it is not a capability that
+    // speech itself requires. `SpeechSynthesis` can be present while `getVoices`
+    // or `addEventListener` is missing — a partial implementation, an embedded
+    // webview, or a test double.
+    //
+    // This must never throw, because the caller sits on the path to `speak()`:
+    // an uncaught error here means the owl stops talking *entirely* on such an
+    // environment. That is exactly how "the owl speaks aloud" regressed in the UI
+    // suite, whose stub implements `speak`/`cancel`/`pause`/`resume` and nothing
+    // else. Resolving with an empty list degrades to the previous behaviour: the
+    // browser picks its own voice from the `lang` tag.
+    const readVoices = (): SpeechSynthesisVoice[] => {
+      try {
+        const list = synth.getVoices();
+        return Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
+    };
+
+    let initial: SpeechSynthesisVoice[] = [];
+    try {
+      const existing = synth.getVoices();
+      if (Array.isArray(existing)) initial = existing;
+    } catch {
+      // No getVoices at all. Treat as "no selectable voices".
+      cachedVoices = [];
+      resolve([]);
       return;
     }
+
+    if (initial.length) {
+      cachedVoices = initial;
+      resolve(initial);
+      return;
+    }
+
+    if (typeof synth.addEventListener !== "function") {
+      cachedVoices = [];
+      resolve([]);
+      return;
+    }
+
     // Chrome populates the list asynchronously.
     const timer = window.setTimeout(() => {
-      synth.removeEventListener("voiceschanged", onChange);
-      cachedVoices = synth.getVoices();
+      try {
+        synth.removeEventListener("voiceschanged", onChange);
+      } catch {
+        /* nothing to detach */
+      }
+      cachedVoices = readVoices();
       resolve(cachedVoices);
     }, 1200);
     const onChange = () => {
       window.clearTimeout(timer);
-      cachedVoices = synth.getVoices();
+      cachedVoices = readVoices();
       resolve(cachedVoices);
     };
-    synth.addEventListener("voiceschanged", onChange, { once: true });
+    try {
+      synth.addEventListener("voiceschanged", onChange, { once: true });
+    } catch {
+      window.clearTimeout(timer);
+      cachedVoices = [];
+      resolve([]);
+    }
   });
 }
 
@@ -1632,8 +1679,14 @@ async function applyVoice(
 ): Promise<void> {
   const language: TeachLanguage = teachLanguage === "hi" ? "hi" : "en";
   utterance.lang = langTagFor(language);
-  const voice = await pickVoiceFor(language);
-  if (voice) utterance.voice = voice;
+  try {
+    const voice = await pickVoiceFor(language);
+    if (voice) utterance.voice = voice;
+  } catch {
+    // Choosing a voice is an enhancement; speaking is not. If anything in the
+    // lookup misbehaves, fall back to the browser's own choice for `lang` rather
+    // than swallowing the utterance and leaving the owl mute.
+  }
 }
 
 /** The Wise Owl reads its guidance aloud, walking the diagram as it goes. */

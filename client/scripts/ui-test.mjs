@@ -559,6 +559,14 @@ try {
       cancel() { calls.cancel += 1; },
       pause() {},
       resume() {},
+      // Headless Chromium exposes the full SpeechSynthesis surface but reports an
+      // empty voice list, so the stub mirrors that: the methods exist, they just
+      // yield nothing to select from. Leaving them out entirely used to hide a
+      // real defect — `loadVoices` threw on a missing `getVoices`, which sat on
+      // the path to `speak()` and stopped the owl talking altogether.
+      getVoices() { return []; },
+      addEventListener() {},
+      removeEventListener() {},
     };
     class FakeUtterance {
       constructor(text) { this.text = text; }
