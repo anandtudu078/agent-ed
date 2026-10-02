@@ -929,7 +929,34 @@ try {
   // question being sent rather than about one already on screen.
   const bubblesBefore = await page.locator("#messages .flex.justify-end").count();
   await page.locator(".dash-courses .dash-course .dash-continue").first().click();
-  await page.locator("#chat-container").waitFor({ state: "visible" });
+  // Wait for the lesson to open, but say WHY if it doesn't, and give it room.
+  //
+  // 60s, not Playwright's 20s default. Getting from this click to a visible
+  // tutor costs an enroll POST *plus* a full dashboard re-render plus a view
+  // swap, on a CI runner that is booting Vite and sharing CPU with whatever ran
+  // before it. On a loaded runner that chain can outrun 20s even when every
+  // request is healthy — the CI failure was exactly that: `#chat-container`
+  // present but hidden for the whole window, with nothing wrong with it.
+  //
+  // The default also reports only "locator resolved to hidden", which says
+  // nothing about the cause. `startCourse` reports an enrollment failure into
+  // .dash-status and deliberately leaves the tutor closed, so reading that text
+  // turns a 20s mystery into a sentence.
+  const tutorOpened = await page
+    .locator("#chat-container")
+    .waitFor({ state: "visible", timeout: 60000 })
+    .then(() => true)
+    .catch(() => false);
+  const dashboardStatus = ((await page
+    .locator(".dash-status")
+    .textContent()
+    .catch(() => "")) ?? "").trim();
+  check("starting a course from the dashboard opens the tutor", tutorOpened, dashboardStatus.slice(0, 80));
+  if (!tutorOpened) {
+    throw new Error(
+      `the tutor never opened after starting a course; dashboard said: ${dashboardStatus || "(nothing)"}`,
+    );
+  }
   // This used to assert the send button read "Thinking", which is a transient
   // label sampled straight after the click. It passes with a working provider,
   // where the tutor is still thinking, and fails with none, where the request
