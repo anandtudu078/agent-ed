@@ -1,30 +1,91 @@
 # AgentEd — an adaptive AI tutor for artificial intelligence
 
-A character-led tutor that teaches AI/ML to students, remembers what each one
-actually gets wrong, and changes how it teaches them because of it.
+> A character-led tutor that teaches AI/ML, remembers what each student actually
+> gets wrong, and changes how it teaches them because of it.
+
+---
+
+## 💡 Project overview
 
 ```
 diagnose → teach → test → adapt → schedule review → welcome back
 ```
 
-The point of this project is the **last four steps**. Most tutoring software
-generates explanations. This one keeps a model of the individual student —
-their weak concepts, their specific wrong ideas, what is holding them up, and how
-they are behaving right now — and feeds that into the prompt that writes the
-next reply.
+Most tutoring software generates explanations. AgentEd keeps a model of the
+individual student — their weak concepts, their specific wrong ideas, what is
+holding them up, and how they are behaving right now — and feeds that into the
+prompt that writes the next reply. That is what the **last four steps** of the
+loop are for; the first two are what any chatbot does.
 
-Around that loop: alerts that tell the student what to do next, course notes they
-can take away, checkpoint tests that fall due as they work through a course, and
-an owl whose face is a function of how the last turn actually went.
+Around that loop:
+
+| Built around it | What it does |
+|---|---|
+| **Learning alerts** | what to do next, derived from the same state the tutor reads |
+| **Course notes** | the whole syllabus as a Markdown file, built in the browser, Hindi too |
+| **Checkpoint tests** | fall due as you work through a course, and can never be invented |
+| **An owl** | whose face, cap and speech are a function of how the last turn went |
+
+The tutor is **Socratic by default** — it asks rather than tells, and waits for
+you to commit to an answer before explaining. A **Teach me** mode walks a lesson
+beat by beat instead, with a diagram on the board for each one.
+
+### Who it is for
+
+A student working through AI/ML who keeps re-reading the same chapter and not
+retaining it. The premise is that the reason is knowable and fixable: you are
+told which of your own wrong ideas is still blocking you, rather than being
+handed the same explanation again.
 
 ---
 
-## Quick start
+## 🛠️ Technologies used
+
+**Backend** — Node.js 24 · TypeScript · Express 5 · MongoDB + Mongoose 8 · Socket.IO
+
+**Frontend** — TypeScript · Vite · Tailwind (CDN) · Socket.IO client
+
+**AI providers** — Groq (primary tutor + diagrams) · Google Gemini (fallback when
+Groq's quota is spent). Both have free tiers, and the app degrades gracefully if
+neither is configured — registration, the catalog, courses and the dashboard all
+work without a key; only the tutor, assessments and diagrams need one.
+
+**Auth & security** — `httpOnly` cookies · JWT access + rotating refresh tokens ·
+`bcryptjs` · Helmet · CORS allowlist · `express-rate-limit` · CSRF header
+
+**Testing** — no framework. Plain Node scripts, because the project has none and
+consistency beats ceremony. Playwright drives the four browser suites; the pure
+logic suites run under `ts-node` or Node 24's native type stripping.
+
+**Why no frontend framework?** The entire client is `main.ts` plus eight
+components. One cohesive event loop drives the owl, speech and the socket
+together, and rendering is hand-written on purpose — `renderVisual` is the
+security boundary between model output and the DOM, so it is deliberate code
+rather than a template.
+
+**Repository layout**
+
+```
+src/                  Express API
+  routes/             auth · courses · dashboard · assessment · account
+  services/           tutor pipeline, spaced repetition, diagrams, curriculum
+  models/             Mongoose schemas
+  middleware/         auth, consent, rate limiting, AI spend
+  data/               the authored AI/ML curriculum
+client/src/           Vite client — main.ts + 8 components/
+scripts/              server-side unit suites (no browser needed)
+client/scripts/       browser suites (Playwright)
+.github/workflows/    CI: types + unit tests, and the four browser suites
+```
+
+---
+
+## ⚙️ Setup & installation steps
 
 **Prerequisites**
 
-- Node.js **24 or newer** — required, not preferred. The client test suites run as
-  `node scripts/*.ts` and rely on native type stripping; on Node 20 or 22 they
+- Node.js **24 or newer** — required, not preferred. The client test suites run
+  as `node scripts/*.ts` and rely on native type stripping; on Node 20 or 22 they
   die with `ERR_UNKNOWN_FILE_EXTENSION` before a single check runs. Both
   `package.json` files declare `"engines": { "node": ">=24" }` so npm warns you
   rather than letting you discover it as a mysterious test failure.
@@ -63,6 +124,10 @@ Then edit `.env`. Three values matter:
 
 `.env` is loaded automatically by `dotenv` — no extra flags needed.
 
+---
+
+## 🚀 How to run the project
+
 **3. Run the server and the client in two terminals**
 
 ```bash
@@ -74,6 +139,16 @@ Open **http://localhost:5173** for the landing page; the tutor is at
 **http://localhost:5173/app.html**.
 
 The catalog seeds itself on first dashboard load — no migration step.
+
+Then: sign up → give consent → pick a course → open its detail → *Start
+learning*. The tutor greets you with a question.
+
+The subsections below walk through what you should see. Everything after them is
+design rationale and test evidence.
+
+---
+
+## ✨ Features
 
 ### Picking a course
 
