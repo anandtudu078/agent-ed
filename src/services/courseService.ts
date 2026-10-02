@@ -44,8 +44,19 @@ const MIN_FUZZY_LENGTH = 5;
 /**
  * Reduce a topic to a comparable form: lowercase, alphanumeric words only.
  * "Machine Learning!" and "machine   learning" both become "machine learning".
+ *
+ * Takes `unknown` on purpose. These strings are model output and stored history,
+ * not hand-written constants: `topicsVisited` entries and curriculum module
+ * topics both arrive from data that only claims to be a string. Calling
+ * `.toLowerCase()` on a missing one threw
+ * "Cannot read properties of undefined (reading 'toLowerCase')" straight out of
+ * `computeCourseProgress`, which meant a single malformed history entry made the
+ * whole course un-enrollable — the student got a 500 from a button that had
+ * nothing wrong with it. An unusable topic normalizes to "", every caller already
+ * treats "" as "no match", and a topic nobody can read is not a topic.
  */
-export function normalizeTopic(value: string): string {
+export function normalizeTopic(value: unknown): string {
+  if (typeof value !== "string") return "";
   return value
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
@@ -138,11 +149,20 @@ interface TopicVisitLike {
   firstSeenAt: Date;
 }
 
+/**
+ * Stored topics are model output the app wrote on a previous run, and the cast
+ * below used to assert they were strings without checking. `computeCourseProgress`
+ * then called `.toLowerCase()` on them and took the whole enroll endpoint down
+ * with a 500. Drop anything unusable here instead, at the one place the data
+ * enters, so `hit.topic` is a real string for every caller downstream.
+ */
 async function loadVisitedTopics(studentId: string): Promise<TopicVisitLike[]> {
   const session = await Session.findOne({ studentId })
     .select({ topicsVisited: 1 })
     .lean();
-  return (session?.topicsVisited ?? []) as TopicVisitLike[];
+  return ((session?.topicsVisited ?? []) as TopicVisitLike[]).filter(
+    (visit) => typeof visit?.topic === "string" && visit.topic.trim() !== "",
+  );
 }
 
 /** Cap so a student can't enroll in hundreds of courses and bloat the doc. */
