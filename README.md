@@ -12,11 +12,55 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 599 checks, ~50s, no key or browser needed
+npm test                                # 603 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
 *Start learning*. Full detail is under [Setup](#setup).
+
+## 📸 What it looks like
+
+Screenshots below are captured from a running instance by
+`node client/scripts/capture-screenshots.mjs` — real UI, no mock-ups. The tutor
+shot is in offline demo mode, and you can see the on-screen notice saying so.
+
+**The landing page.** `/` explains the idea and gets out of the way; the tutor
+lives at `/app.html`.
+
+![The AgentEd landing page](docs/screenshots/01-landing.png)
+
+**An active lesson.** The owl teaches on a lesson board and asks a question
+instead of giving the answer — the whole premise in one screen.
+
+![An active lesson with the owl and the lesson board](docs/screenshots/04-tutor-lesson.png)
+
+**The learning dashboard.** What to do next, pace, focus areas, and reviews
+coming due, derived from what the student actually got wrong.
+
+![The learning dashboard](docs/screenshots/07-dashboard.png)
+
+<details>
+<summary>More screenshots — sign-up, consent, a follow-up turn, Hindi</summary>
+
+**Sign-up.** Name, username, password. No email, no OAuth, no waiting.
+
+![The sign-up form](docs/screenshots/02-signup.png)
+
+**Consent.** Asked before the first AI call and again from the dashboard. Not a
+dismissable banner.
+
+![The consent step](docs/screenshots/03-consent.png)
+
+**A second turn.** The tutor answers the student's actual question about the
+previous one.
+
+![A follow-up turn in the conversation](docs/screenshots/05-follow-up-turn.png)
+
+**Hindi.** A first-class mode, in Devanagari, including what gets read aloud.
+
+![The tutor in Hindi](docs/screenshots/06-hindi.png)
+
+</details>
 
 ### 🧪 No API key? Read this first
 
@@ -43,6 +87,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 
 | | |
 |---|---|
+| [📸 What it looks like](#-what-it-looks-like) | screenshots of the real app |
 | [💡 Project overview](#project-overview) | what it is and who it is for |
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
@@ -319,6 +364,7 @@ Or individually:
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:notes` | 27 | Downloadable course notes (Markdown) |
 | `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
+| `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
 | `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |

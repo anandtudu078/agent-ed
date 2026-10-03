@@ -2,13 +2,13 @@
  * Checkpoint tests: testing a *course* at intervals, not just one topic at a time.
  *
  * The gap this fills: the assessment endpoint could test any topic, and the
- * dashboard could start one â€” but nothing tied a test to *where a student is in a
+ * dashboard could start one — but nothing tied a test to *where a student is in a
  * course*. So a student halfway through a twelve-module course could take a test on
  * whatever they felt like, and a student who had finished nothing could take six
  * tests on the same first module. Neither number meant anything.
  *
  * A checkpoint is the honest middle: test what's accumulated since you last did.
- * Purely derived â€” every rule below reads the enrollment and the last recorded
+ * Purely derived — every rule below reads the enrollment and the last recorded
  * test and decides what's due. Nothing is scheduled ahead of time and stored, so a
  * checkpoint can't go stale, can't be lost when a course is edited, and can't claim
  * a test is due on a module the student hasn't reached.
@@ -38,7 +38,7 @@ export interface CourseTestRecord {
   courseId: string;
   /** Module titles covered by the most recent checkpoint test. */
   testedModules: string[];
-  /** 0â€“100, when there was one. */
+  /** 0—100, when there was one. */
   score?: number | null;
   testedAt?: Date | null;
 }
@@ -87,7 +87,7 @@ export interface CheckpointStatus {
  * Decide whether a course is owed a checkpoint test.
  *
  * `modules` is the live syllabus and `enrollment.completedModules` is what the
- * student has actually finished â€” the two are compared rather than trusted, so a
+ * student has actually finished — the two are compared rather than trusted, so a
  * module renamed in the curriculum drops out of both sides instead of counting
  * forever as an untested, untestable module.
  */
@@ -186,7 +186,7 @@ export function dueCheckpoints(
  * modules that had accumulated, so the earlier ones must be remembered. Replacing
  * would make every checkpoint test look like the student's first.
  *
- * `score` is the latest, not the best â€” a checkpoint is a current measure, and
+ * `score` is the latest, not the best — a checkpoint is a current measure, and
  * reporting a student's best-ever score would hide that they are drifting.
  */
 export function mergeCourseTest(
