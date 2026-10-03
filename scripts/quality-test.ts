@@ -2,8 +2,8 @@
 //
 // Run: npm run test:quality            (needs GROQ_API_KEY or GEMINI_API_KEY)
 //
-// The gap this fills. There are 554 checks in this repo and every one tests the
-// app AROUND the model - parsing, scheduling, segmentation, rendering, authz.
+// The gap this fills. There are 554 checks in the other suites and every one tests
+// the app AROUND the model - parsing, scheduling, segmentation, rendering, authz.
 // Not one asks whether the tutor is any good. The README says so itself:
 // "Verified the reply changes, not that it always says the right thing."
 //
