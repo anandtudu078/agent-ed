@@ -1,4 +1,4 @@
-﻿// Student Learning Dashboard â€” the personalized learning hub. Shows the
+﻿// Student Learning Dashboard — the personalized learning hub. Shows the
 // student's progress analytics (learning speed, weak points, AI test
 // feedback/recommended focus), a quick action for starting an AI evaluation
 // test, and a searchable course catalog with Continue Learning actions.
@@ -72,7 +72,7 @@ export interface DashboardData {
   }>;
   /**
    * How long the student has been away, phrased for display ("Away 3 days").
-   * Empty for a short break or when we genuinely don't know â€” see `awayLabel`,
+   * Empty for a short break or when we genuinely don't know — see `awayLabel`,
    * which was written for this and previously had no caller.
    */
   awayLabel: string;
@@ -117,7 +117,7 @@ export function createDashboard(
   onLearnTopic?: (topicOrCourse: string) => void,
   /**
    * Fired when an answer is graded, with the score. The owl uses this to react
-   * â€” a character that congratulates you but never acknowledges a wrong answer
+   * — a character that congratulates you but never acknowledges a wrong answer
    * feels like it's not actually watching.
    */
   onGraded?: (score: number) => void,
@@ -141,18 +141,18 @@ export function createDashboard(
           <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">
             Your <span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">learning</span>
           </h1>
-          <p class="dash-pace-line mt-1 text-sm text-slate-400">Loadingâ€¦</p>
+          <p class="dash-pace-line mt-1 text-sm text-slate-400">Loading…</p>
         </div>
 
         <!-- THE one thing to do next. Everything else is secondary. -->
         <section class="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/60 to-violet-950/40 p-5">
           <p class="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/80">What to do next</p>
-          <h2 class="dash-next-headline mt-1.5 text-lg font-bold leading-snug text-slate-50">â€¦</h2>
+          <h2 class="dash-next-headline mt-1.5 text-lg font-bold leading-snug text-slate-50">…</h2>
           <p class="dash-next-detail mt-1.5 text-sm leading-relaxed text-slate-300"></p>
           <button
             type="button"
             class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-          >â€¦</button>
+          >…</button>
         </section>
 
         <!--
@@ -175,36 +175,36 @@ export function createDashboard(
         <div class="grid grid-cols-3 gap-3">
           <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Pace</p>
-            <p class="dash-speed mt-1 text-sm font-bold leading-tight text-indigo-300">â€¦</p>
+            <p class="dash-speed mt-1 text-sm font-bold leading-tight text-indigo-300">…</p>
           </div>
           <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Focus areas</p>
-            <p class="dash-focus-count mt-1 text-sm font-bold leading-tight text-amber-300">â€¦</p>
+            <p class="dash-focus-count mt-1 text-sm font-bold leading-tight text-amber-300">…</p>
           </div>
           <div class="rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3">
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Last check</p>
-            <p class="dash-last-score mt-1 text-sm font-bold leading-tight text-slate-200">â€¦</p>
+            <p class="dash-last-score mt-1 text-sm font-bold leading-tight text-slate-200">…</p>
           </div>
         </div>
 
         <!-- Spaced repetition: what has come round for review today. This is
-             the whole point of the schedule â€” a list of gaps that never comes
+             the whole point of the schedule — a list of gaps that never comes
              back is a diagnosis, not a habit. -->
         <div class="dash-reviews rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Review today</h2>
-          <p class="dash-reviews-body mt-3 text-sm text-slate-400">Loadingâ€¦</p>
+          <p class="dash-reviews-body mt-3 text-sm text-slate-400">Loading…</p>
         </div>
 
         <!-- Focus areas: only the few that matter, in plain words -->
         <div class="dash-weakpoints rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Focus areas</h2>
-          <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">Loadingâ€¦</p>
+          <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">Loading…</p>
         </div>
 
         <!-- Latest result, condensed to what the student can act on -->
         <div class="dash-feedback rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Your last check</h2>
-          <p class="dash-feedback-body mt-3 text-sm text-slate-400">Loadingâ€¦</p>
+          <p class="dash-feedback-body mt-3 text-sm text-slate-400">Loading…</p>
         </div>
 
         <!-- AI evaluation panel (opened by the quick action above) -->
@@ -236,7 +236,7 @@ export function createDashboard(
             id="dash-test-answer"
             rows="4"
             class="dash-test-answer mt-3 w-full resize-y rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-            placeholder="Explain it in your own words â€” that's what's being assessed, not wording."
+            placeholder="Explain it in your own words — that's what's being assessed, not wording."
           ></textarea>
 
           <div class="mt-3 flex flex-wrap gap-2">
@@ -273,7 +273,7 @@ export function createDashboard(
               <input
                 type="search"
                 class="dash-search w-48 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-2 text-sm placeholder-slate-500 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-                placeholder="Searchâ€¦"
+                placeholder="Search…"
               />
             </label>
           </div>
@@ -526,7 +526,7 @@ export function createDashboard(
   }
 
   /** Single place that keeps every control's enabled state in sync. */
-  function setTestBusy(busy: boolean, loadingLabel = "Loadingâ€¦"): void {
+  function setTestBusy(busy: boolean, loadingLabel = "Loading…"): void {
     testBusy = busy;
     startTestBtn.disabled = busy;
     testSubmitBtn.disabled = busy || !attemptToken;
@@ -554,7 +554,7 @@ export function createDashboard(
       <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
         <div class="flex flex-wrap items-center gap-3">
           <span class="rounded-full border px-2.5 py-0.5 text-xs font-bold ${tone.badge}">
-            ${score}% Â· ${esc(evaluation.topic)}
+            ${score}% · ${esc(evaluation.topic)}
           </span>
           ${
             evaluation.recommendedFocus
@@ -591,7 +591,7 @@ export function createDashboard(
     testAnswerEl.value = "";
     setTestStatus("");
     setTestBusy(true);
-    testTopicEl.textContent = topic ? `Topic: ${topic}` : "Finding your weakest areaâ€¦";
+    testTopicEl.textContent = topic ? `Topic: ${topic}` : "Finding your weakest area…";
     testQuestionEl.textContent = "";
 
     try {
@@ -636,7 +636,7 @@ export function createDashboard(
     }
 
     setTestStatus("");
-    setTestBusy(true, "Gradingâ€¦");
+    setTestBusy(true, "Grading…");
     try {
       const res = await fetch(`${SERVER_URL}/api/assessment/submit`, {
         method: "POST",
@@ -732,7 +732,7 @@ export function createDashboard(
     return "Moving fast";
   }
 
-  /** Turn a 0â€“100 strength number into words a student can act on. */
+  /** Turn a 0—100 strength number into words a student can act on. */
   function describeStrength(strength: number): string {
     if (strength < 40) return "Needs work";
     if (strength < 60) return "Getting there";
@@ -774,7 +774,7 @@ export function createDashboard(
 
     const weakest = weak[0];
     if (weakest) {
-      // A prerequisite underneath this topic is the more useful thing to say â€”
+      // A prerequisite underneath this topic is the more useful thing to say —
       // and the more useful thing to test. "You are weak at transformers" is a
       // verdict the student cannot act on; "start with matrix multiplication,
       // which transformers sits on top of" is a Tuesday's work.
@@ -784,7 +784,7 @@ export function createDashboard(
         headline: rootCause ? `Start with ${rootCause}` : `Work on ${weakest.topic}`,
         detail: rootCause
           ? `You are weak at ${weakest.topic}, but it sits on top of ${rootCause}. Fixing the piece underneath tends to move both.`
-          : `This is your weakest area right now â€” ${describeStrength(weakest.strength).toLowerCase()}. A quick check will tell you if it's improving.`,
+          : `This is your weakest area right now — ${describeStrength(weakest.strength).toLowerCase()}. A quick check will tell you if it's improving.`,
         action: {
           kind: "test-topic",
           // The check follows the root cause, not the symptom.
@@ -1037,7 +1037,7 @@ export function createDashboard(
     const list = sortEnrolledFirst(matched);
 
     if (!list.length) {
-      coursesEl.innerHTML = `<p class="col-span-full rounded-xl border border-dashed border-slate-700 px-4 py-6 text-center text-sm text-slate-500">No courses match â€œ${esc(filter)}â€.</p>`;
+      coursesEl.innerHTML = `<p class="col-span-full rounded-xl border border-dashed border-slate-700 px-4 py-6 text-center text-sm text-slate-500">No courses match “${esc(filter)}”.</p>`;
       return;
     }
 
@@ -1066,7 +1066,7 @@ export function createDashboard(
                      <div class="h-full rounded-full bg-indigo-500 transition-[width] duration-500" style="width:${percent}%"></div>
                    </div>
                    <p class="mt-1 text-[11px] text-slate-400">${done.size} of ${modules.length} done${
-                     nextModule ? ` Â· next: ${esc(nextModule.title)}` : " Â· finished"
+                     nextModule ? ` · next: ${esc(nextModule.title)}` : " · finished"
                    }</p>
                  </div>
                  <ul class="dash-modules flex flex-col gap-0.5 text-[11px] text-slate-500">`
@@ -1224,18 +1224,18 @@ export function createDashboard(
     const pace = describeSpeed(data.progress.learningSpeed);
     speedEl.textContent = pace;
     // The server-derived "how long were you away" rides on the pace line rather
-    // than taking its own row â€” it is context for the pace, not a separate fact.
+    // than taking its own row — it is context for the pace, not a separate fact.
     // Empty for a short break or a brand-new student, so it adds nothing there.
     const away = data.awayLabel?.trim() ?? "";
     paceLineEl.textContent =
       [
         data.progress.learningSpeed > 0
-          ? `${pace} â€” you're picking up new ideas steadily.`
+          ? `${pace} — you're picking up new ideas steadily.`
           : "Ask the owl a question to get started.",
         away,
       ]
         .filter(Boolean)
-        .join(" Â· ");
+        .join(" · ");
     focusCountEl.textContent =
       data.progress.weakPoints.length === 0
         ? "None right now"
@@ -1269,8 +1269,8 @@ export function createDashboard(
               type="button"
               class="dash-review inline-block rounded-full border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200 transition hover:border-indigo-400/60 hover:brightness-125"
               data-test-topic="${esc(card.topic)}"
-              title="${esc(card.label)} â€” practise ${esc(card.topic)}"
-            >${esc(card.topic)} Â· ${esc(card.label)}</button>`,
+              title="${esc(card.label)} — practise ${esc(card.topic)}"
+            >${esc(card.topic)} · ${esc(card.label)}</button>`,
             )
             .join("")}
         </div>`;
@@ -1298,7 +1298,7 @@ export function createDashboard(
                    : "border-amber-500/40 bg-amber-500/10 text-amber-300"
                }"
                title="Practise ${esc(wp.topic)}"
-             >${esc(wp.topic)} Â· ${describeStrength(wp.strength)}</button>`,
+             >${esc(wp.topic)} · ${describeStrength(wp.strength)}</button>`,
         )
         .join(" ")}${
         data.progress.weakPoints.length > 3
@@ -1314,7 +1314,7 @@ export function createDashboard(
     if (lastScore) {
       feedbackEl.innerHTML = `
         <p class="text-sm text-slate-200">
-          <span class="font-semibold text-indigo-300">${esc(lastScore.topic)}</span> â€” ${lastScore.score}%
+          <span class="font-semibold text-indigo-300">${esc(lastScore.topic)}</span> — ${lastScore.score}%
         </p>
         <p class="mt-1 text-xs leading-relaxed text-slate-400">${esc(lastScore.feedback)}</p>
         ${
@@ -1332,7 +1332,7 @@ export function createDashboard(
 
   async function refresh(): Promise<void> {
     if (destroyed) return;
-    // A refresh requested while one is already in flight must not be dropped â€”
+    // A refresh requested while one is already in flight must not be dropped —
     // that's how a card fails to flip back to its post-enroll state. Queue it.
     if (loading) {
       refreshQueued = true;
@@ -1537,8 +1537,8 @@ export function createDashboard(
 
   // Hand the graded result back to the tutor so the loop can be closed.
   //
-  // The topic passed is the one the button is *about* â€” `recommendedFocus`, the
-  // concept the grader said to work on next â€” not `testTopic`, the topic that
+  // The topic passed is the one the button is *about* — `recommendedFocus`, the
+  // concept the grader said to work on next — not `testTopic`, the topic that
   // was actually tested. Those differ whenever the grade identified a gap, which
   // is exactly the case the button exists for: it used to send the student back
   // to the concept they had just failed instead of the one they needed.

@@ -12,11 +12,55 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 599 checks, ~50s, no key or browser needed
+npm test                                # 615 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
 *Start learning*. Full detail is under [Setup](#setup).
+
+## 📸 What it looks like
+
+Screenshots below are captured from a running instance by
+`node client/scripts/capture-screenshots.mjs` — real UI, no mock-ups. The tutor
+shot is in offline demo mode, and you can see the on-screen notice saying so.
+
+**The landing page.** `/` explains the idea and gets out of the way; the tutor
+lives at `/app.html`.
+
+![The AgentEd landing page](docs/screenshots/01-landing.png)
+
+**An active lesson.** The owl teaches on a lesson board and asks a question
+instead of giving the answer — the whole premise in one screen.
+
+![An active lesson with the owl and the lesson board](docs/screenshots/04-tutor-lesson.png)
+
+**The learning dashboard.** What to do next, pace, focus areas, and reviews
+coming due, derived from what the student actually got wrong.
+
+![The learning dashboard](docs/screenshots/07-dashboard.png)
+
+<details>
+<summary>More screenshots — sign-up, consent, a follow-up turn, Hindi</summary>
+
+**Sign-up.** Name, username, password. No email, no OAuth, no waiting.
+
+![The sign-up form](docs/screenshots/02-signup.png)
+
+**Consent.** Asked before the first AI call and again from the dashboard. Not a
+dismissable banner.
+
+![The consent step](docs/screenshots/03-consent.png)
+
+**A second turn.** The tutor answers the student's actual question about the
+previous one.
+
+![A follow-up turn in the conversation](docs/screenshots/05-follow-up-turn.png)
+
+**Hindi.** A first-class mode, in Devanagari, including what gets read aloud.
+
+![The tutor in Hindi](docs/screenshots/06-hindi.png)
+
+</details>
 
 ### 🧪 No API key? Read this first
 
@@ -43,6 +87,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 
 | | |
 |---|---|
+| [📸 What it looks like](#-what-it-looks-like) | screenshots of the real app |
 | [💡 Project overview](#project-overview) | what it is and who it is for |
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
@@ -289,10 +334,10 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 16 | 599 | nothing — no DB, no key, no browser |
-| Browser (Playwright) | 4 | 282 | the app running + MongoDB |
+| Pure logic (`npm test`) | 17 | 615 | nothing — no DB, no key, no browser |
+| Browser (Playwright) | 5 | 285 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **21** | **931** | |
+| **Total** | **23** | **950** | |
 
 Start here:
 
@@ -307,7 +352,7 @@ Or individually:
 | `npm run test:parse` | 36 | `parseVisualSpec` — rejects hostile model output |
 | `npm run test:review` | 38 | Spaced-repetition scheduling |
 | `npm run test:profile` | 30 | The learner profile and its prompt rendering |
-| `npm run test:difficulty` | 20 | Adaptive difficulty bands |
+| `npm run test:difficulty` | 32 | Adaptive difficulty bands, including topic matching across spellings |
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
@@ -319,22 +364,40 @@ Or individually:
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:notes` | 27 | Downloadable course notes (Markdown) |
 | `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
+| `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
 | `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |
 | `npm run test:workflow` | 55 | The first-run journey: landing → sign-up → consent → course detail → lesson |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
 | `npm run test:security` | 94 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
+| `npm run test:login` | 15 | The login page: render, validation, wrong password, register toggle (Playwright) |
+| `npm run test:journey` | 46 | **A real student, start to finish, against live providers** — see below |
 
-The four browser suites need the app running (`npm run dev` in both terminals)
-and a reachable MongoDB:
+`npm run test:browsers` runs every browser suite in the order CI uses.
+
+**`test:journey` is the one to run before a demo.** Every other browser suite
+drives a single component or stubs the model; this is the only one that answers
+the question a user actually cares about — if a real person signs up and tries to
+learn something, does the whole thing work end to end? It needs a live key and an
+empty database (it exercises first-run, catalog seeding and the first-run
+greeting), so it is a deliberate manual gate rather than a CI step.
+
+The browser suites need the app running (`npm run dev` in both terminals) and a
+reachable MongoDB. Five of the six need no AI key:
 
 ```bash
-npm run test:security   # first: it can burn the auth rate-limit budget
+npm run test:browsers   # all five, in CI's order
+
+# or individually, in this order:
+npm run test:login      # first: cheap, and warms nothing
+npm run test:security   # next: it can burn the auth rate-limit budget
 npm run test:ui
 npm run test:workflow
 npm run test:playback
 ```
+
+`test:journey` is the exception and is deliberately not in that list — see above.
 
 `test:security` is listed first on purpose. It can optionally exhaust the auth
 rate limiter, which would then block the registration the UI suite depends on.
@@ -542,6 +605,22 @@ topic, their language, and a briefing built from what we know:
 **They get tested.** The question's difficulty comes from their strength *and*
 review history, so a struggling student gets a single concrete step rather than
 a two-part abstraction.
+
+**Topics are matched loosely, but only just loosely.** The client says
+"Backpropagation", the syllabus says "backpropagation", the assessment records
+"backprop". Comparing those exactly meant a student who had genuinely failed this
+topic was recorded as never having been seen failing it, and got a standard
+question instead of a smaller one — a failure that hid the problem rather than
+showing it. Matching now normalizes punctuation and filler words, accepts one
+name being contained in a fuller one, and falls back to a shared identifying
+word.
+
+That last step is where it could have caused harm, so it is fenced in: *attention*
+and *attribution* share a prefix and nothing else, and are still different topics,
+because being handed remedial work on the wrong concept is worse than being handed
+a question that is slightly too hard. Where several records match, the **weakest**
+one decides — one lucky strong result cannot mask an earlier failure on the same
+concept. `test:difficulty` pins all of this, in both directions.
 
 **They answer.** Three things are stored: the score, the *specific wrong idea*
 the answer revealed, and when. Strength blends with what was already known

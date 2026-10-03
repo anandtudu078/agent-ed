@@ -1,9 +1,14 @@
-// One-off login page check. Run: node scripts/login-check.mjs
+// Login page check. Run: node scripts/login-check.mjs
 // Covers: page render, client-side validation, wrong password, successful
 // sign-in, register-mode toggle, and that errors surface to the user.
 import { chromium } from "playwright";
 
-const CLIENT = process.env.LOGIN_CHECK_URL ?? "http://localhost:5173";
+// The tutor lives at /app.html; the bare origin is the landing page. Pointing
+// this at the origin meant every one of its render checks failed against a page
+// that has no sign-in form on it -- which is why it was never run. The bare
+// origin is itself worth asserting against, so both URLs are covered: this file
+// checks the sign-in form, workflow-test.mjs checks the landing page.
+const CLIENT = process.env.LOGIN_CHECK_URL ?? "http://localhost:5173/app.html";
 const results = [];
 const check = (label, ok, detail = "") => {
   results.push(ok);

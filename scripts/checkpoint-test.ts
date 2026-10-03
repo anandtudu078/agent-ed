@@ -9,7 +9,7 @@
 //     they have not reached (which would fail them for knowing less than the app
 //     taught them);
 //   - asking again for a test they have already passed, because the coverage
-//     wasn't remembered â€” the failure that makes interval testing pointless.
+//     wasn't remembered — the failure that makes interval testing pointless.
 //
 // Pure, so no database is needed.
 
@@ -26,7 +26,7 @@ import {
 const results: Array<{ label: string; ok: boolean }> = [];
 function check(label: string, ok: boolean, detail = ""): void {
   results.push({ label, ok });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? " â€” " + detail : ""}`);
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
 }
 
 const mod = (n: number): ModuleLike => ({ title: `Module ${n}`, topic: `topic ${n}` });
@@ -158,7 +158,7 @@ check("and it is the right course", twoCourses[0]?.courseId === "c2", twoCourses
 check("an unknown course in an enrollment is skipped", dueCheckpoints([], [{ courseId: "ghost", completedModules: done(5) }], []).length === 0);
 check("no courses means no checkpoints", dueCheckpoints([], [], []).length === 0);
 
-// The most recent test per course wins â€” otherwise an old, generous test record
+// The most recent test per course wins — otherwise an old, generous test record
 // could mask a recent failure and hide a checkpoint that is genuinely owed.
 const reordered = dueCheckpoints(
   [{ courseId: "c1", modules: course }],

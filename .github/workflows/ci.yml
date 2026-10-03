@@ -167,6 +167,17 @@ jobs:
           echo "Vite never became ready"
           exit 1
 
+      # The login page itself: render, client-side validation, wrong password,
+      # register-mode toggle, and that a server error surfaces inline. It needs
+      # the API and the database but no AI provider, so unlike the suites below it
+      # can run on every CI build.
+      #
+      # It had no package.json entry at all, so it was reachable only by knowing
+      # the file path -- the same failure this workflow already documents for
+      # test:workflow. A browser suite nobody executes is a comment, not coverage.
+      - name: Login suite
+        run: npm run test:login
+
       # Order matters. The security suite can burn the auth rate-limit budget,
       # and the UI suite needs an auth attempt to register — so security runs
       # first, and never with SECURITY_TEST_RATELIMIT set.
