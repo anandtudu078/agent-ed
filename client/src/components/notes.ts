@@ -32,17 +32,6 @@ export interface NotesCourse {
   modules: Array<{ title: string; topic: string; subtopics?: string[] }>;
 }
 
-/** Filename-safe slug, so a download never lands as `concepts?.pdf`. */
-export function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 60) || "course"
-  );
-}
-
 /**
  * Escape text for the notes document.
  *

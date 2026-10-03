@@ -15,7 +15,6 @@
 
 import {
   buildCourseNotesHtml,
-  slugify,
   type NotesCourse,
 } from "../src/components/notes.ts";
 
@@ -96,16 +95,7 @@ const blankSubtopics = buildCourseNotesHtml({
 });
 check("whitespace subtopics are dropped, not printed as empty bullets", !/<li>\s*<\/li>/.test(blankSubtopics));
 
-// --- 5. Filenames ------------------------------------------------------------
-// The slug names the file the student's browser suggests in the save dialog, so
-// it still has to be a legal, readable filename even though we are no longer
-// appending ".md" ourselves.
-check("a normal title slugs cleanly", slugify("Machine Learning Basics") === "machine-learning-basics");
-check("punctuation is stripped", slugify("What's AI? (2026)") === "what-s-ai-2026", slugify("What's AI? (2026)"));
-check("an unusable title still yields a filename", slugify("!!!") === "course", slugify("!!!"));
-check("a very long title is bounded", slugify("x".repeat(200)).length <= 60);
-
-// --- 6. Hindi ----------------------------------------------------------------
+// --- 5. Hindi ----------------------------------------------------------------
 // The notes follow the student's language like everything else in the app.
 const hi = buildCourseNotesHtml(course, ["Conditionals"], "hi");
 check("Hindi notes use Hindi headings", hi.includes("कोर्स नोट्स"));
@@ -114,7 +104,7 @@ check("Hindi notes mark progress in Hindi", /पूर्ण/.test(hi));
 check("Hindi notes keep the English module titles", hi.includes("Conditionals"));
 check("the document declares its language for the font stack", hi.includes('<html lang="hi">'), "expected lang=hi");
 
-// --- 7. The document is print-ready ------------------------------------------
+// --- 6. The document is print-ready ------------------------------------------
 // These are the claims that make the output a PDF rather than a web page. If the
 // @page rule or the colour-adjust declaration goes, the file still "works" and
 // prints wrong — white pills, no page margins — which is exactly the kind of
@@ -127,7 +117,7 @@ check("backgrounds and borders survive printing", /print-color-adjust:\s*exact/i
 check("a module is never split across a page break", /break-inside:\s*avoid/i.test(notes));
 check("the document declares utf-8 for the Devanagari", notes.includes('<meta charset="utf-8">'));
 
-// --- 8. Escaping -------------------------------------------------------------
+// --- 7. Escaping -------------------------------------------------------------
 // Course text is seeded, not user-authored, but it is still data: a syllabus
 // containing markup should print as text, not reshape the document around it.
 const nasty = buildCourseNotesHtml({

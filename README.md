@@ -372,7 +372,7 @@ Or individually:
 | `npm run test:offline` | 128 | The offline AI gate (incl. the tutor stand-in), the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
-| `npm run test:notes` | 40 | Downloadable course notes (printable PDF) |
+| `npm run test:notes` | 36 | Downloadable course notes (printable PDF) |
 | `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
 | `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
