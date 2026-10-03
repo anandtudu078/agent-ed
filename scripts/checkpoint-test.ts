@@ -19,7 +19,7 @@ import {
   mergeCourseTest,
   CHECKPOINT_INTERVAL,
   MIN_MODULES_FOR_INTERVALS,
-  MAX_CHECKPOINTS,
+  MAX_MODULES_COVERED,
   type ModuleLike,
 } from "../src/services/checkpoints";
 
@@ -100,10 +100,45 @@ check("a fully tested finished course owes nothing", !checkpointStatus("c1", cou
   testedModules: course.map((m) => m.title),
 }).due);
 
-// --- 7. Caps ----------------------------------------------------------------
-const huge = Array.from({ length: 60 }, (_, i) => mod(i + 1));
-const capped = checkpointStatus("c1", huge, huge.map((m) => m.title));
-check("the untested list is capped", capped.untestedModules.length <= MAX_CHECKPOINTS, `n=${capped.untestedModules.length}`);
+// --- 7. Coverage is never truncated ------------------------------------------
+// The regression that mattered. `untestedModules` used to be sliced to
+// MAX_CHECKPOINTS, and this list is what /api/assessment/checkpoint signs as
+// `modulesCovered` and what /submit then records as tested. So on any course
+// longer than the cap, taking the test marked only the first few modules
+// covered, the rest stayed untested forever, and `untested.length` never fell
+// below CHECKPOINT_INTERVAL — the checkpoint re-armed the instant the student
+// finished it, with no way to clear it. Every course in the catalog is longer
+// than the old cap, so this was reachable by anyone.
+const longCourse = Array.from({ length: 12 }, (_, i) => mod(i + 1));
+const longDone = longCourse.map((m) => m.title);
+const long = checkpointStatus("c1", longCourse, longDone);
+check("every finished module is listed, not just the first few", long.untestedModules.length === 12, `n=${long.untestedModules.length}`);
+
+// The full loop, through the same calls the route makes: sign the coverage,
+// record it, then ask again. The debt must clear.
+const coveredAll = long.untestedModules.map((m) => m.title);
+const afterFullLoop = checkpointStatus(
+  "c1",
+  longCourse,
+  longDone,
+  mergeCourseTest([], {
+    courseId: "c1",
+    testedModules: coveredAll,
+    score: 80,
+    testedAt: new Date(),
+  })[0],
+);
+check("a finished course clears once all of it is covered", !afterFullLoop.due, `until=${afterFullLoop.modulesUntilNext}`);
+check("nothing is left untested", afterFullLoop.untestedModules.length === 0, `n=${afterFullLoop.untestedModules.length}`);
+check("and it reports as fully tested", afterFullLoop.allTested === true);
+
+// The signing guard is the only bound, and it must sit above the longest real
+// course (currently 9) so a legitimate checkpoint is never truncated.
+const gigantic = Array.from({ length: 60 }, (_, i) => mod(i + 1));
+const giganticStatus = checkpointStatus("c1", gigantic, gigantic.map((m) => m.title));
+check("a 60-module course reports all of them to the caller", giganticStatus.untestedModules.length === 60, `n=${giganticStatus.untestedModules.length}`);
+check("the signing bound covers the longest real course", MAX_MODULES_COVERED >= 12, `bound=${MAX_MODULES_COVERED}`);
+check("and is still a real bound, not unbounded", MAX_MODULES_COVERED < 60);
 
 // --- 8. Across several courses ----------------------------------------------
 const twoCourses = dueCheckpoints(

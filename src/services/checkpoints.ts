@@ -22,8 +22,17 @@ export const CHECKPOINT_INTERVAL = 3;
 /** A course shorter than this gets a single test at the end, not intervals. */
 export const MIN_MODULES_FOR_INTERVALS = 4;
 
-/** Never claim a student owes more tests than this, however long the course. */
-export const MAX_CHECKPOINTS = 4;
+/**
+ * Ceiling on how many modules one checkpoint may claim as covered.
+ *
+ * A guard on the ticket, not a presentation limit. `untestedModules` is
+ * deliberately uncapped so a real course's coverage is recorded truthfully,
+ * so the bound that matters is on what may be signed: a hand-edited or
+ * forged ticket cannot make the submit path write an unbounded module list
+ * into the student's record. Sized above the longest course in the catalog
+ * (currently 9) so it never truncates a legitimate checkpoint.
+ */
+export const MAX_MODULES_COVERED = 12;
 
 export interface CourseTestRecord {
   courseId: string;
@@ -41,7 +50,25 @@ export interface ModuleLike {
 
 export interface CheckpointStatus {
   courseId: string;
-  /** Modules finished but not yet covered by a checkpoint test. */
+  /**
+   * Modules finished but not yet covered by a checkpoint test.
+   *
+   * COMPLETE, never truncated. This list is what `/api/assessment/checkpoint`
+   * signs into the attempt ticket as `modulesCovered`, and the submit path
+   * records exactly that as the student's tested coverage — so a cap here is
+   * not a display convenience, it silently decides what counts as tested.
+   *
+   * It used to be `untested.slice(0, MAX_CHECKPOINTS)`. On a 12-module course
+   * that signed 4 titles, so the other 8 were never marked tested, `allTested`
+   * could never become true, and `untested.length` stayed above
+   * CHECKPOINT_INTERVAL forever — the checkpoint re-armed immediately after
+   * every test, with no way for the student to ever clear it. Every course in
+   * the catalog is longer than MAX_CHECKPOINTS, so this was reachable by
+   * anyone who finished a course without testing midway.
+   *
+   * Presentation is capped where it belongs, in the dashboard, which already
+   * slices to 3 for display.
+   */
   untestedModules: ModuleLike[];
   /**
    * True when a checkpoint test is worth taking now: enough new modules have
@@ -104,7 +131,7 @@ export function checkpointStatus(
 
   return {
     courseId,
-    untestedModules: untested.slice(0, MAX_CHECKPOINTS),
+    untestedModules: untested,
     due,
     modulesUntilNext,
     allTested,
