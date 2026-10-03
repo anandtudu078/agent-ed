@@ -60,9 +60,15 @@ function walk(dir: string, out: string[] = []): string[] {
 
 // Read the tracked file list rather than crawling the tree: it keeps generated
 // output and editor scratch files out by construction.
+// This file is excluded from the scan. It has to name the mojibake sequences
+// in order to search for them, so it necessarily contains them -- a test that
+// fails on its own pattern table is a test that can never pass.
+const SELF = fileURLToPath(import.meta.url).replace(/\\/g, "/");
+
 const tracked = execSync("git ls-files", { cwd: ROOT, encoding: "utf8" })
   .split("\n")
-  .filter((f) => f && /\.(ts|tsx|mjs|js|css|html|json|md)$/.test(f));
+  .filter((f) => f && /\.(ts|tsx|mjs|js|css|html|json|md)$/.test(f))
+  .filter((f) => !f.replace(/\\/g, "/").endsWith(SELF.split("/").slice(-2).join("/")));
 
 const scanned = walk(ROOT).length;
 check("git can list the tracked files", tracked.length > 0, `${tracked.length} text files`);
