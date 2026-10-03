@@ -15,6 +15,8 @@ import {
   offlineAiEnabled,
   offlineQuestion,
   offlineGrade,
+  offlineTutorReply,
+  offlineStudentAnalysis,
 } from "../src/services/offlineAi";
 import {
   ACCESS_COOKIE,
@@ -150,6 +152,84 @@ check(
 // These stand-ins must not be mistaken for provider output anywhere downstream.
 check("the grade carries no topic verbatim from the model", typeof g1.feedback === "string");
 check("a very long answer does not change the grade", offlineGrade("recursion", "x".repeat(5000)).score === g1.score);
+
+// ===========================================================================
+// 5b. The tutor stand-in
+// ===========================================================================
+//
+// Added because the tutor was the one feature with no stand-in at all: with no
+// key, `analyzeStudentInput` threw on the missing GROQ_API_KEY before any
+// network call, so a judge who cloned the repo and had no key to hand met an
+// error exactly where the product should be. The assessment endpoints had a
+// fallback the whole time; the headline feature did not.
+//
+// The same bar applies as everywhere else here: it must say it is offline, and
+// it must not invent a signal that steers the pipeline.
+
+const socraticReply = offlineTutorReply("recursion", "socratic", "en");
+const teachReply = offlineTutorReply("recursion", "teach", "en");
+
+check("the tutor stand-in returns a real reply", socraticReply.length > 60, `${socraticReply.length} chars`);
+check(
+  "and it says it is offline, so it is never mistaken for the model",
+  /offline answer/i.test(socraticReply),
+);
+check("the notice names the key that would fix it", /GROQ_API_KEY/.test(socraticReply));
+
+// The Socratic contract is the whole point of the default mode, so the stand-in
+// has to honour it or a demo would show a tutor that gives the answer away.
+check("socratic mode asks rather than tells", socraticReply.includes("?"));
+check(
+  "socratic mode does not simply state a definition",
+  !/is the process of/i.test(socraticReply),
+);
+
+// Teach mode has the opposite obligation: it must explain and then check. The
+// check is asserted against the lesson text, not the whole reply, because the
+// offline notice is appended after it.
+const teachBody = teachReply.replace(/\n\n\(This is an offline answer[\s\S]*$/, "");
+check("teach mode is longer than a one-liner", teachBody.length > 80, `${teachBody.length} chars`);
+check(
+  "teach mode ends by checking understanding",
+  teachBody.trim().endsWith("?"),
+  JSON.stringify(teachBody.slice(-40)),
+);
+check("the two modes do not return the same text", socraticReply !== teachReply);
+
+// Deterministic, for the same reason the question and grade are: a CI run that
+// changes output on identical input cannot be re-attributed when it fails.
+check("the same input gives the same reply", offlineTutorReply("recursion", "socratic", "en") === socraticReply);
+check("the topic changes the reply", offlineTutorReply("transformers", "socratic", "en") !== socraticReply);
+check("the topic is actually used", offlineTutorReply("transformers", "socratic", "en").includes("transformers"));
+
+// Hindi is a first-class teaching mode, so the stand-in has to speak it too.
+const hindiReply = offlineTutorReply("recursion", "socratic", "hi");
+check("the tutor stand-in speaks Hindi", /[ऀ-ॿ]/.test(hindiReply), hindiReply.slice(0, 24));
+check("the Hindi reply is also marked offline", /ऑफ़लाइन/.test(hindiReply));
+
+// An unknown mode or language must fall back rather than return nothing —
+// this runs on a live request path.
+check("an unknown mode still answers", offlineTutorReply("recursion", "nonsense" as never, "en").length > 40);
+check("an unknown language still answers", offlineTutorReply("recursion", "socratic", "xx" as never).length > 40);
+check("an empty topic still answers", /this topic/i.test(offlineTutorReply("   ", "socratic", "en")));
+
+const sa = offlineStudentAnalysis("recursion");
+check("the analysis stand-in returns a topic", typeof sa.topic === "string" && sa.topic.length > 0, sa.topic);
+check(
+  "and a mastery estimate in range",
+  sa.masteryEstimate >= 0 && sa.masteryEstimate <= 100,
+  `${sa.masteryEstimate}`,
+);
+// A fabricated high mastery would drive the difficulty band and the owl's
+// reaction, quietly steering everything downstream. A neutral value is the safe
+// stand-in.
+check("mastery is mid-range, not flattering", sa.masteryEstimate >= 40 && sa.masteryEstimate <= 60, `${sa.masteryEstimate}`);
+check(
+  "the analysis invents no misunderstandings",
+  sa.coreMisunderstandings.length === 0,
+  `got ${sa.coreMisunderstandings.length}`,
+);
+check("the analysis stand-in is deterministic", JSON.stringify(offlineStudentAnalysis("recursion")) === JSON.stringify(sa));
 
 // ===========================================================================
 // 6. The auth cookie policy
