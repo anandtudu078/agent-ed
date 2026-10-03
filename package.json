@@ -37,7 +37,10 @@
     "test:ui": "node client/scripts/ui-test.mjs",
     "test:workflow": "node client/scripts/workflow-test.mjs",
     "test:playback": "npm --prefix client run test:playback",
-    "test:security": "node client/scripts/security-test.mjs"
+    "test:security": "node client/scripts/security-test.mjs",
+    "test:login": "node client/scripts/login-check.mjs",
+    "test:journey": "node client/scripts/journey-test.mjs",
+    "test:browsers": "npm run test:login && npm run test:security && npm run test:ui && npm run test:workflow && npm run test:playback"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

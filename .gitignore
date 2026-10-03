@@ -4,6 +4,11 @@ dist
 *.log
 .commitmsg.txt
 
+# JetBrains IDE files. `.idea/dataSources.xml` in particular records local
+# database connection names, which is noise in a repo and a leak risk the moment
+# someone commits one.
+.idea
+
 # scratch/test output
 .ui.out
 .ui.err

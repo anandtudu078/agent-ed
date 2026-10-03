@@ -325,16 +325,33 @@ Or individually:
 | `npm run test:workflow` | 55 | The first-run journey: landing → sign-up → consent → course detail → lesson |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
 | `npm run test:security` | 94 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
+| `npm run test:login` | 19 | The login page: render, validation, wrong password, register toggle (Playwright) |
+| `npm run test:journey` | 46 | **A real student, start to finish, against live providers** — see below |
 
-The four browser suites need the app running (`npm run dev` in both terminals)
-and a reachable MongoDB:
+`npm run test:browsers` runs every browser suite in the order CI uses.
+
+**`test:journey` is the one to run before a demo.** Every other browser suite
+drives a single component or stubs the model; this is the only one that answers
+the question a user actually cares about — if a real person signs up and tries to
+learn something, does the whole thing work end to end? It needs a live key and an
+empty database (it exercises first-run, catalog seeding and the first-run
+greeting), so it is a deliberate manual gate rather than a CI step.
+
+The browser suites need the app running (`npm run dev` in both terminals) and a
+reachable MongoDB. Five of the six need no AI key:
 
 ```bash
-npm run test:security   # first: it can burn the auth rate-limit budget
+npm run test:browsers   # all five, in CI's order
+
+# or individually, in this order:
+npm run test:login      # first: cheap, and warms nothing
+npm run test:security   # next: it can burn the auth rate-limit budget
 npm run test:ui
 npm run test:workflow
 npm run test:playback
 ```
+
+`test:journey` is the exception and is deliberately not in that list — see above.
 
 `test:security` is listed first on purpose. It can optionally exhaust the auth
 rate limiter, which would then block the registration the UI suite depends on.
