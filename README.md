@@ -12,7 +12,7 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # then set MONGO_URI, JWT_SECRET, GROQ_API_KEY
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 570 checks, ~50s, no key or browser needed
+npm test                                # 576 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
@@ -29,7 +29,7 @@ Then open **http://localhost:5173**, sign up, give consent, pick a course and pr
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
 | [✨ Features](#features) | course detail, notes, checkpoint tests |
-| [🧪 Tests](#tests) | 902 checks, 21 suites, and the quality gate |
+| [🧪 Tests](#tests) | 908 checks, 21 suites, and the quality gate |
 | [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
 | [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
 | [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
@@ -260,14 +260,14 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## 🧪 Tests
 
-**902 checks across twenty-one suites**, all of which run in CI or from one command.
+**908 checks across twenty-one suites**, all of which run in CI or from one command.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 16 | 570 | nothing — no DB, no key, no browser |
+| Pure logic (`npm test`) | 16 | 576 | nothing — no DB, no key, no browser |
 | Browser (Playwright) | 4 | 282 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **21** | **902** | |
+| **Total** | **21** | **908** | |
 
 Start here:
 
@@ -286,7 +286,7 @@ Or individually:
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
-| `npm run test:checkpoints` | 40 | Course checkpoint intervals and coverage |
+| `npm run test:checkpoints` | 46 | Course checkpoint intervals and coverage |
 | `npm run test:return` | 32 | Return detection and first run |
 | `npm run test:course` | 26 | Course progress derivation, including malformed stored topics |
 | `npm run test:offline` | 107 | The offline AI gate, the auth cookie policy, and the consent rules |
@@ -772,6 +772,51 @@ most likely things to need changing.
 ---
 
 ## ⚠️ Known limits
+
+### Fixed during review, recorded because they say something
+
+Three defects found by reading rather than running the app. The first is worth
+keeping in the README permanently, because of *how* it survived.
+
+- **A checkpoint test that could never be cleared.** `checkpointStatus` capped
+  `untestedModules` at four. That list looked like a display convenience, but it
+  is what `/api/assessment/checkpoint` signs into the attempt ticket as
+  `modulesCovered`, and `/submit` records exactly that as tested coverage. So on
+  any course longer than four modules, taking the test marked four titles covered
+  and left the rest untested permanently — `untested.length` never fell back
+  below the interval, so the checkpoint re-armed the moment the student finished
+  it, with no state they could change. Every course in the catalog is longer than
+  four modules (28 of 28, longest 9), so it was reachable by anyone who finished
+  a course without testing midway.
+
+  It survived because the test suite *asserted the bug*: "the untested list is
+  capped" pinned the truncation in place. That check has been replaced with six
+  covering the actual invariant. A test that locks in the wrong behaviour is
+  worse than no test — it converts a bug into a specification.
+
+  The lesson generalises: **a value that crosses a trust boundary is not a
+  display concern.** The moment a list is signed, stored, or asserted on, it
+  stops being a formatting decision.
+- **Misconception targeting was inert.** Both assessment routes matched stored
+  topics to the topic being asked about with `===`. Stored topics are written by
+  a grader reading free text ("backprop"), while the asked-about topic is often
+  the authored curriculum string — so across the 186 authored topics, "backprop"
+  and "what is a transformer" matched **zero** times. The question generator
+  usually received an empty misconception list, so the documented behaviour
+  ("asks about the gap rather than re-asking what went wrong before") mostly did
+  not happen. Both now use the fuzzy `topicsMatch` that already existed in
+  `courseService.ts` for exactly this reason.
+
+  The matcher was there the whole time. Two call sites simply never used it.
+- **Refresh rotation had a check-then-act race.** `rotateRefreshToken` read the
+  record, checked `replacedByHash`, then saved. Two requests with the same token
+  could both read it as unrotated and both mint a successor — one stolen token,
+  two live sessions, reuse never detected, which defeats the point of rotation
+  entirely. The claim is now one conditional `findOneAndUpdate` filtered on
+  `replacedByHash: null`, so exactly one request can win and the loser is
+  correctly read as reuse.
+
+### Still true
 
 - **The tutor can still recite.** The prompt asks it to name misconceptions
   directly; nothing enforces it. Verified the reply *changes*, not that it

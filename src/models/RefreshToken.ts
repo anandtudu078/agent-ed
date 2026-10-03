@@ -61,16 +61,27 @@ export type RefreshOutcome =
  * exchanged comes back, either a replay attack or a token was copied, and the
  * only safe response is to revoke every live token for that user — we can no
  * longer tell which of the two holders is the real one.
+ *
+ * The claim is a single conditional update rather than a read followed by a
+ * save. `findOne` + mutate + `save` has a window between the read and the write
+ * in which two requests carrying the same token both see `replacedByHash` as
+ * null, both pass every check, and both mint a successor — so one stolen token
+ * yields two live sessions and reuse is never detected at all. Filtering on
+ * `replacedByHash: null` makes the claim atomic: the loser matches no document,
+ * which is exactly the reuse signal, and kills the family.
  */
 export async function rotateRefreshToken(
   token: string,
 ): Promise<RefreshOutcome> {
   const hash = hashToken(token);
-  const record = await RefreshToken.findOne({ tokenHash: hash });
-  if (!record) return { ok: false, reason: "not_found" };
 
-  if (record.replacedByHash) {
-    await revokeAllRefreshTokens(record.userId);
+  // Read for the decisions that need the record itself. The authoritative claim
+  // happens below, atomically.
+  const existing = await RefreshToken.findOne({ tokenHash: hash });
+  if (!existing) return { ok: false, reason: "not_found" };
+
+  if (existing.replacedByHash) {
+    await revokeAllRefreshTokens(existing.userId);
     return { ok: false, reason: "reused" };
   }
 
@@ -78,11 +89,11 @@ export async function rotateRefreshToken(
   // can be revoked without ever having been spent — sign-out, or the family
   // kill that follows a reuse elsewhere — and a token that is only ever checked
   // for "was this replaced?" would sail straight through both.
-  if (record.revokedAt) {
+  if (existing.revokedAt) {
     return { ok: false, reason: "not_found" };
   }
 
-  if (record.expiresAt.getTime() <= Date.now()) {
+  if (existing.expiresAt.getTime() <= Date.now()) {
     return { ok: false, reason: "expired" };
   }
 
@@ -92,16 +103,30 @@ export async function rotateRefreshToken(
     Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  record.replacedByHash = nextHash;
-  record.revokedAt = new Date();
-  await record.save();
+  // The atomic claim. `replacedByHash: null` is the guard: only the request
+  // that actually flips it from null wins, so a concurrent replay of the same
+  // token finds nothing and is treated as reuse rather than being handed a
+  // second valid successor.
+  const claimed = await RefreshToken.findOneAndUpdate(
+    { tokenHash: hash, replacedByHash: null, revokedAt: null },
+    { $set: { replacedByHash: nextHash, revokedAt: new Date() } },
+    { new: true },
+  );
+
+  if (!claimed) {
+    // Lost the race: another request rotated this token first, so presenting it
+    // again is reuse by definition and we can no longer tell the two apart.
+    await revokeAllRefreshTokens(existing.userId);
+    return { ok: false, reason: "reused" };
+  }
+
   await RefreshToken.create({
-    userId: record.userId,
+    userId: claimed.userId,
     tokenHash: nextHash,
     expiresAt,
   });
 
-  return { ok: true, userId: record.userId, nextToken, expiresAt };
+  return { ok: true, userId: claimed.userId, nextToken, expiresAt };
 }
 
 /** Revoke every live refresh token for a student (sign out, or reuse detected). */

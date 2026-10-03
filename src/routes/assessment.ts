@@ -9,7 +9,12 @@ import {
   type CourseTestRecord,
 } from "../models/Progress";
 import { Course } from "../models/Course";
-import { mergeCourseTest, checkpointStatus } from "../services/checkpoints";
+import {
+  mergeCourseTest,
+  checkpointStatus,
+  MAX_MODULES_COVERED,
+} from "../services/checkpoints";
+import { topicsMatch } from "../services/courseService";
 import { MAX_STORED_TOPIC_VISITS, Session } from "../models/Session";
 import {
   AuthenticatedRequest,
@@ -46,8 +51,8 @@ const MAX_ANSWER_LENGTH = 4000;
 /** Same guard on the misconception list carried in an attempt ticket. */
 const MAX_MISCONCEPTIONS = 5;
 const MAX_MISCONCEPTION_LENGTH = 200;
-/** A checkpoint covers a handful of modules, not a whole syllabus. */
-const MAX_MODULES_COVERED = 10;
+// MAX_MODULES_COVERED now lives in services/checkpoints.ts, next to the rule that
+// produces the list, so the signing bound and the interval logic cannot drift apart.
 
 interface AttemptPayload {
   studentId: string;
@@ -176,8 +181,18 @@ async function chooseTopic(
   // The misconceptions the grader already wrote for this topic, newest first.
   // They used to be discarded on the way out; now they also steer the *next*
   // question, which is where they were always most useful.
-  const misconceptions = (progress?.testHistory ?? [])
-    .filter((evaluation) => evaluation.topic?.trim().toLowerCase() === topic.toLowerCase())
+  //
+  // Matched with `topicsMatch`, not `===`. These stored topics are written by a
+  // grader reading free text, so they carry whatever phrasing the model chose
+  // ("backprop", "backpropagation and gradient flow"), while `topic` here may
+  // be the authored curriculum string or something the student typed. Exact
+  // equality matched almost nothing — across the 186 authored topics, "backprop"
+  // and "what is a transformer" hit zero — so the targeting silently did nothing
+  // and the feature was only ever exercised when both sides happened to agree.
+  const matching = (progress?.testHistory ?? []).filter((evaluation) =>
+    topicsMatch(topic, evaluation.topic ?? ""),
+  );
+  const misconceptions = matching
     .reverse()
     .flatMap((evaluation) => evaluation.misconceptions ?? [])
     .filter(Boolean);
@@ -309,10 +324,14 @@ router.post(
     }
 
     // Misconceptions already recorded for this module steer the question, so the
-    // checkpoint asks about the gap rather than re-asking what went wrong before.
-    const key = status.nextModule.topic.toLowerCase();
+// checkpoint asks about the gap rather than re-asking what went wrong before.
+    //
+    // `topicsMatch` rather than exact equality, for the same reason as `/start`:
+    // the stored topics are model-written and this one is authored, so `===`
+    // matched almost nothing and a checkpoint almost never carried any
+    // misconception targeting at all.
     const misconceptions = (progress?.testHistory ?? [])
-      .filter((evaluation) => evaluation.topic?.trim().toLowerCase() === key)
+      .filter((evaluation) => topicsMatch(status.nextModule!.topic, evaluation.topic ?? ""))
       .flatMap((evaluation) => evaluation.misconceptions ?? [])
       .filter(Boolean)
       .slice(0, 5);
@@ -329,13 +348,23 @@ router.post(
       difficulty,
     );
 
+    // The full untested list is what this checkpoint stands in for, capped only by
+    // the signing guard. It used to be `status.untestedModules`, which was itself
+    // truncated to 4 — so on any course longer than that, taking the test marked
+    // four modules covered and left the rest permanently untested, which kept
+    // `untested.length` above CHECKPOINT_INTERVAL and re-armed the checkpoint
+    // immediately. The student could never clear it.
+    const modulesCovered = status.untestedModules
+      .map((module) => module.title)
+      .slice(0, MAX_MODULES_COVERED);
+
     const attemptToken = signAttempt({
       studentId,
       topic: status.nextModule.topic,
       question,
       misconceptions,
       courseId,
-      modulesCovered: status.untestedModules.map((module) => module.title),
+      modulesCovered,
     });
 
     response.json({
@@ -346,7 +375,7 @@ router.post(
       // Which modules this checkpoint is standing in for. Signed into the ticket
       // so the submit path can record coverage it can trust, rather than trusting
       // a list the client sends back.
-      modulesCovered: status.untestedModules.map((module) => module.title),
+      modulesCovered,
     });
   } catch (error) {
     console.error("Failed to start a checkpoint test.", error);
