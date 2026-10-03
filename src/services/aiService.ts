@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 
 import { ConversationMessage } from "../models/Session";
 import { completeText, GROQ_TEXT_MODELS } from "./groqClient";
+import { offlineAiEnabled, offlineTutorReply, offlineStudentAnalysis } from "./offlineAi";
 
 /** Structured read of the student's turn, returned by the analysis call. */
 export interface StudentAnalysis {
@@ -19,6 +20,32 @@ export interface StudentAnalysis {
  * budget and the latency budget with it. Tune here, not at the call sites.
  */
 export const MAX_PROMPT_HISTORY_MESSAGES = 12;
+
+/**
+ * The best topic available without asking a model.
+ *
+ * Used only by the offline stand-in, which has no model to ask. Prefers the
+ * topic named on the most recent assistant turn, since that is the one the
+ * thread is currently about, and falls back to the student's latest message
+ * trimmed to something phrase-shaped.
+ *
+ * Deterministic on purpose: the offline path must return the same thing for the
+ * same thread, or a CI run stops being reproducible.
+ */
+function topicHint(priorMessages: ConversationMessage[]): string {
+  const lastAssistant = [...(priorMessages ?? [])]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.content?.trim());
+  if (lastAssistant?.content) {
+    // The stored content is a whole reply, so take its opening words rather than
+    // the entire thing — a topic is a name, not a paragraph.
+    return lastAssistant.content.trim().split(/\s+/).slice(0, 5).join(" ");
+  }
+  const lastUser = [...(priorMessages ?? [])]
+    .reverse()
+    .find((message) => message.role === "user" && message.content?.trim());
+  return lastUser?.content?.trim().slice(0, 60) ?? "";
+}
 
 /** The most recent slice of the conversation to show the model. */
 export function selectHistoryWindow(
@@ -43,6 +70,14 @@ export async function analyzeStudentInput(
   studentMessage: string,
   priorMessages: ConversationMessage[] = [],
 ): Promise<StudentAnalysis> {
+  // Offline stand-in, behind the same opt-in and the same production refusal as
+  // the assessment endpoints. This is the call that fails *first* without a key —
+  // the Groq constructor throws on a missing key before any network call — so
+  // without this a developer with no key never reaches the tutor at all.
+  if (offlineAiEnabled()) {
+    return offlineStudentAnalysis(topicHint(priorMessages));
+  }
+
   const groq = new Groq({
     apiKey: process.env.GROQ_API_KEY,
     // Use Node's native fetch: the SDK's bundled node-fetch@2 fails with
@@ -308,6 +343,15 @@ export async function generateTutorResponse(
    */
   flowGuidance: string = "",
 ): Promise<string> {
+  // Offline stand-in. Placed before any provider work so a developer with no
+  // key gets a working tutor instead of an error — the app's headline feature
+  // was previously the one thing that hard-failed without a key. Behind the same
+  // opt-in and the same production refusal as the assessment endpoints, and the
+  // reply says it is offline, so it can never be mistaken for the real model.
+  if (offlineAiEnabled()) {
+    return offlineTutorReply(analysis?.topic ?? "", mode, language);
+  }
+
   const history = selectHistoryWindow(priorMessages);
   const transcript = renderTranscript(history);
 

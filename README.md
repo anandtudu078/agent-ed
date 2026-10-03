@@ -9,15 +9,33 @@
 
 ```bash
 npm ci && npm ci --prefix client        # install
-cp .env.example .env                    # then set MONGO_URI, JWT_SECRET, GROQ_API_KEY
+cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 576 checks, ~50s, no key or browser needed
+npm test                                # 599 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
-*Start learning*. Full detail, including what each variable does, is under
-[Setup](#setup).
+*Start learning*. Full detail is under [Setup](#setup).
+
+### 🧪 No API key? Read this first
+
+**You do not need an AI key to run or review this project.** Set one line in
+`.env` and the entire app works end to end:
+
+```bash
+ALLOW_OFFLINE_AI=1
+```
+
+The tutor, the assessments and the whole progress pipeline then answer from a
+deterministic local stand-in, so you can click through the real product in about
+two minutes. Every reply says **on screen** that it is offline and names the key
+that would switch it to the real model — so a placeholder can never be mistaken
+for the real thing, in a demo or in production. The stand-in refuses to activate
+under `NODE_ENV=production`, full stop.
+
+A [Groq](https://console.groq.com) key is still the best demo if you have one:
+the real tutor, the real diagrams, the real grading. But nothing above needs it.
 
 ---
 
@@ -29,7 +47,7 @@ Then open **http://localhost:5173**, sign up, give consent, pick a course and pr
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
 | [✨ Features](#features) | course detail, notes, checkpoint tests |
-| [🧪 Tests](#tests) | 908 checks, 21 suites, and the quality gate |
+| [🧪 Tests](#tests) | 931 checks, 21 suites, and the quality gate |
 | [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
 | [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
 | [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
@@ -138,7 +156,9 @@ client/scripts/       browser suites (Playwright)
   `package.json` files declare `"engines": { "node": ">=24" }` so npm warns you
   rather than letting you discover it as a mysterious test failure.
 - A MongoDB instance — local `mongod`, a container, or a free MongoDB Atlas cluster
-- A free [Groq](https://console.groq.com) API key for the AI features
+- An AI provider key — **optional**, see [No API key? Read this
+  first](#no-api-key-read-this-first). A free [Groq](https://console.groq.com)
+  key is the best demo if you have one.
 
 **1. Install**
 
@@ -157,18 +177,23 @@ something newer. Verified from an empty `node_modules`.
 cp .env.example .env
 ```
 
-Then edit `.env`. Three values matter:
+Then edit `.env`. Two values are genuinely required:
 
 | Variable | Required | Notes |
 |---|---|---|
 | `MONGO_URI` | **yes** | `mongodb://127.0.0.1:27017/agented` works with local Mongo |
 | `JWT_SECRET` | **yes** | At least 16 characters. The server refuses to start without it. |
-| `GROQ_API_KEY` | **yes** | Everything AI — tutor, assessments, diagrams. Without it the app runs but cannot answer. |
+| `ALLOW_OFFLINE_AI` | no | **Set to `1` to run the whole app with no AI key.** Demo mode — see [above](#no-api-key-read-this-first). Refuses under `NODE_ENV=production`. |
+| `GROQ_API_KEY` | no | Real tutor, assessments and diagrams. Without it the tutor 502s — *unless* `ALLOW_OFFLINE_AI=1`. |
 | `GEMINI_API_KEY` | no | Tried first; Groq is the fallback when Gemini's quota is spent |
 | `GEMINI_EXTRA_KEYS` | no | Comma-separated extra Gemini keys, rotated when the primary is exhausted |
 | `CLIENT_ORIGIN` | no | Already defaults to the dev client at `localhost:5173` |
 | `AI_DAILY_CALL_LIMIT` | no | Per-student daily AI budget. Defaults to 250 |
 | `PORT` | no | Defaults to 3000 |
+
+The AI keys are marked optional because `ALLOW_OFFLINE_AI=1` genuinely replaces
+them. Without either, registration, the catalog, courses and the dashboard all
+still work — only the tutor and assessments need one.
 
 `.env` is loaded automatically by `dotenv` — no extra flags needed.
 
@@ -260,14 +285,14 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## 🧪 Tests
 
-**908 checks across twenty-one suites**, all of which run in CI or from one command.
+**931 checks across twenty-one suites**, all of which run in CI or from one command.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 16 | 576 | nothing — no DB, no key, no browser |
+| Pure logic (`npm test`) | 16 | 599 | nothing — no DB, no key, no browser |
 | Browser (Playwright) | 4 | 282 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **21** | **908** | |
+| **Total** | **21** | **931** | |
 
 Start here:
 
@@ -289,7 +314,7 @@ Or individually:
 | `npm run test:checkpoints` | 46 | Course checkpoint intervals and coverage |
 | `npm run test:return` | 32 | Return detection and first run |
 | `npm run test:course` | 26 | Course progress derivation, including malformed stored topics |
-| `npm run test:offline` | 107 | The offline AI gate, the auth cookie policy, and the consent rules |
+| `npm run test:offline` | 128 | The offline AI gate (incl. the tutor stand-in), the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:notes` | 27 | Downloadable course notes (Markdown) |
@@ -818,6 +843,13 @@ keeping in the README permanently, because of *how* it survived.
 
 ### Still true
 
+- **The tutor needs a key to be genuinely good.** With `ALLOW_OFFLINE_AI=1` the
+  app is fully clickable and every part of the pipeline runs for real — but the
+  tutor's *reasoning* is a deterministic template, not a model. It asks a
+  Socratic question and it teaches a lesson, so the modes, the beats, the owl
+  and the boards all behave correctly; what you cannot judge offline is whether
+  the teaching is any good. That is the one judgement this repo cannot substitute
+  for a key.
 - **The tutor can still recite.** The prompt asks it to name misconceptions
   directly; nothing enforces it. Verified the reply *changes*, not that it
   always says the right thing.
