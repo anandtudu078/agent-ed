@@ -125,7 +125,7 @@ Around that loop:
 | Built around it | What it does |
 |---|---|
 | **Learning alerts** | what to do next, derived from the same state the tutor reads |
-| **Course notes** | the whole syllabus as a Markdown file, built in the browser, Hindi too |
+| **Course notes** | the whole syllabus as a printable PDF, built in the browser, Hindi too |
 | **Checkpoint tests** | fall due as you work through a course, and can never be invented |
 | **An owl** | whose face, cap and speech are a function of how the last turn went |
 
@@ -297,12 +297,22 @@ move a student's percentage.
 
 ### Downloadable notes
 
-The course dialog also has **Download notes**, which writes the whole syllabus to a
-Markdown file: every module, its subtopics, which ones are done, and a summary.
-Built entirely in the browser from the payload the dialog already rendered from,
-so it costs no round trip and cannot drift from what the student was shown. Hindi
-notes are translated; the module titles stay as the syllabus words them, since the
-tutor will never say a transliterated version of them.
+The course dialog also has **Download notes (PDF)**, which lays the whole syllabus
+out as a printable A4 document: every module, its subtopics, which ones are done,
+and a summary. Built entirely in the browser from the payload the dialog already
+rendered from, so it costs no round trip and cannot drift from what the student
+was shown. Hindi notes are translated; the module titles stay as the syllabus
+words them, since the tutor will never say a transliterated version of them.
+
+It opens the browser's print dialog with **Save as PDF** as the destination, in a
+clean document that carries none of the dashboard's dark chrome — `@page` margins,
+`break-inside: avoid` so a module never splits across a page, and
+`print-color-adjust` so the status pills print as pills rather than white boxes.
+No PDF library is involved. Every one of them draws its own text, which means
+embedding and subsetting a font, and none of the small ones carry Devanagari;
+handing the page to the browser gets correct Hindi shaping and correct page
+breaks from the engine already rendering the dashboard, for the price of one
+same-origin iframe (`client/src/components/notes.ts`).
 
 ### Checkpoint tests
 
@@ -362,7 +372,7 @@ Or individually:
 | `npm run test:offline` | 128 | The offline AI gate (incl. the tutor stand-in), the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
-| `npm run test:notes` | 27 | Downloadable course notes (Markdown) |
+| `npm run test:notes` | 40 | Downloadable course notes (printable PDF) |
 | `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
 | `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
@@ -667,7 +677,7 @@ client/src/
   components/dashboard.ts      alerts, checkpoints, reviews, course detail
   components/alerts.ts         what the student should know right now
   components/subtopics.ts      fuzzy match from a request to a subtopic
-  components/notes.ts          course notes as a Markdown download
+  components/notes.ts          course notes as a printable PDF
   components/beats.ts          splits a reply into playable lesson beats
   components/sketches.ts       16 hand-drawn SVGs matched to a beat
 
