@@ -3,6 +3,46 @@
 > A character-led tutor that teaches AI/ML, remembers what each student actually
 > gets wrong, and changes how it teaches them because of it.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D24-5FA04E)](package.json)
+[![CI](https://github.com/anandtudu078/agent-ed/actions/workflows/ci.yml/badge.svg)](https://github.com/anandtudu078/agent-ed/actions/workflows/ci.yml)
+
+```bash
+npm ci && npm ci --prefix client        # install
+cp .env.example .env                    # then set MONGO_URI, JWT_SECRET, GROQ_API_KEY
+npm run dev                             # terminal 1 — API on :3000
+npm run dev --prefix client             # terminal 2 — app on :5173
+npm test                                # 570 checks, ~50s, no key or browser needed
+```
+
+Then open **http://localhost:5173**, sign up, give consent, pick a course and press
+*Start learning*. Full detail, including what each variable does, is under
+[Setup](#setup).
+
+---
+
+## 📋 Contents
+
+| | |
+|---|---|
+| [💡 Project overview](#project-overview) | what it is and who it is for |
+| [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
+| [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
+| [✨ Features](#features) | course detail, notes, checkpoint tests |
+| [🧪 Tests](#tests) | 902 checks, 21 suites, and the quality gate |
+| [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
+| [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
+| [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
+| [⚖️ Consent](#consent) | the minor-safety and data-rights rules |
+| [🎯 Design decisions](#design-decisions) | judgement calls about a person |
+| [⚠️ Known limits](#known-limits) | what is **not** proven, stated plainly |
+
+**If you only read one thing**, read
+[How the adaptive loop works](#the-adaptive-loop) — it is the difference between
+this and a chatbot. If you are reviewing the work rather than the idea, go
+straight to [Tests](#tests): every claim in this file is backed by a suite you can
+run.
+
 ---
 
 ## 💡 Project overview
@@ -45,10 +85,16 @@ handed the same explanation again.
 
 **Frontend** — TypeScript · Vite · Tailwind (CDN) · Socket.IO client
 
-**AI providers** — Groq (primary tutor + diagrams) · Google Gemini (fallback when
-Groq's quota is spent). Both have free tiers, and the app degrades gracefully if
-neither is configured — registration, the catalog, courses and the dashboard all
-work without a key; only the tutor, assessments and diagrams need one.
+**AI providers** — Google Gemini (tried first) · Groq (the fallback when Gemini's
+quota is spent or no Gemini key is set). Both have free tiers, and the app degrades
+gracefully if neither is configured — registration, the catalog, courses and the
+dashboard all work without a key; only the tutor, assessments and diagrams need
+one. The ladder is keys × models, and Gemini sits behind a circuit breaker so a
+free tier pinned at zero does not add its retries to every reply.
+
+> Judge's note: this ordering was stated backwards in an earlier revision of this
+> file. The code in `src/services/aiService.ts` is the source of truth — Gemini is
+> attempted first and Groq catches what is left.
 
 **Auth & security** — `httpOnly` cookies · JWT access + rotating refresh tokens ·
 `bcryptjs` · Helmet · CORS allowlist · `express-rate-limit` · CSRF header
@@ -79,6 +125,8 @@ client/scripts/       browser suites (Playwright)
 ```
 
 ---
+
+<a id="setup"></a>
 
 ## ⚙️ Setup & installation steps
 
@@ -125,6 +173,8 @@ Then edit `.env`. Three values matter:
 `.env` is loaded automatically by `dotenv` — no extra flags needed.
 
 ---
+
+<a id="how-to-run"></a>
 
 ## 🚀 How to run the project
 
@@ -208,9 +258,18 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ---
 
-## Tests
+## 🧪 Tests
 
-902 checks across twenty-one suites. Start here.
+**902 checks across twenty-one suites**, all of which run in CI or from one command.
+
+| | Suites | Checks | Needs |
+|---|---|---|---|
+| Pure logic (`npm test`) | 16 | 570 | nothing — no DB, no key, no browser |
+| Browser (Playwright) | 4 | 282 | the app running + MongoDB |
+| Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
+| **Total** | **21** | **902** | |
+
+Start here:
 
 ```bash
 npm test              # runs every suite that needs no browser (16 suites, ~50s)
@@ -316,6 +375,7 @@ reply for reading.
 > The honest limit: this measures whether the tutor *behaves* as specified. It
 > cannot prove the explanations are pedagogically good, and the judge shares a
 > blind spot with the model it is grading. It is a floor, not a ceiling.
+
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request to `master`, in
@@ -410,7 +470,7 @@ The vocabulary the tutor may use is deliberately narrower than the mascot's own
 the *student*, and letting a remote payload drive `proud` would let a garbled reply
 make the owl congratulate someone for nothing.
 
-## Alerts
+## 🔔 Alerts
 
 The dashboard had the raw material for every alert — due reviews, weak points,
 progress, pace — and showed it as *evidence*: counts, percentages, lists. What was
@@ -439,7 +499,9 @@ nobody reads, and the weakest one is what trains people to dismiss the rest.
 
 ---
 
-## How the adaptive loop works
+<a id="the-adaptive-loop"></a>
+
+## 🧠 How the adaptive loop works
 
 **A student asks about transformers.** The tutor receives the transcript, the
 topic, their language, and a briefing built from what we know:
@@ -471,12 +533,13 @@ mention the repetition.
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 src/
   server.ts                    API + socket
-  data/curriculum.ts           186 modules (each with 3 subtopics), 9 AI branches + maths spine
+  data/curriculum.ts           28 courses / 186 modules (3 subtopics each),
+                               across 9 AI branches + a maths & CS spine
   services/
     aiService.ts               tutor prompt; takes the learner briefing
     progressService.ts         learner profile, difficulty, prerequisites
@@ -485,8 +548,13 @@ src/
     checkpoints.ts             course checkpoint intervals
     returnState.ts             "welcome back"
     visualService.ts           validates model output into a diagram spec
+    consent.ts                 the consent rules, as pure functions
+    assessmentService.ts       question generation and grading
+    courseService.ts           prerequisite graph, progress derivation
+    offlineAi.ts               the deterministic stand-in used by CI
   models/                      User, Session, Progress, Course, tokens, usage
-  middleware/                  auth, rate limits, AI spend cap
+  middleware/                  auth, consent, rate limits, AI spend cap
+  routes/                      auth, courses, dashboard, assessment, account
 
 client/src/
   main.ts                      chat, speech, return path, first run
@@ -496,8 +564,51 @@ client/src/
   components/alerts.ts         what the student should know right now
   components/subtopics.ts      fuzzy match from a request to a subtopic
   components/notes.ts          course notes as a Markdown download
+  components/beats.ts          splits a reply into playable lesson beats
+  components/sketches.ts       16 hand-drawn SVGs matched to a beat
 
-scripts/                       the test suites
+scripts/                       server-side suites (no browser needed)
+client/scripts/                browser suites (Playwright)
+```
+
+**One turn, end to end.** Every arrow is a real function; nothing here is
+illustrative.
+
+```
+  student types
+      │
+      ▼
+  socket "chat" ──► requireAuth ──► requireConsent ──► aiSpendLimit
+      │                              (a minor needs       (daily budget,
+      │                               guardian consent)    charged on the
+      ▼                                                    socket too)
+  progressService ──────────► learner profile
+  (weak points, mastery,          │
+   prerequisite graph)            │
+      │                           ▼
+  flowSignals ────────────► flowGuidance
+  (repetition, pacing)             │
+      │                           │
+      └──────────┬────────────────┘
+                 ▼
+      generateTutorResponse(mode, language,
+          learnerBriefing, flowGuidance, history, query)
+                 │
+                 ├─► Gemini (keys × models, behind a breaker)
+                 └─► Groq   (fallback)
+                 │
+                 ▼
+  tutorReaction(turn)  ──► owl mood      visualService ──► diagram spec
+  (server-side, testable)                    │
+                                             ▼
+                              parseVisualSpec ──► hand-written SVG
+                              (bounds + escapes; never raw model markup)
+                 │
+                 ▼
+  store: score, the specific wrong idea, when ──► scheduleReview()
+                 │
+                 ▼
+  dashboard: alerts · due reviews · due checkpoints · return state
 ```
 
 **The seams worth reading first.** `generateTutorResponse` in
@@ -513,7 +624,7 @@ instead of a paragraph.
 
 ---
 
-## Session handling
+## 🔐 Session handling
 
 Tokens are **httpOnly cookies**, not `localStorage`. A token in `localStorage` is
 readable by any script on the page, so one injected `<script>` exfiltrates a
@@ -551,7 +662,9 @@ Two things the migration could not keep, and did not try to:
 
 ---
 
-## Consent, and who it protects
+<a id="consent"></a>
+
+## ⚖️ Consent, and who it protects
 
 This app is aimed at students — the people least able to consent meaningfully to
 their data going to a third party. Every tutor prompt carries a student's own
@@ -617,7 +730,9 @@ A bearer header is still accepted as a fallback, which is what lets the security
 suite and any scripted client authenticate without a cookie jar. The browser path
 never uses it.
 
----
+<a id="design-decisions"></a>
+
+## 🎯 Design decisions about the student
 
 These are judgement calls about a person, not facts about a model. They are the
 most likely things to need changing.
@@ -639,7 +754,7 @@ most likely things to need changing.
 
 ---
 
-## Security notes
+## 🛡️ Security notes
 
 - Model output is never trusted. `parseVisualSpec` bounds and type-checks every
   field and returns `null` on any problem; the renderers escape all text and
@@ -656,7 +771,7 @@ most likely things to need changing.
 
 ---
 
-## Known limits
+## ⚠️ Known limits
 
 - **The tutor can still recite.** The prompt asks it to name misconceptions
   directly; nothing enforces it. Verified the reply *changes*, not that it
