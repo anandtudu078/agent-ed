@@ -12,7 +12,7 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 603 checks, ~50s, no key or browser needed
+npm test                                # 615 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
@@ -334,10 +334,10 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 16 | 599 | nothing — no DB, no key, no browser |
-| Browser (Playwright) | 4 | 282 | the app running + MongoDB |
+| Pure logic (`npm test`) | 17 | 615 | nothing — no DB, no key, no browser |
+| Browser (Playwright) | 5 | 285 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **21** | **931** | |
+| **Total** | **23** | **950** | |
 
 Start here:
 
@@ -352,7 +352,7 @@ Or individually:
 | `npm run test:parse` | 36 | `parseVisualSpec` — rejects hostile model output |
 | `npm run test:review` | 38 | Spaced-repetition scheduling |
 | `npm run test:profile` | 30 | The learner profile and its prompt rendering |
-| `npm run test:difficulty` | 20 | Adaptive difficulty bands |
+| `npm run test:difficulty` | 32 | Adaptive difficulty bands, including topic matching across spellings |
 | `npm run test:prereqs` | 17 | The prerequisite graph |
 | `npm run test:flow` | 18 | Flow signals |
 | `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
@@ -371,7 +371,7 @@ Or individually:
 | `npm run test:workflow` | 55 | The first-run journey: landing → sign-up → consent → course detail → lesson |
 | `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
 | `npm run test:security` | 94 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
-| `npm run test:login` | 19 | The login page: render, validation, wrong password, register toggle (Playwright) |
+| `npm run test:login` | 15 | The login page: render, validation, wrong password, register toggle (Playwright) |
 | `npm run test:journey` | 46 | **A real student, start to finish, against live providers** — see below |
 
 `npm run test:browsers` runs every browser suite in the order CI uses.
@@ -605,6 +605,22 @@ topic, their language, and a briefing built from what we know:
 **They get tested.** The question's difficulty comes from their strength *and*
 review history, so a struggling student gets a single concrete step rather than
 a two-part abstraction.
+
+**Topics are matched loosely, but only just loosely.** The client says
+"Backpropagation", the syllabus says "backpropagation", the assessment records
+"backprop". Comparing those exactly meant a student who had genuinely failed this
+topic was recorded as never having been seen failing it, and got a standard
+question instead of a smaller one — a failure that hid the problem rather than
+showing it. Matching now normalizes punctuation and filler words, accepts one
+name being contained in a fuller one, and falls back to a shared identifying
+word.
+
+That last step is where it could have caused harm, so it is fenced in: *attention*
+and *attribution* share a prefix and nothing else, and are still different topics,
+because being handed remedial work on the wrong concept is worse than being handed
+a question that is slightly too hard. Where several records match, the **weakest**
+one decides — one lucky strong result cannot mask an earlier failure on the same
+concept. `test:difficulty` pins all of this, in both directions.
 
 **They answer.** Three things are stored: the score, the *specific wrong idea*
 the answer revealed, and when. Strength blends with what was already known

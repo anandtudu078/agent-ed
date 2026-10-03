@@ -84,6 +84,93 @@ check(
   difficultyForTopic({ weakPoints: [point("BackProp", 20)] }, "  backprop ") === "remedial",
 );
 
+// --- 4b. The same concept, spelled differently -----------------------------
+//
+// The reason matching is fuzzy. The client sends "Backpropagation", the
+// syllabus says "backpropagation", the assessment records "backprop". Under
+// exact comparison all three missed each other, and every miss pushed a
+// struggling student back to "standard" — the failure mode was invisible, and
+// it was wrong in the direction that hides the problem rather than showing it.
+check(
+  "a longer spelling of a weak topic is still remedial",
+  difficultyForTopic({ weakPoints: [point("backprop", 20)] }, "Backpropagation") === "remedial",
+  "backprop -> Backpropagation",
+);
+check(
+  "an abbreviation of a weak topic is still remedial",
+  difficultyForTopic({ weakPoints: [point("Backpropagation", 20)] }, "backprop") === "remedial",
+);
+check(
+  "punctuation and filler words do not break the match",
+  difficultyForTopic({ weakPoints: [point("Gradient Descent, Intro", 20)] }, "gradient descent") === "remedial",
+);
+check(
+  "a longer syllabus title matches its short topic",
+  difficultyForTopic({ weakPoints: [point("Introduction to Neural Networks", 20)] }, "neural networks") === "remedial",
+);
+check(
+  "a weak review card is found under a different spelling too",
+  difficultyForTopic({ reviewCards: [card("attention mechanism", 15, 0)] }, "attention mechanisms") === "remedial",
+);
+
+// --- 4c. Fuzzy must not mean everything matches ----------------------------
+//
+// The other half, and the reason this is not just "compare loosely". A word
+// that merely looks similar is a different concept, and handing someone
+// remedial work on the wrong topic is a worse bug than handing them a question
+// that is slightly too hard.
+check(
+  "attention and attribution are not the same topic",
+  difficultyForTopic({ weakPoints: [point("attention", 20)] }, "attribution") === "standard",
+  "shared prefix, no shared word",
+);
+check(
+  "recursion is not confused with regression",
+  difficultyForTopic({ weakPoints: [point("recursion", 20)] }, "regression") === "standard",
+);
+check(
+  "an unrelated topic is still unseen",
+  difficultyForTopic({ weakPoints: [point("attention", 20)] }, "SQL joins") === "standard",
+);
+check(
+  "a single shared filler word is not a topic match",
+  difficultyForTopic({ weakPoints: [point("using python", 20)] }, "javascript arrays") === "standard",
+);
+
+// --- 4d. When several records match, the weakest one decides ---------------
+//
+// A student who failed this under two spellings should not be told they are
+// ready for something harder on the strength of the nicer record.
+check(
+  "the weakest of two matching records decides",
+  difficultyForTopic(
+    { weakPoints: [point("backpropagation", 95), point("BackProp", 25)] },
+    "backpropagation",
+  ) === "remedial",
+  "a strong record must not mask an earlier failure on the same concept",
+);
+check(
+  "a weak point outweighs a strong review card",
+  difficultyForTopic(
+    {
+      weakPoints: [point("backpropagation", 30)],
+      reviewCards: [card("Backprop", 95, 3)],
+    },
+    "backpropagation",
+  ) === "remedial",
+);
+check(
+  "two strong records under different spellings still reach stretch",
+  difficultyForTopic(
+    {
+      weakPoints: [point("backpropagation", 90)],
+      reviewCards: [card("BackProp", 90, 2)],
+    },
+    "backpropagation",
+  ) === "stretch",
+  "fuzzy matching must not make stretch unreachable",
+);
+
 // --- 5. A review card alone is enough evidence ---------------------------
 check(
   "a weak review card with no weak point is remedial",

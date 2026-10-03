@@ -158,12 +158,75 @@ const REMEDIAL_BELOW = 40;
 const STRETCH_AT = 75;
 
 /**
+ * Reduce a topic to the words that identify it: lowercase, punctuation and
+ * stop-words gone. This is the same normalization `subtopics.ts` uses to match
+ * a student's phrasing to a syllabus entry, so the two now agree on what counts
+ * as the same topic.
+ */
+function normalizeTopic(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * How much a stored topic and the requested topic look like the same subject.
+ * Ordered weakest match to strongest so a caller can take the first that hits.
+ */
+type TopicMatch = "exact" | "normalized" | "contained" | "related";
+
+function matchStrength(stored: string, key: string): TopicMatch | null {
+  const storedNorm = normalizeTopic(stored);
+  if (!storedNorm || !key) return null;
+
+  // The overwhelmingly common case, and the cheapest.
+  if (stored.trim().toLowerCase() === key) return "exact";
+  if (storedNorm === key) return "normalized";
+
+  // One name inside the other. "backpropagation" inside "deep backpropagation
+  // basics" is the same subject written more fully, not a different one.
+  if (storedNorm.includes(key) || key.includes(storedNorm)) return "contained";
+
+  // Otherwise: do they share the word that actually identifies the topic?
+  // Requiring an overlap is deliberately conservative — "attention" and
+  // "attribution" share a prefix but nothing else, and treating those as the
+  // same topic would hand a student remedial work on the wrong concept.
+  const stop = new Set([
+    "the", "a", "an", "of", "and", "or", "to", "in", "for", "on", "with",
+    "how", "what", "why", "is", "are", "it", "vs", "using", "basics",
+    "introduction", "intro", "fundamentals",
+  ]);
+  const terms = (v: string) =>
+    new Set(v.split(" ").filter((t) => t.length > 2 && !stop.has(t)));
+
+  const overlap = [...terms(storedNorm)].filter((t) => terms(key).has(t));
+  return overlap.length > 0 ? "related" : null;
+}
+
+/**
  * Pick the band for a topic, from what we actually know about it.
  *
  * Defaults to "standard" when we have no signal at all. Starting a brand-new
  * student on remedial questions is the tempting choice and the wrong one: it
  * wastes the one chance to find out what they can do, and it reads as being
  * talked down to before anyone has looked.
+ *
+ * Topic matching is fuzzy because the same concept arrives spelled several ways:
+ * the client sends "Backpropagation", the syllabus says "backpropagation", and
+ * the assessment records "backprop". Exact comparison silently failed on all
+ * three, and the failure mode was invisible and bad in the same direction --
+ * a student who is actually struggling got a standard question, because the
+ * system concluded it had never seen them fail this topic. Worse than remedial
+ * work given by mistake is remedial work never offered.
+ *
+ * Matching is still conservative. A shared word is enough only when it is a
+ * word that identifies a topic, and containment has to be of the whole name, so
+ * "attention" and "attribution" stay distinct. When several stored records
+ * match, the *weakest* one wins, because a student who has failed this twice
+ * under two spellings should not be handed a stretch question on the strength
+ * of the more favourable record.
  */
 export function difficultyForTopic(
   progress: {
@@ -172,25 +235,34 @@ export function difficultyForTopic(
   } | null | undefined,
   topic: string,
 ): DifficultyBand {
-  const key = topic.trim().toLowerCase();
+  const key = normalizeTopic(topic);
   if (!key) return "standard";
 
-  const point = (progress?.weakPoints ?? []).find(
-    (p) => p.topic.trim().toLowerCase() === key,
-  );
-  const card = (progress?.reviewCards ?? []).find(
-    (c) => c.topic.trim().toLowerCase() === key,
-  );
+  const points = progress?.weakPoints ?? [];
+  const cards = progress?.reviewCards ?? [];
 
-  // Never seen it: no evidence either way.
-  if (!point && !card) return "standard";
+  // Collect every record that plausibly refers to this topic, then decide from
+  // the combined evidence rather than from the first thing that matches.
+  const matchedPoints = points.filter((p) => matchStrength(p.topic, key) !== null);
+  const matchedCards = cards.filter((c) => matchStrength(c.topic, key) !== null);
 
-  const strength = point?.strength ?? card?.strength ?? 50;
+  // Never seen it, under any spelling: no evidence either way.
+  if (matchedPoints.length === 0 && matchedCards.length === 0) return "standard";
+
+  // Weakest evidence wins. Using the strongest would let one lucky strong
+  // record mask an earlier failure on the same concept.
+  const strengths = [
+    ...matchedPoints.map((p) => p.strength),
+    ...matchedCards.map((c) => c.strength),
+  ];
+  const strength = Math.min(...strengths);
+
   if (strength < REMEDIAL_BELOW) return "remedial";
 
   // Stretch needs proof, not one good answer: a solid score *and* at least one
   // successful review, so we know it held rather than landed once.
-  if (strength >= STRETCH_AT && (card?.reps ?? 0) >= 1) return "stretch";
+  const bestReps = Math.max(0, ...matchedCards.map((c) => c.reps ?? 0));
+  if (strength >= STRETCH_AT && bestReps >= 1) return "stretch";
 
   return "standard";
 }
