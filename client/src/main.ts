@@ -523,7 +523,7 @@ function setDashboardVisible(visible: boolean): void {
           speakOwlMessage(mascot.message() ?? "");
         }
       },
-      // Read live so the notes file follows a language switch made while the
+      // Read live so the printed notes follow a language switch made while the
       // dashboard was already open.
       () => (teachLanguage === "hi" ? "hi" : "en"),
     );

@@ -3,7 +3,7 @@
 // feedback/recommended focus), a quick action for starting an AI evaluation
 // test, and a searchable course catalog with Continue Learning actions.
 
-import { buildCourseNotes, downloadTextFile, slugify } from "./notes";
+import { buildCourseNotesHtml, printCourseNotesPdf } from "./notes";
 import { matchSubtopic, subtopicPrompt } from "./subtopics";
 import { buildAlerts, type LearningAlert } from "./alerts";
 
@@ -334,12 +334,17 @@ export function createDashboard(
             should not have two equally-weighted buttons to choose between. The
             download needs no enrolment and no round trip — the syllabus is
             already in the payload this dialog rendered from.
+
+            The label names the format, because it opens a print dialog with
+            "Save as PDF" rather than writing a file behind the student's back.
+            A button that says PDF and then asks where to save it is a small
+            surprise; a button that says exactly what will happen is not.
           -->
           <button
             type="button"
             class="course-detail-notes w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:border-indigo-500/50 hover:bg-slate-800 hover:text-white active:scale-[0.99]"
           >
-            Download notes
+            Download notes (PDF)
           </button>
           <button
             type="button"
@@ -884,12 +889,18 @@ export function createDashboard(
   }
 
   /**
-   * Hand the student the open course as a Markdown file.
+   * Hand the student the open course as a PDF.
    *
    * Synchronous and entirely local: the syllabus is already in `data`, so this
    * cannot fail on a network call and there is nothing to await. The dialog stays
    * open on purpose — a download is not a navigation, and closing it would throw
    * away the module list they were reading.
+   *
+   * "Download" opens the print dialog with Save-as-PDF preselected rather than
+   * silently writing a file. That is one extra click, and it is the right trade:
+   * the student gets to see the document before it is saved, and it works on
+   * every browser without shipping a PDF renderer that cannot draw Devanagari.
+   * The button says which it is, so nobody is surprised by a dialog.
    */
   function downloadOpenCourseNotes(): void {
     if (!openCourse) return;
@@ -898,7 +909,7 @@ export function createDashboard(
     );
     const language = getLanguage?.() ?? "en";
     try {
-      const markdown = buildCourseNotes(
+      const html = buildCourseNotesHtml(
         {
           title: openCourse.title,
           category: openCourse.category,
@@ -909,7 +920,7 @@ export function createDashboard(
         enrolled?.completedModules ?? [],
         language,
       );
-      downloadTextFile(`${slugify(openCourse.title)}-notes.md`, markdown);
+      printCourseNotesPdf(html);
     } catch (error) {
       // A failed download must not take the dialog down with it. This is a
       // convenience; the syllabus is still on screen and readable.
