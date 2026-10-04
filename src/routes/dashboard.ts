@@ -16,6 +16,7 @@ import { dueCards, dueLabel, rootCauseTopic } from "../services/progressService"
 import CURRICULUM, { RETIRED_COURSE_TITLES } from "../data/curriculum";
 import { awayLabel, returnState } from "../services/returnState";
 import { dueCheckpoints } from "../services/checkpoints";
+import { DAILY_GOAL_TURNS, streakFor } from "../services/streak";
 
 const router = Router();
 
@@ -260,7 +261,7 @@ router.get(
       // them. Empty for a short break or a brand-new student — `awayLabel`
       // returns "" in both cases rather than inventing a duration.
       const session = await Session.findOne({ studentId })
-        .select({ conversationHistory: 1 })
+        .select({ conversationHistory: 1, topicsVisited: 1 })
         .lean();
 
       // Checkpoint tests the student is owed, per course. Derived on read from
@@ -290,12 +291,34 @@ router.get(
         };
       });
 
+      // Study streak and today's goal.
+      //
+      // The one part of the learner model that measures habit rather than
+      // mastery, and derived on read for the same reason as everything else
+      // above: a stored streak is wrong the moment midnight passes. Nothing is
+      // written, so there is no background job to fail and no state that can
+      // drift from the conversation it claims to describe.
+      //
+      // Everything it needs is already loaded: the messages carry `at`, the
+      // graded tests carry `evaluatedAt`, and `topicsVisited` is the fallback
+      // for days whose messages have since rotated out of the capped history.
+      const streak = streakFor({
+        messages: session?.conversationHistory ?? [],
+        testHistory: progress.testHistory ?? [],
+        topicsVisited: session?.topicsVisited ?? [],
+      });
+
       response.json({
         progress,
         courses,
         dueReviews,
         focusRootCause,
         checkpoints,
+        // `goal` is sent rather than hard-coded in the client so the progress bar
+        // is drawn to the same scale the server counted against. Two constants
+        // that agree today and drift tomorrow is exactly the bug that makes a
+        // goal bar lie.
+        streak: { ...streak, goal: DAILY_GOAL_TURNS },
         awayLabel: awayLabel(returnState({ conversation: session?.conversationHistory }).awayMs),
       });
     } catch (error) {
