@@ -76,6 +76,42 @@ export interface DashboardData {
    * which was written for this and previously had no caller.
    */
   awayLabel: string;
+  /**
+   * Study streak and today's goal, derived server-side on read.
+   *
+   * Optional because a payload from a server that predates the streak has no
+   * such field, and the dashboard opens on a phone over a school network where
+   * an older cached bundle is entirely plausible. The card renders its "nothing
+   * to report yet" state rather than being absent, so a version mismatch costs
+   * one missing card and not a broken dashboard.
+   */
+  streak?: StreakInfo;
+}
+
+/**
+ * The habit side of the learner model.
+ *
+ * Every other number on this page is about mastery; these are about showing up.
+ * `message` is written server-side because the tone rules — never scolding a
+ * student who has fallen behind, never zeroing a streak at midnight — are the
+ * part worth testing, and testing them in the browser would be testing a copy.
+ */
+export interface StreakInfo {
+  /** Consecutive active days ending today or yesterday. */
+  current: number;
+  /** Longest run of consecutive active days ever recorded. */
+  longest: number;
+  /** Days since the student was last active. Null when there is no history. */
+  lastActiveDaysAgo: number | null;
+  studiedToday: boolean;
+  todayTurns: number;
+  /** Turns still wanted today; never negative. */
+  turnsToGoal: number;
+  goalMet: boolean;
+  /** The one line to show, already phrased. */
+  message: string;
+  /** Turns that make a day count. Sent so the bar can be drawn to scale. */
+  goal: number;
 }
 
 const LEVEL_STYLES: Record<CourseInfo["level"], string> = {
@@ -154,6 +190,14 @@ export function createDashboard(
             class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
           >…</button>
         </section>
+
+        <!--
+          Study streak and today's goal. Above the alerts, because it answers a
+          different question: not "what do I need to learn" but "am I showing up".
+          Every other card on this page is derived from mastery, and a student can
+          have a perfect mastery profile and still not be coming back.
+        -->
+        <div class="dash-streak"></div>
 
         <!--
           Alerts first, above the numbers. Everything below this panel is
@@ -353,6 +397,7 @@ export function createDashboard(
 
   const alertsEl = host.querySelector<HTMLElement>(".dash-alerts")!;
   const checkpointEl = host.querySelector<HTMLElement>(".dash-checkpoints")!;
+  const streakEl = host.querySelector<HTMLElement>(".dash-streak")!;
 
   /** Tone → colours. One place, so an alert can't look like a random badge. */
   const ALERT_TONES: Record<LearningAlert["tone"], string> = {
@@ -1171,6 +1216,75 @@ export function createDashboard(
     }
   }
 
+  /**
+   * The streak and daily-goal card.
+   *
+   * Drawn as a 7-cell row rather than a flame-and-a-number, because the useful
+   * fact is not "you have a 4-day streak" but "which of the last seven days did
+   * I actually turn up" — the row makes a broken run visible and recoverable at a
+   * glance, where a single number only makes it feel like a verdict.
+   *
+   * Renders nothing at all without a `streak` field, so a payload from a server
+   * predating the feature costs one absent card rather than an empty box.
+   */
+  function renderStreak(): void {
+    const streak = data?.streak;
+    if (!streak) {
+      streakEl.innerHTML = "";
+      return;
+    }
+
+    // The last seven local days, oldest first. Zeroes for days with no activity,
+    // which is the honest reading: "you didn't study" rather than a gap.
+    const cells = Array.from({ length: 7 }, (_, index) => {
+      const daysAgo = 6 - index;
+      const active = daysAgo < streak.current || daysAgo === 0 && streak.studiedToday;
+      return { daysAgo, active };
+    });
+
+    const goal = streak.goal > 0 ? streak.goal : 1;
+    // Clamped to 100: a student who did fifteen turns has met the goal several
+    // times over, and a bar that overflows its track looks like a bug.
+    const percent = Math.min(100, Math.round((streak.todayTurns / goal) * 100));
+
+    streakEl.innerHTML = `
+      <div class="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+        <div class="flex items-baseline justify-between gap-3">
+          <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Study streak</h2>
+          <p class="text-sm font-bold text-indigo-300">
+            ${
+              streak.current > 0
+                ? `${streak.current} day${streak.current === 1 ? "" : "s"}`
+                : "—"
+            }
+          </p>
+        </div>
+
+        <div class="mt-3 flex gap-1.5" role="img"
+             aria-label="${esc(streak.current > 0 ? `${streak.current}-day study streak` : "No active streak")}">
+          ${cells
+            .map(
+              (cell) =>
+                `<span class="h-2 flex-1 rounded-full ${cell.active ? "bg-indigo-400" : "bg-slate-800"}"></span>`,
+            )
+            .join("")}
+        </div>
+
+        <div class="mt-4">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Today's goal</span>
+            <span>${streak.todayTurns} / ${goal}</span>
+          </div>
+          <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+            <div class="h-full rounded-full ${streak.goalMet ? "bg-emerald-400" : "bg-indigo-400"}"
+                 style="width: ${percent}%"></div>
+          </div>
+        </div>
+
+        <p class="mt-3 text-sm text-slate-300">${esc(streak.message)}</p>
+      </div>`;
+  }
+
   /** The courses currently owed a checkpoint test, with their titles. */
   function renderCheckpoints(): void {
     if (!data) return;
@@ -1217,6 +1331,7 @@ export function createDashboard(
     if (!data) return;
 
     // Alerts lead: they are the conclusion, everything below is the evidence.
+    renderStreak();
     renderAlerts();
     renderCheckpoints();
 
