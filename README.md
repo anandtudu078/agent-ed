@@ -12,7 +12,7 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 615 checks, ~50s, no key or browser needed
+npm test                                # 675 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
@@ -92,7 +92,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
 | [✨ Features](#features) | course detail, notes, checkpoint tests |
-| [🧪 Tests](#tests) | 931 checks, 21 suites, and the quality gate |
+| [🧪 Tests](#tests) | 1,022 checks, 24 suites, and the quality gate |
 | [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
 | [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
 | [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
@@ -163,7 +163,7 @@ free tier pinned at zero does not add its retries to every reply.
 `bcryptjs` · Helmet · CORS allowlist · `express-rate-limit` · CSRF header
 
 **Testing** — no framework. Plain Node scripts, because the project has none and
-consistency beats ceremony. Playwright drives the four browser suites; the pure
+consistency beats ceremony. Playwright drives the five browser suites; the pure
 logic suites run under `ts-node` or Node 24's native type stripping.
 
 **Why no frontend framework?** The entire client is `main.ts` plus eight
@@ -184,7 +184,7 @@ src/                  Express API
 client/src/           Vite client — main.ts + 8 components/
 scripts/              server-side unit suites (no browser needed)
 client/scripts/       browser suites (Playwright)
-.github/workflows/    CI: types + unit tests, and the four browser suites
+.github/workflows/    CI: types + unit tests, and the five browser suites
 ```
 
 ---
@@ -340,19 +340,19 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## 🧪 Tests
 
-**931 checks across twenty-one suites**, all of which run in CI or from one command.
+**1,022 checks across twenty-four suites**, all of which run in CI or from one command.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 17 | 615 | nothing — no DB, no key, no browser |
-| Browser (Playwright) | 5 | 285 | the app running + MongoDB |
+| Pure logic (`npm test`) | 18 | 675 | nothing — no DB, no key, no browser |
+| Browser (Playwright) | 5 | 297 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **23** | **950** | |
+| **Total** | **24** | **1,022** | |
 
 Start here:
 
 ```bash
-npm test              # runs every suite that needs no browser (16 suites, ~50s)
+npm test              # runs every suite that needs no browser (18 suites, ~50s)
 ```
 
 Or individually:
@@ -369,6 +369,7 @@ Or individually:
 | `npm run test:checkpoints` | 46 | Course checkpoint intervals and coverage |
 | `npm run test:return` | 32 | Return detection and first run |
 | `npm run test:course` | 26 | Course progress derivation, including malformed stored topics |
+| `npm run test:streak` | 51 | Study streaks and the daily goal — boundaries, gaps, and tone |
 | `npm run test:offline` | 128 | The offline AI gate (incl. the tutor stand-in), the auth cookie policy, and the consent rules |
 | `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
