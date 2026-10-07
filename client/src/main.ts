@@ -1,8 +1,10 @@
 import { io, type Socket } from "socket.io-client";
-import { createMascot, type MascotMood, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
+import { createMascot, mountOwlPortrait, type MascotMood, type MascotStatus, type TutorMode, type TeachLanguage } from "./components/mascot";
 import { splitIntoBeats, type LessonBeat } from "./components/beats";
 import { sketchForBeat } from "./components/sketches";
 import { visualStepCount, type VisualSpec } from "./components/diagrams";
+import { renderMarkdown } from "./components/markdown";
+import { celebrate } from "./components/celebration";
 import {
   createDashboard,
   type CourseInfo,
@@ -252,6 +254,11 @@ const mascot = createMascot(mascotHostEl, (next) => {
   tutorMode = next;
 });
 
+// The sign-in screen shows the same character, small and still. Mounted once at
+// boot — it has no state, so there is nothing to keep in sync with the app view.
+const authOwlEl = document.querySelector<HTMLElement>("#auth-owl");
+if (authOwlEl) mountOwlPortrait(authOwlEl);
+
 // ---------------------------------------------------------------------------
 // Additional UI elements
 // ---------------------------------------------------------------------------
@@ -429,8 +436,27 @@ let speakingRevertTimer: ReturnType<typeof setTimeout> | null = null;
 let dashboard: ReturnType<typeof createDashboard> | null = null;
 let dashboardVisible = false;
 
+/**
+ * Replay an entrance animation on an element already in the document.
+ *
+ * Removing the class and forcing one reflow before re-adding it is what makes
+ * the animation start again — without the reflow the browser coalesces the two
+ * changes into no change at all, and the view simply appears. Skipped entirely
+ * under reduced motion, where the view simply appears either way.
+ */
+function playEntrance(el: HTMLElement): void {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  el.classList.remove("animate-fadeup");
+  void el.offsetWidth;
+  el.classList.add("animate-fadeup");
+}
+
 function setDashboardVisible(visible: boolean): void {
   dashboardVisible = visible;
+  // Both directions animate: switching to the dashboard and coming back to the
+  // lesson are both changes of context, and a hard cut between them reads as a
+  // different page having loaded rather than the same app turning around.
+  playEntrance(visible ? dashboardViewEl : chatWrapperEl);
   dashboardViewEl.classList.toggle("hidden", !visible);
   owlStageEl.classList.toggle("hidden", visible);
   chatContainerEl.classList.toggle("hidden", visible);
@@ -518,6 +544,10 @@ function setDashboardVisible(visible: boolean): void {
         // about to get — and re-assert its own mood on every beat, so the
         // reaction could never settle.
         stopOwlSpeech();
+        // A real win gets a moment on the whole screen, not only on the owl.
+        // 80 is the same line `scoreTone` calls a pass, so the confetti and the
+        // badge can never disagree about what just happened.
+        if (score >= 80) celebrate();
         if (mascot.react(outcome)) {
           setAiStatus("speaking");
           speakOwlMessage(mascot.message() ?? "");
@@ -1344,13 +1374,16 @@ authFormEl.addEventListener("submit", async (event) => {
 // ---------------------------------------------------------------------------
 
 function setConnectionStatus(state: "connected" | "disconnected" | "error") {
+  // The dot carries a glow as well as a colour: a 6px dot is easy to miss, and
+  // connection state is the one header fact worth noticing without looking for
+  // it. Each glow is the dot's own colour, so the two can never disagree.
   statusDotEl.className =
     "h-1.5 w-1.5 rounded-full " +
     (state === "connected"
-      ? "bg-emerald-400"
+      ? "bg-emerald-400 shadow-[0_0_7px_#34d399]"
       : state === "error"
-        ? "bg-rose-500"
-        : "bg-amber-400");
+        ? "bg-rose-500 shadow-[0_0_7px_#f43f5e]"
+        : "bg-amber-400 shadow-[0_0_7px_#fbbf24]");
   statusTextEl.textContent =
     state === "connected" ? "Online" : state === "error" ? "Offline" : "Reconnecting…";
 }
@@ -1391,6 +1424,23 @@ function appendMessage(
     const meta = document.createElement("div");
     meta.className = `mb-1 flex items-center gap-2 ${isStudent ? "justify-end" : "justify-start"}`;
 
+    // A small, always-available copy control rather than a hover-only one: half
+    // the people using a tutor are on a touchscreen, where hover does not exist
+    // and a control that only appears on mouse-over is a control nobody finds.
+    // It sits in the meta row — not after the body — because the workflow and
+    // journey suites read the tutor's words from `p:last-child`, and a sibling
+    // after the body would quietly stop it matching.
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    // No auto margin: the meta row is already `justify-start`/`justify-end`,
+    // and `ml-auto` here would swallow the free space *before* the button and
+    // drag the author and timestamp to the opposite edge.
+    copyButton.className =
+      "msg-copy shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-500 opacity-60 transition hover:bg-slate-700/60 hover:text-slate-300 hover:opacity-100 focus-visible:opacity-100";
+    copyButton.textContent = "Copy";
+    copyButton.setAttribute("aria-label", isStudent ? "Copy your message" : "Copy the tutor's reply");
+    copyButton.addEventListener("click", () => void copyMessageText(copyButton, text));
+
     const author = document.createElement("p");
     author.className = `text-[11px] font-semibold uppercase tracking-wide ${isStudent ? "text-indigo-200" : "text-violet-300"}`;
     author.textContent = isStudent ? "You" : "AgentEd";
@@ -1400,11 +1450,18 @@ function appendMessage(
     time.className = `text-[10px] tabular-nums ${isStudent ? "text-indigo-200/70" : "text-slate-500"}`;
     time.textContent = formatTime(new Date());
 
-    meta.append(author, time);
+    meta.append(author, time, copyButton);
     bubble.appendChild(meta);
 
     const body = document.createElement("p");
-    body.textContent = text;
+    // The tutor's words are model output, so they go through the same rule as
+    // everything else the model is allowed to draw: escaped first, tags from a
+    // fixed allowlist, nothing else able to reach the DOM. The student's own
+    // words and the system notices stay literal — nobody needs their typing
+    // interpreted back at them, and a plain `textContent` is the strongest
+    // guarantee there is.
+    if (role === "tutor") body.innerHTML = renderMarkdown(text);
+    else body.textContent = text;
     bubble.appendChild(body);
 
     wrapper.appendChild(bubble);
@@ -1417,6 +1474,28 @@ function appendMessage(
   scrollToBottom();
   // Re-check after layout settles so the jump-to-latest button is accurate.
   requestAnimationFrame(updateScrollButton);
+}
+
+/**
+ * Copy a message's plain text and say so on the button.
+ *
+ * The *plain* text, never the rendered HTML: a student pasting a tutor reply
+ * into their notes wants the words, not `<span class="block">`. Clipboard
+ * access can be refused (insecure context, permissions policy), so a failure
+ * reports itself in the same place a success would rather than throwing into
+ * an unhandled rejection the console swallows.
+ */
+async function copyMessageText(button: HTMLButtonElement, text: string): Promise<void> {
+  let label = "Copied";
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    label = "Couldn't copy";
+  }
+  button.textContent = label;
+  window.setTimeout(() => {
+    button.textContent = "Copy";
+  }, 1600);
 }
 
 let requestInFlight = false;

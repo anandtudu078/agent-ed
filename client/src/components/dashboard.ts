@@ -6,6 +6,7 @@
 import { buildCourseNotesHtml, printCourseNotesPdf } from "./notes";
 import { matchSubtopic, subtopicPrompt } from "./subtopics";
 import { buildAlerts, type LearningAlert } from "./alerts";
+import { celebrate } from "./celebration";
 
 export interface CourseInfo {
   _id: string;
@@ -132,6 +133,83 @@ function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** True when the student has asked the system not to animate anything. */
+function reducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
+/**
+ * Shimmer bars for the moment before the payload lands.
+ *
+ * Spans with `display:block` rather than divs, because three of these cards are
+ * `<p>` elements and a `<p>` may only hold phrasing content — the browser
+ * hoists an out-of-place div out of the paragraph and quietly restructures the
+ * card. Same constraint, and the same solution, as the markdown renderer.
+ *
+ * The widths taper so the placeholder reads as the shape of the text that is
+ * coming rather than as three identical grey bricks.
+ */
+function skeletonLines(widths: number[]): string {
+  return widths
+    .map(
+      (width) =>
+        `<span class="mb-2 block h-3 animate-pulse rounded-full bg-slate-800" style="width:${width}%"></span>`,
+    )
+    .join("");
+}
+
+/**
+ * Fill every bar marked with `data-bar-width` on the next frame.
+ *
+ * The bar is authored at zero and only given its real width once it is in the
+ * document, because a transition needs somewhere to start from: a width set in
+ * the same tick as the insertion has no previous value to animate away from,
+ * and the bar simply appears full. Under reduced motion the width is still set
+ * — the information is the point, only the interpolation is skipped.
+ */
+function fillBars(root: HTMLElement): void {
+  const bars = root.querySelectorAll<HTMLElement>("[data-bar-width]");
+  if (!bars.length) return;
+  const apply = (): void => {
+    for (const bar of bars) {
+      bar.style.width = `${bar.dataset.barWidth ?? "0"}%`;
+      bar.removeAttribute("data-bar-width");
+    }
+  };
+  if (reducedMotion()) apply();
+  else requestAnimationFrame(() => requestAnimationFrame(apply));
+}
+
+/**
+ * Count a score up to its final value instead of snapping to it.
+ *
+ * Only the number moves: the label around it is written by the caller, so a
+ * student who glances away still reads the right value the instant it renders.
+ * Runs once per element per value — a background refresh that lands the same
+ * score re-renders it silently rather than re-running the animation under the
+ * student's eyes.
+ */
+function countTo(el: HTMLElement, value: number, suffix: string): void {
+  const previous = Number(el.dataset.counted ?? "0");
+  el.dataset.counted = String(value);
+  if (reducedMotion() || previous === value) {
+    el.textContent = `${value}${suffix}`;
+    return;
+  }
+  const start = performance.now();
+  const duration = 700;
+  const step = (now: number): void => {
+    const progress = Math.min(1, (now - start) / duration);
+    // ease-out cubic: fast start, gentle landing — a number that drifts into
+    // place reads as a measurement, one that snaps reads as a label.
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = Math.round(previous + (value - previous) * eased);
+    el.textContent = `${current}${suffix}`;
+    if (progress < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 export function createDashboard(
   host: HTMLElement,
   studentId: string,
@@ -169,6 +247,13 @@ export function createDashboard(
   let loading = false;
   let refreshQueued = false;
   let destroyed = false;
+  /**
+   * What the daily goal looked like on the last render, so a burst can fire on
+   * the *transition* into "met" and never on a refresh that simply restates it.
+   * `null` means nothing has been seen yet: the first payload is a fact about
+   * the past, not something the student just did.
+   */
+  let goalMetBefore: boolean | null = null;
   host.innerHTML = `
     <div class="h-full overflow-y-auto px-4 py-6 scroll-smooth">
       <div class="mx-auto w-full max-w-3xl space-y-4">
@@ -177,14 +262,18 @@ export function createDashboard(
           <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">
             Your <span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">learning</span>
           </h1>
-          <p class="dash-pace-line mt-1 text-sm text-slate-400">Loading…</p>
+          <p class="dash-pace-line mt-1 text-sm text-slate-400">${skeletonLines([70, 45])}</p>
         </div>
 
         <!-- THE one thing to do next. Everything else is secondary. -->
         <section class="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/60 to-violet-950/40 p-5">
           <p class="text-[10px] font-semibold uppercase tracking-widest text-indigo-300/80">What to do next</p>
-          <h2 class="dash-next-headline mt-1.5 text-lg font-bold leading-snug text-slate-50">…</h2>
-          <p class="dash-next-detail mt-1.5 text-sm leading-relaxed text-slate-300"></p>
+          <h2 class="dash-next-headline mt-1.5 text-lg font-bold leading-snug text-slate-50">${skeletonLines(
+            [85, 60],
+          )}</h2>
+          <p class="dash-next-detail mt-1.5 text-sm leading-relaxed text-slate-300">${skeletonLines(
+            [95, 75],
+          )}</p>
           <button
             type="button"
             class="dash-start-test mt-4 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/40 transition hover:from-indigo-500 hover:to-violet-500 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
@@ -236,19 +325,19 @@ export function createDashboard(
              back is a diagnosis, not a habit. -->
         <div class="dash-reviews rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Review today</h2>
-          <p class="dash-reviews-body mt-3 text-sm text-slate-400">Loading…</p>
+          <p class="dash-reviews-body mt-3 text-sm text-slate-400">${skeletonLines([90, 55])}</p>
         </div>
 
         <!-- Focus areas: only the few that matter, in plain words -->
         <div class="dash-weakpoints rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Focus areas</h2>
-          <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">Loading…</p>
+          <p class="dash-weakpoints-body mt-3 text-sm text-slate-400">${skeletonLines([80, 40])}</p>
         </div>
 
         <!-- Latest result, condensed to what the student can act on -->
         <div class="dash-feedback rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <h2 class="text-sm font-semibold uppercase tracking-widest text-slate-400">Your last check</h2>
-          <p class="dash-feedback-body mt-3 text-sm text-slate-400">Loading…</p>
+          <p class="dash-feedback-body mt-3 text-sm text-slate-400">${skeletonLines([85, 65])}</p>
         </div>
 
         <!-- AI evaluation panel (opened by the quick action above) -->
@@ -321,7 +410,16 @@ export function createDashboard(
               />
             </label>
           </div>
-          <div class="dash-courses mt-4 grid gap-3 sm:grid-cols-2"></div>
+          <div class="dash-courses mt-4 grid gap-3 sm:grid-cols-2">${Array.from(
+            { length: 4 },
+            () =>
+              `<div class="animate-pulse rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                <div class="h-3.5 w-2/3 rounded-full bg-slate-800"></div>
+                <div class="mt-3 h-2.5 w-full rounded-full bg-slate-800/70"></div>
+                <div class="mt-2 h-2.5 w-4/5 rounded-full bg-slate-800/70"></div>
+                <div class="mt-4 h-8 w-full rounded-lg bg-slate-800/60"></div>
+              </div>`,
+          ).join("")}</div>
         </div>
 
         <p class="dash-status min-h-[1.25rem] text-sm text-rose-400"></p>
@@ -452,8 +550,8 @@ export function createDashboard(
 
     alertsEl.innerHTML = alerts
       .map(
-        (alert) => `
-        <div class="animate-fadeup flex items-start gap-3 rounded-2xl border p-4 ${ALERT_TONES[alert.tone]}" data-alert-id="${esc(alert.id)}">
+        (alert, index) => `
+        <div class="animate-fadeup flex items-start gap-3 rounded-2xl border p-4 ${ALERT_TONES[alert.tone]}" data-alert-id="${esc(alert.id)}" style="animation-delay:${index * 70}ms">
           <span class="mt-0.5 shrink-0 text-base ${ALERT_ACCENTS[alert.tone]}" aria-hidden="true">${ALERT_ICONS[alert.tone]}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-semibold ${ALERT_ACCENTS[alert.tone]}">${esc(alert.title)}</p>
@@ -554,6 +652,23 @@ export function createDashboard(
   const testCloseBtn = host.querySelector<HTMLButtonElement>(".dash-test-close")!;
   const testResultEl = host.querySelector<HTMLElement>(".dash-test-result")!;
 
+  /**
+   * Drop the loading placeholders when the first fetch failed.
+   *
+   * Left alone, the shimmer would pulse forever and read as "still working" —
+   * the one state an error must never look like. The status line below carries
+   * the real reason, so the placeholders get out of its way.
+   */
+  function clearSkeletons(): void {
+    paceLineEl.textContent = "";
+    nextHeadlineEl.textContent = "";
+    nextDetailEl.textContent = "";
+    reviewsEl.textContent = "";
+    weakEl.textContent = "";
+    feedbackEl.textContent = "";
+    coursesEl.innerHTML = "";
+  }
+
   /** Token for the in-flight question; blank when no attempt is open. */
   let attemptToken = "";
   let testTopic = "";
@@ -613,7 +728,7 @@ export function createDashboard(
           }
         </div>
         <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-          <div class="h-full rounded-full ${tone.bar}" style="width:${score}%"></div>
+          <div class="h-full rounded-full transition-[width] duration-700 ${tone.bar}" style="width:0" data-bar-width="${score}"></div>
         </div>
         <p class="mt-3 text-sm leading-relaxed text-slate-300">${esc(evaluation.feedback)}</p>
         ${
@@ -629,6 +744,7 @@ export function createDashboard(
         }
       </div>`;
     testResultEl.classList.remove("hidden");
+    fillBars(testResultEl);
   }
 
 
@@ -1098,7 +1214,7 @@ export function createDashboard(
     }
 
     coursesEl.innerHTML = list
-      .map((course) => {
+      .map((course, index) => {
         const enrollment = data?.progress.enrolledCourses.find(
           (c) => c.courseId === course._id,
         );
@@ -1109,7 +1225,7 @@ export function createDashboard(
         const nextModule = modules.find((module) => !done.has(module.title));
 
         return `
-        <div class="dash-course flex flex-col gap-2 rounded-xl border ${enrollment ? "border-indigo-500/40" : "border-slate-800"} bg-slate-950/60 p-4 transition hover:border-indigo-500/40">
+        <div class="dash-course animate-fadeup flex flex-col gap-2 rounded-xl border ${enrollment ? "border-indigo-500/40" : "border-slate-800"} bg-slate-950/60 p-4 transition duration-200 hover:-translate-y-0.5 hover:border-indigo-500/40 hover:shadow-lg hover:shadow-black/40" style="animation-delay:${Math.min(index, 6) * 55}ms">
           <div class="flex items-start justify-between gap-2">
             <h3 class="text-sm font-semibold text-slate-100">${esc(course.title)}</h3>
             <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${LEVEL_STYLES[course.level]}">${esc(course.level)}</span>
@@ -1119,7 +1235,7 @@ export function createDashboard(
             enrollment
               ? `<div class="mt-1">
                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                     <div class="h-full rounded-full bg-indigo-500 transition-[width] duration-500" style="width:${percent}%"></div>
+                     <div class="h-full rounded-full bg-indigo-500 transition-[width] duration-700" style="width:0" data-bar-width="${percent}"></div>
                    </div>
                    <p class="mt-1 text-[11px] text-slate-400">${done.size} of ${modules.length} done${
                      nextModule ? ` · next: ${esc(nextModule.title)}` : " · finished"
@@ -1175,6 +1291,9 @@ export function createDashboard(
         </div>`;
       })
       .join("");
+    // Bars are authored at zero and take their real width only once they are in
+    // the document, so the fill has somewhere to animate from.
+    fillBars(coursesEl);
   }
 
   /**
@@ -1247,10 +1366,17 @@ export function createDashboard(
 
     // The last seven local days, oldest first. Zeroes for days with no activity,
     // which is the honest reading: "you didn't study" rather than a gap.
+    // The weekday letter is the difference between "four days" and "which four" —
+    // the row only earns its place over a flame-and-a-number if a broken run is
+    // visible *and* locatable.
+    const today = new Date();
     const cells = Array.from({ length: 7 }, (_, index) => {
       const daysAgo = 6 - index;
-      const active = daysAgo < streak.current || daysAgo === 0 && streak.studiedToday;
-      return { daysAgo, active };
+      const active = daysAgo < streak.current || (daysAgo === 0 && streak.studiedToday);
+      const date = new Date(today);
+      date.setDate(today.getDate() - daysAgo);
+      const letter = date.toLocaleDateString(undefined, { weekday: "narrow" });
+      return { daysAgo, active, letter };
     });
 
     const goal = streak.goal > 0 ? streak.goal : 1;
@@ -1275,8 +1401,19 @@ export function createDashboard(
              aria-label="${esc(streak.current > 0 ? `${streak.current}-day study streak` : "No active streak")}">
           ${cells
             .map(
-              (cell) =>
-                `<span class="h-2 flex-1 rounded-full ${cell.active ? "bg-indigo-400" : "bg-slate-800"}"></span>`,
+              (cell) => `
+            <span class="flex flex-1 flex-col items-center gap-1">
+              <span class="h-2 w-full rounded-full ${
+                cell.active
+                  ? cell.daysAgo === 0
+                    ? "bg-emerald-400 shadow-[0_0_6px_#34d399]"
+                    : "bg-indigo-400"
+                  : "bg-slate-800"
+              }"></span>
+              <span class="text-[9px] font-medium ${
+                cell.daysAgo === 0 ? "text-slate-300" : "text-slate-600"
+              }">${cell.letter}</span>
+            </span>`,
             )
             .join("")}
         </div>
@@ -1287,13 +1424,20 @@ export function createDashboard(
             <span>${streak.todayTurns} / ${goal}</span>
           </div>
           <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-            <div class="h-full rounded-full ${streak.goalMet ? "bg-emerald-400" : "bg-indigo-400"}"
-                 style="width: ${percent}%"></div>
+            <div class="h-full rounded-full transition-[width] duration-700 ${
+              streak.goalMet ? "bg-emerald-400" : "bg-indigo-400"
+            }" style="width:0" data-bar-width="${percent}"></div>
           </div>
         </div>
 
         <p class="mt-3 text-sm text-slate-300">${esc(streak.message)}</p>
       </div>`;
+    fillBars(streakEl);
+
+    // The goal flipping from unmet to met is a win the student caused today,
+    // so it gets the screen moment. Only the transition — see goalMetBefore.
+    if (goalMetBefore === false && streak.goalMet) celebrate(16);
+    goalMetBefore = streak.goalMet;
   }
 
   /** The courses currently owed a checkpoint test, with their titles. */
@@ -1367,7 +1511,11 @@ export function createDashboard(
         ? "None right now"
         : String(data.progress.weakPoints.length);
     const lastScore = data.progress.testHistory.at(-1);
-    lastScoreEl.textContent = lastScore ? `${lastScore.score}%` : "Not yet";
+    if (lastScore) countTo(lastScoreEl, lastScore.score, "%");
+    else {
+      delete lastScoreEl.dataset.counted;
+      lastScoreEl.textContent = "Not yet";
+    }
 
     // --- The one thing to do next ---
     const next = computeNextStep();
@@ -1479,6 +1627,10 @@ export function createDashboard(
     } catch (error) {
       statusEl.textContent =
         error instanceof Error ? error.message : "Unable to load dashboard.";
+      // A first load that failed must not leave shimmer pulsing on the screen
+      // forever — that reads as "still thinking" and never resolves. The error
+      // line is the honest state, so the placeholders get out of its way.
+      if (!data) clearSkeletons();
     } finally {
       loading = false;
       if (refreshQueued) {
