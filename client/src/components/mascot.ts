@@ -929,3 +929,30 @@ export function createMascot(
     setAwaitingReply,
   };
 }
+
+/**
+ * A small, still portrait of the owl for screens that are not the classroom.
+ *
+ * The sign-in screen used to be a graduation-cap emoji in a gradient tile — the
+ * product's entire personality arriving as a 4×4 glyph above a password field.
+ * This draws the same character the lesson uses, at a size that fits above a
+ * form: the same `owlSvg`, so the face a student meets first is the face that
+ * will later react to their answers, and the same randomised blink phase, so a
+ * row of open tabs does not blink in unison.
+ *
+ * Deliberately NOT the full classroom display: no board, no status pill, no
+ * bubble. Those belong to a lesson, and putting them on a login form would
+ * promise a classroom to someone who has not signed in yet.
+ */
+export function mountOwlPortrait(host: HTMLElement, mood: MascotMood = "curious"): void {
+  host.innerHTML = owlSvg("idle", mood);
+  const blinkEl = host.querySelector<SVGElement>(".owl-blink");
+  if (blinkEl) {
+    // The blink keyframes live in the page's Tailwind config (they drive the
+    // classroom display too), so the utility class is all that is needed here —
+    // and a negative delay lands the first blink partway into its own cycle,
+    // which is what stops it reading as a metronome.
+    blinkEl.classList.add("animate-owlblink");
+    blinkEl.style.animationDelay = `${(-Math.random() * 5.4).toFixed(2)}s`;
+  }
+}

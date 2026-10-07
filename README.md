@@ -12,7 +12,7 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 675 checks, ~50s, no key or browser needed
+npm test                                # 716 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
@@ -92,7 +92,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
 | [✨ Features](#features) | course detail, notes, checkpoint tests |
-| [🧪 Tests](#tests) | 1,022 checks, 24 suites, and the quality gate |
+| [🧪 Tests](#tests) | 1,063 checks, 25 suites, and the quality gate |
 | [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
 | [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
 | [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
@@ -166,7 +166,7 @@ free tier pinned at zero does not add its retries to every reply.
 consistency beats ceremony. Playwright drives the five browser suites; the pure
 logic suites run under `ts-node` or Node 24's native type stripping.
 
-**Why no frontend framework?** The entire client is `main.ts` plus eight
+**Why no frontend framework?** The entire client is `main.ts` plus ten
 components. One cohesive event loop drives the owl, speech and the socket
 together, and rendering is hand-written on purpose — `renderVisual` is the
 security boundary between model output and the DOM, so it is deliberate code
@@ -181,7 +181,7 @@ src/                  Express API
   models/             Mongoose schemas
   middleware/         auth, consent, rate limiting, AI spend
   data/               the authored AI/ML curriculum
-client/src/           Vite client — main.ts + 8 components/
+client/src/           Vite client — main.ts + 10 components/
 scripts/              server-side unit suites (no browser needed)
 client/scripts/       browser suites (Playwright)
 .github/workflows/    CI: types + unit tests, and the five browser suites
@@ -340,19 +340,19 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ## 🧪 Tests
 
-**1,022 checks across twenty-four suites**, all of which run in CI or from one command.
+**1,063 checks across twenty-five suites**, all of which run in CI or from one command.
 
 | | Suites | Checks | Needs |
 |---|---|---|---|
-| Pure logic (`npm test`) | 18 | 675 | nothing — no DB, no key, no browser |
+| Pure logic (`npm test`) | 19 | 716 | nothing — no DB, no key, no browser |
 | Browser (Playwright) | 5 | 297 | the app running + MongoDB |
 | Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **24** | **1,022** | |
+| **Total** | **25** | **1,063** | |
 
 Start here:
 
 ```bash
-npm test              # runs every suite that needs no browser (18 suites, ~50s)
+npm test              # runs every suite that needs no browser (19 suites, ~50s)
 ```
 
 Or individually:
@@ -375,6 +375,7 @@ Or individually:
 | `npm run test:beats` | 24 | Lesson-beat segmentation |
 | `npm run test:notes` | 36 | Downloadable course notes (printable PDF) |
 | `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
+| `npm run test:markdown` | 41 | The tutor's markdown renderer — escape-first, tag allowlist, hostile input |
 | `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
 | `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
 | `npm run test:render` | 29 | Diagram renderers (from `client/`) |
@@ -681,6 +682,8 @@ client/src/
   components/notes.ts          course notes as a printable PDF
   components/beats.ts          splits a reply into playable lesson beats
   components/sketches.ts       16 hand-drawn SVGs matched to a beat
+  components/markdown.ts       tutor prose - escape first, allowlisted tags
+  components/celebration.ts    the one celebration moment, motion-guarded
 
 scripts/                       server-side suites (no browser needed)
 client/scripts/                browser suites (Playwright)
@@ -875,6 +878,11 @@ most likely things to need changing.
   field and returns `null` on any problem; the renderers escape all text and
   emit only hand-written SVG. Raw SVG from a model is never rendered — that
   would be an XSS hole.
+- The tutor's prose follows the same rule. Its markdown is rendered by
+  `client/src/components/markdown.ts`, which escapes every line before it adds
+  anything and only ever emits `strong`/`em`/`code`/`span`/`br` — no attribute
+  is derived from model text and no `href` exists to abuse. `test:markdown`
+  attacks it directly.
 - Rate limits are keyed on the signed-in **user**, not IP, because a school
   puts a whole classroom behind one address.
 - Refresh tokens rotate on use and are stored only as a SHA-256 hash. Replaying

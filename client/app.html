@@ -116,11 +116,16 @@
     >
       <div class="w-full max-w-sm">
         <div class="mb-7 text-center">
+          <!--
+            The owl, not an emoji. Same SVG the lesson draws, mounted once at
+            boot (mountOwlPortrait) — the face a student meets before they have
+            an account is the face that later reacts to their answers.
+          -->
           <div
-            class="animate-floaty mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-3xl shadow-xl shadow-indigo-900/50"
-          >
-            🎓
-          </div>
+            id="auth-owl"
+            aria-hidden="true"
+            class="animate-floaty mx-auto mb-4 h-24 w-24 sm:h-28 sm:w-28"
+          ></div>
           <h1 class="text-3xl font-bold tracking-tight">
             Agent<span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">Ed</span>
           </h1>
@@ -533,7 +538,7 @@
               Socratic AI Mentor
             </span>
           </h1>
-          <p class="truncate text-xs text-slate-400">
+          <p class="hidden truncate text-xs text-slate-400 sm:block">
             Guided learning through questions, not answers
           </p>
         </div>
@@ -542,7 +547,10 @@
             id="connection-status"
             class="flex items-center gap-1.5 rounded-full bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400"
           >
-            <span id="status-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+            <span
+              id="status-dot"
+              class="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_7px_#fbbf24]"
+            ></span>
             <span id="status-text">Connecting…</span>
           </span>
           <div class="flex items-center gap-1.5">
@@ -581,9 +589,11 @@
               id="sign-out-button"
               type="button"
               title="Sign out"
+              aria-label="Sign out"
               class="whitespace-nowrap rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-400 transition hover:border-rose-500/50 hover:text-rose-400"
             >
-              Sign out
+              <span aria-hidden="true">⏻</span>
+              <span class="hidden sm:inline">Sign out</span>
             </button>
           </div>
         </div>
