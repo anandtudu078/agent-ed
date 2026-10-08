@@ -19,7 +19,7 @@
 // ban non-ASCII: Hindi, the owl's Devanagari, and the emoji in the README are all
 // supposed to be there.
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,19 +45,6 @@ const MOJIBAKE: Array<[RegExp, string]> = [
   [/\u00c3\u00a9|\u00c3\u00a8/u, "accented latin letter"],
 ];
 
-const SKIP = new Set(["node_modules", "dist", ".git", "docs"]);
-
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue;
-    const full = join(dir, entry);
-    const stat = statSync(full);
-    if (stat.isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx|mjs|js|css|html|json|md)$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
 // Read the tracked file list rather than crawling the tree: it keeps generated
 // output and editor scratch files out by construction.
 // This file is excluded from the scan. It has to name the mojibake sequences
@@ -70,7 +57,6 @@ const tracked = execSync("git ls-files", { cwd: ROOT, encoding: "utf8" })
   .filter((f) => f && /\.(ts|tsx|mjs|js|css|html|json|md)$/.test(f))
   .filter((f) => !f.replace(/\\/g, "/").endsWith(SELF.split("/").slice(-2).join("/")));
 
-const scanned = walk(ROOT).length;
 check("git can list the tracked files", tracked.length > 0, `${tracked.length} text files`);
 
 let offenders = 0;

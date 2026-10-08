@@ -16,6 +16,6 @@ dist
 .sec.err
 .srv.out
 .srv.err
-PR_DESCRIPTION.md
+PR_DESCRIPTION*.md
 *.err
 *.out

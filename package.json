@@ -44,7 +44,8 @@
     "test:login": "node client/scripts/login-check.mjs",
     "test:journey": "node client/scripts/journey-test.mjs",
     "screenshots": "node client/scripts/capture-screenshots.mjs",
-    "test:browsers": "npm run test:login && npm run test:security && npm run test:ui && npm run test:workflow && npm run test:playback"
+    "test:browsers": "npm run test:login && npm run test:security && npm run test:ui && npm run test:workflow && npm run test:playback",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -61,14 +62,18 @@
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.3",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.1"
   },
   "engines": {
     "node": ">=24"

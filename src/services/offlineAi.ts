@@ -107,7 +107,6 @@ export function offlineQuestion(
 export function offlineGrade(
   topic: string,
   answer: string,
-  language: TeachLanguage = "en",
 ): AssessmentGrade {
   const answered = answer.trim().length > 0;
   const englishFeedback =

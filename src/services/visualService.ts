@@ -147,8 +147,6 @@ const VISUAL_SYSTEM_PROMPT =
   "Labels must be 1-4 words, concrete, and immediately meaningful on their own " +
   "with no surrounding prose. If no diagram genuinely helps, return {\"type\": null}.";
 
-const VISUAL_MODEL = "openai/gpt-oss-20b";
-
 /** Diagram labels follow the teaching language, including the code-switch rule. */
 const VISUAL_LANGUAGE_CLAUSE: Record<string, string> = {
   en: "",

@@ -245,7 +245,7 @@ try {
     .waitFor({ timeout: AI_TIMEOUT });
   const question = ((await page.locator(".dash-test-question").textContent()) ?? "").trim();
   check("a real diagnostic question is generated", question.length > 20, question.slice(0, 90));
-  check("it is open-ended, not multiple choice", !/[ABCD][\).]/.test(question), question.slice(0, 60));
+  check("it is open-ended, not multiple choice", !/[ABCD][).]/.test(question), question.slice(0, 60));
 
   await page
     .locator(".dash-test-answer")
@@ -261,10 +261,6 @@ try {
   check("feedback is written for the student", feedback.length > 20, feedback.slice(0, 90));
   const focus = ((await page.locator(".dash-test-result").textContent()) ?? "");
   check("a next focus is recommended", /focus next/i.test(focus), focus.replace(/\s+/g, " ").slice(0, 70));
-
-
-    "it asks the student something back",
-    /\?/.test(firstReply),
 
   // ------------------------------------------------------- 8. the memory loop
   step("8. The dashboard remembers what happened");
