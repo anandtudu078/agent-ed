@@ -232,7 +232,7 @@ async function main(): Promise<void> {
   
   for (const c of CASES) {
     console.log(`\n--- ${c.name}`);
-    let reply = "";
+    let reply: string;
     try {
       reply = await generateTutorResponse(
         analysisStub,

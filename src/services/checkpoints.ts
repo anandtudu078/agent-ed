@@ -113,7 +113,7 @@ export function checkpointStatus(
   const intervalable = (modules?.length ?? 0) >= MIN_MODULES_FOR_INTERVALS;
 
   let due = false;
-  let modulesUntilNext = 0;
+  let modulesUntilNext: number;
 
   if (untested.length) {
     if (!intervalable) {

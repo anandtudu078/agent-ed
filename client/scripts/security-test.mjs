@@ -41,9 +41,6 @@ const mint = (username, useSecret = secret) =>
     algorithm: "HS256",
   });
 
-const evilToken = mint("secvictimbob");
-const goodToken = secret ? mint("seccheckalice") : "";
-
 /**
  * Every mutating request from this suite must carry the CSRF header.
  *

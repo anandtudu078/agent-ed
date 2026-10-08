@@ -42,7 +42,6 @@ import {
 } from "./middleware/rateLimit";
 import { aiSpendLimit, consumeDailyAiCall, pruneOldUsage } from "./middleware/aiSpendLimit";
 import { Progress } from "./models/Progress";
-import { User } from "./models/User";
 import { assertConsent, requireConsent } from "./middleware/consent";
 import { CONSENT_REQUIRED_MESSAGE } from "./services/consent";
 import {

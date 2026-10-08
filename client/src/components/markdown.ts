@@ -63,6 +63,7 @@ function esc(value: string): string {
 function inline(raw: string): string {
   const codeSpans: string[] = [];
   const tokenised = raw
+    // eslint-disable-next-line no-control-regex -- NUL is this renderer's own placeholder delimiter; stripping it from input is the anti-forgery mechanism described above.
     .replace(/\u0000/g, "")
     .replace(/`([^`\n]+)`/g, (_match, code: string) => {
       codeSpans.push(code);
@@ -74,6 +75,7 @@ function inline(raw: string): string {
   text = text.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   text = text.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
   text = text.replace(
+    // eslint-disable-next-line no-control-regex -- restoring the NUL-delimited code-span placeholders lifted out above.
     /\u0000(\d+)\u0000/g,
     (_match, index: string) =>
       `<code class="rounded bg-slate-950/70 px-1 py-0.5 font-mono text-[0.85em] text-emerald-200">${esc(

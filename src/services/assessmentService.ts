@@ -145,7 +145,7 @@ export async function gradeAssessmentAnswer(
   // Session writes, so an offline answer has to travel the same path as a real
   // one or the whole progress pipeline goes untested.
   if (offlineAiEnabled()) {
-    return offlineGrade(topic, answer, language);
+    return offlineGrade(topic, answer);
   }
 
   const focus = misconceptions.length
