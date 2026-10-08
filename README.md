@@ -166,6 +166,11 @@ free tier pinned at zero does not add its retries to every reply.
 consistency beats ceremony. Playwright drives the five browser suites; the pure
 logic suites run under `ts-node` or Node 24's native type stripping.
 
+**Linting** — ESLint with a flat config (`eslint.config.mjs`), one config for the
+whole repository. Deliberately not type-aware: `tsc --strict` already proves the
+types, so the linter covers what it cannot — dead variables, orphaned
+expressions, and the `no-undef` holes that only bite plain-JS test scripts.
+
 **Why no frontend framework?** The entire client is `main.ts` plus ten
 components. One cohesive event loop drives the owl, speech and the socket
 together, and rendering is hand-written on purpose — `renderVisual` is the
@@ -414,11 +419,12 @@ npm run test:playback
 `test:security` is listed first on purpose. It can optionally exhaust the auth
 rate limiter, which would then block the registration the UI suite depends on.
 
-Type-check both projects:
+Type-check and lint both projects:
 
 ```bash
 npx tsc --noEmit              # server
 npx tsc --noEmit --project client/tsconfig.json
+npm run lint                  # ESLint: one flat config for server, suites, and client
 ```
 
 > The `parse` and `render` suites are the security boundary for everything the
@@ -481,8 +487,8 @@ reply for reading.
 `.github/workflows/ci.yml` runs on every push and pull request to `master`, in
 two jobs:
 
-- **Types and unit tests** — both `tsc` projects plus the ten no-browser suites.
-  No services and no API keys, so a regression fails in under a minute.
+- **Types, lint and unit tests** — both `tsc` projects, `npm run lint`, and the
+  no-browser suites. No services and no API keys, so a regression fails in under a minute.
 - **Browser suites** — a MongoDB service container, the built API on `:3000`,
   Vite on `:5173`, and Playwright Chromium. Runs security, then UI, then
   beat playback, and uploads failure screenshots as an artifact.

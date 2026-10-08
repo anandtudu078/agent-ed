@@ -18,7 +18,7 @@ jobs:
   # API keys — so it stays under a minute and fails within seconds of a
   # regression rather than after the e2e job has burned ten minutes.
   unit:
-    name: Types and unit tests
+    name: Types, lint and unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +48,13 @@ jobs:
       - name: Typecheck client
         run: npx tsc --noEmit
         working-directory: client
+
+      # The layer tsc cannot see: dead variables, orphaned expressions, and the
+      # accidental globals that only bite plain-JS test scripts. One flat config
+      # at the repository root (eslint.config.mjs) covers server, suites, and
+      # client alike — same `npm run lint` a developer runs locally.
+      - name: Lint
+        run: npm run lint
 
       - name: Unit suites
         run: npm test
