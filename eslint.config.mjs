@@ -8,12 +8,12 @@
  * they would need two project services and would re-check what tsc already
  * proves with `strict: true`. What is left is the layer tsc cannot see: dead
  * variables, accidental globals, empty blocks, unreachable code, and the
- * `no-undef` holes that only bite plain-JS test scripts.
+ * `no-undef` holes that only bite plain-JS scripts.
  *
  * `eslint .` from the root lints everything that matters:
- *   src/ scripts/            server and its no-browser suites
+ *   src/                     the server
  *   client/src/              the app
- *   client/scripts/          Playwright suites (.mjs and .ts)
+ *   client/scripts/          browser tooling (.mjs)
  *
  * and ignores build output, so dist/ never contributes findings.
  */
@@ -38,21 +38,13 @@ export default tseslint.config(
 
   {
     /**
-     * Playwright suites run in Node but their `page.evaluate` callbacks are
+     * Playwright tooling runs in Node but its `page.evaluate` callbacks are
      * parsed as plain functions and execute in the browser — both global sets
      * are genuinely reachable code, not a blanket exemption.
      */
     files: ["client/scripts/**/*.mjs"],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },
-    },
-  },
-
-  {
-    /** Server-side suites are Node programs: no browser globals. */
-    files: ["scripts/**/*.ts"],
-    languageOptions: {
-      globals: globals.node,
     },
   },
 

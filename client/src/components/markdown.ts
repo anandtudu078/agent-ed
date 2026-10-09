@@ -32,7 +32,7 @@
  *     Output is emitted as one concatenation with no inter-tag whitespace.
  *
  * Everything here is a pure function of a string: no DOM, no globals, so the
- * whole thing is unit-testable (`npm run test:markdown`).
+ * whole thing can be verified without a browser.
  */
 
 /**
