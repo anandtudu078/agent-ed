@@ -67,6 +67,26 @@ export const chatRateLimit = rateLimit({
 });
 
 /**
+ * Class operations: creating classes, and — the one that matters — guessing
+ * join codes. A seven-character code from a 32-character alphabet is strong
+ * against a human but only as strong as the attempt rate against a script, so
+ * join attempts are budgeted per signed-in user: 15 per 15 minutes is
+ * generous for a student who mistypes once and hostile to enumeration.
+ *
+ * Keyed on the user like the others, because a classroom shares one IP.
+ */
+export const classJoinRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 15,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: keyByUser,
+  message: {
+    error: "Too many class attempts. Please try again in 15 minutes.",
+  },
+});
+
+/**
  * Socket messages: the authenticated user id when available, otherwise the
  * socket id, so one connection can't flood the AI pipeline.
  */

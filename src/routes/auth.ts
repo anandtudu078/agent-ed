@@ -37,14 +37,27 @@ interface AuthPayload {
   username: string;
   password: string;
   displayName?: string;
+  /**
+   * Optional at sign-up: "teacher" creates an account that can own classes
+   * and view the rosters of students who join them. Anything other than an
+   * explicit "teacher" is a student — a malformed value must never be able
+   * to grant the privileged role.
+   */
+  role?: "student" | "teacher";
 }
 
 function parseAuthPayload(body: unknown): AuthPayload | null {
   if (!body || typeof body !== "object") return null;
-  const { username, password, displayName } = body as Record<string, unknown>;
+  const { username, password, displayName, role } = body as Record<string, unknown>;
   if (typeof username !== "string" || typeof password !== "string") return null;
   if (displayName !== undefined && typeof displayName !== "string") return null;
-  return { username, password, displayName };
+  if (role !== undefined && role !== "student" && role !== "teacher") return null;
+  return {
+    username,
+    password,
+    displayName,
+    role: role as AuthPayload["role"],
+  };
 }
 
 /**
@@ -86,13 +99,21 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, passwordHash, displayName });
+    const user = await User.create({
+      username,
+      passwordHash,
+      displayName,
+      // Defaulting to "student" for anything the parser did not explicitly
+      // recognise as "teacher" — the privileged role is opt-in only.
+      role: payload.role === "teacher" ? "teacher" : "student",
+    });
 
     const token = signAuthToken({
       id: String(user._id),
       username: user.username,
       displayName: user.displayName,
       language: user.language ?? "en",
+      role: user.role ?? "student",
     });
     const refreshToken = await issueRefreshToken(String(user._id));
 
@@ -111,6 +132,7 @@ router.post("/register", authRateLimit, async (request: Request, response: Respo
         username: user.username,
         displayName: user.displayName,
         language: user.language ?? "en",
+        role: user.role ?? "student",
       },
     });
   } catch (error) {
@@ -154,6 +176,7 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
       username: user.username,
       displayName: user.displayName,
       language: user.language ?? "en",
+      role: user.role ?? "student",
     });
     const refreshToken = await issueRefreshToken(String(user._id));
 
@@ -168,6 +191,7 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
         username: user.username,
         displayName: user.displayName,
         language: user.language ?? "en",
+        role: user.role ?? "student",
       },
     });
   } catch (error) {
@@ -191,9 +215,9 @@ router.post("/login", authRateLimit, async (request: Request, response: Response
  * the day someone starts reading that object.
  */
 router.get("/me", requireAuth, (request, response) => {
-  const { id, username, displayName, language } =
+  const { id, username, displayName, language, role } =
     (request as AuthenticatedRequest).authUser as AuthUser;
-  response.json({ user: { id, username, displayName, language } });
+  response.json({ user: { id, username, displayName, language, role: role ?? "student" } });
 });
 
 /**
@@ -228,6 +252,7 @@ router.patch("/language", requireAuth, async (request, response) => {
       username: user.username,
       displayName: user.displayName,
       language: user.language,
+      role: user.role ?? "student",
     };
     // Re-issue the cookie so the new language travels in the JWT. Without this
     // the next reply would come back in the old language until the access token
@@ -292,6 +317,7 @@ router.post("/refresh", async (request, response) => {
       username: user.username,
       displayName: user.displayName,
       language: user.language ?? "en",
+      role: user.role ?? "student",
     });
     // Rotate both cookies. The refresh cookie is the credential that mattered
     // here — leaving the old one in place after a successful rotation would
@@ -307,6 +333,7 @@ router.post("/refresh", async (request, response) => {
         username: user.username,
         displayName: user.displayName,
         language: user.language ?? "en",
+        role: user.role ?? "student",
       },
     });
   } catch (error) {

@@ -826,8 +826,11 @@ keeping in the README permanently, because of *how* it survived.
 - **Memory is 12 messages.** Enough for a thread, thin for a session.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.
-- **No teacher view.** Needed before real deployment in a school. The consent
-  flow is done; a teacher cannot yet see a cohort's progress.
+- **Teacher accounts are self-declared.** The class view exists — a teacher
+  creates a class, students join with its code, and the roster shows progress,
+  weak topics and last-active (never a student's conversations) — but "I'm a
+  teacher" at sign-up is a checkbox away from anyone, with no approval step and
+  no verification of the role itself.
 - Gemini's free tier is exhausted on the development account, so Groq has been
   carrying everything. Both paths work; only the fallback has been exercised
   recently.

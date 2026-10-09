@@ -8,6 +8,7 @@
 import { Router } from "express";
 
 import { Progress } from "../models/Progress";
+import { Cohort } from "../models/Cohort";
 import { RefreshToken } from "../models/RefreshToken";
 import { Session } from "../models/Session";
 import { User } from "../models/User";
@@ -59,6 +60,17 @@ router.get("/export", requireAuth, async (request, response) => {
       conversation: session?.conversationHistory ?? [],
       topicsVisited: session?.topicsVisited ?? [],
       learning: progress ?? null,
+      // Class memberships, both directions. A roster that silently keeps a
+      // deleted student — or an export that omits the classes someone was in —
+      // would each contradict a promise this app makes elsewhere.
+      classes: {
+        enrolled: await Cohort.find({ memberIds: user.username })
+          .select({ name: 1, joinCode: 1 })
+          .lean(),
+        teaching: await Cohort.find({ teacherId: user.username })
+          .select({ name: 1, joinCode: 1, memberIds: 1 })
+          .lean(),
+      },
       // Counted, not listed: token hashes are credentials, and there is no reason
       // for a student to be holding them.
       activeSessions,
@@ -105,6 +117,15 @@ router.delete("/", requireAuth, async (request, response) => {
     await User.deleteOne({ _id: authUser.id });
     await Session.deleteMany({ studentId: user.username });
     await Progress.deleteMany({ studentId: user.username });
+    // Class memberships go too: delete the classes this account taught, and
+    // pull it from every roster it was in. Without this a teacher's roster
+    // would keep naming a student the app claims to have erased — the exact
+    // contradiction the erasure promise exists to prevent.
+    await Cohort.deleteMany({ teacherId: user.username });
+    await Cohort.updateMany(
+      { memberIds: user.username },
+      { $pull: { memberIds: user.username } },
+    );
     // Refresh tokens are keyed by `_id`, unlike the two collections above.
     await RefreshToken.deleteMany({ userId: authUser.id });
     // The account is gone, so any live session cookie must go with it — otherwise

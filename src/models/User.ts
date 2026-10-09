@@ -6,6 +6,15 @@ export interface UserDocument extends Document {
   passwordHash: string;
   displayName: string;
   /**
+   * "teacher" accounts own classes and see the rosters of students who
+   * *chose* to join them. Self-reported at registration, like the guardian
+   * name in the consent flow — verifying it would mean an email infrastructure
+   * this project deliberately does not have. The blast radius of a false claim
+   * is bounded by the join code: a fake teacher can only see students who
+   * typed their code on purpose.
+   */
+  role: "student" | "teacher";
+  /**
    * Teaching language. Stored on the user rather than in localStorage so the
    * choice follows a student to another device — a language preference that
    * resets on a new browser isn't really a preference.
@@ -39,6 +48,11 @@ const userSchema = new Schema<UserDocument>(
     },
     passwordHash: { type: String, required: true },
     displayName: { type: String, required: true, trim: true, maxlength: 64 },
+    role: {
+      type: String,
+      enum: ["student", "teacher"],
+      default: "student",
+    },
     language: {
       type: String,
       enum: ["en", "hi"],
