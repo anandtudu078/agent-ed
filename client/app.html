@@ -220,6 +220,26 @@
             </p>
           </div>
 
+          <!--
+            Role selection: register mode only. Same User document either way —
+            ticking this just sets `role: "teacher"`, which is what unlocks the
+            class view. Wrapped in its own div so the checkbox and its label
+            hide together (a bare <label> has no display to toggle back to).
+          -->
+          <div id="teacher-field" class="hidden px-1 text-xs text-slate-400">
+            <label class="flex cursor-pointer items-start gap-2.5">
+              <input
+                id="teacher-checkbox"
+                type="checkbox"
+                class="mt-0.5 accent-indigo-500"
+              />
+              <span>
+                I'm a teacher — create a class code so students can join and I
+                can see their progress.
+              </span>
+            </label>
+          </div>
+
           <p
             id="auth-error"
             role="alert"
@@ -373,9 +393,12 @@
                 grace period to change your mind.
               </li>
               <li>
-                <span class="font-semibold">No teacher or cohort view yet.</span>
-                A class cannot be given access centrally, and a teacher cannot see
-                what their students have asked. Access is per-account.
+                <span class="font-semibold">Teacher accounts are self-declared.</span>
+                Ticking "I'm a teacher" at sign-up grants the class view with no
+                approval step. A teacher sees a student's progress and weak topics
+                only after that student joins the class with its code — never their
+                conversations — but the role itself is only as trustworthy as the
+                person holding the account.
               </li>
             </ul>
           </div>
@@ -575,9 +598,20 @@
               id="dashboard-toggle"
               type="button"
               title="Toggle learning dashboard"
+              aria-pressed="false"
               class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-indigo-500/50 hover:text-indigo-300"
             >
               📊 <span class="hidden lg:inline">Dashboard</span>
+            </button>
+            <!-- Classes: students enter a join code here, teachers run cohorts. -->
+            <button
+              id="cohort-toggle"
+              type="button"
+              title="Toggle class view"
+              aria-pressed="false"
+              class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-indigo-500/50 hover:text-indigo-300"
+            >
+              🏫 <span class="hidden lg:inline">Classes</span>
             </button>
             <span
               id="user-badge"
@@ -615,6 +649,16 @@
         aria-label="Student learning dashboard"
       >
         <div id="dashboard-host" class="h-full"></div>
+      </section>
+
+      <!-- Class (cohort) view: the dashboard's sibling overlay. Hosts a
+           component instance the same way #dashboard-host does. -->
+      <section
+        id="cohort-view"
+        class="hidden flex-1 overflow-hidden"
+        aria-label="Class view"
+      >
+        <div id="cohort-host" class="h-full"></div>
       </section>
 
       <!-- Chat area -->

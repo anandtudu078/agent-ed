@@ -9,6 +9,7 @@ import {
   createDashboard,
   type CourseInfo,
 } from "./components/dashboard";
+import { createCohortPanel } from "./components/cohort";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -37,6 +38,11 @@ interface StoredUser {
   username: string;
   displayName: string;
   language?: "en" | "hi";
+  /**
+   * Teacher accounts get the class view. Optional because anything stored
+   * before roles existed deserialises without it — absence means student.
+   */
+  role?: "student" | "teacher";
 }
 
 interface AuthResponse {
@@ -211,6 +217,11 @@ const newChatButtonEl =
 const languageToggleEl =
   document.querySelector<HTMLButtonElement>("#language-toggle")!;
 const userBadgeEl = document.querySelector<HTMLSpanElement>("#user-badge")!;
+// Register mode only. Lives in a wrapper div so the checkbox and its label
+// show and hide together (a bare <label> has no display to toggle back to).
+const teacherFieldEl = document.querySelector<HTMLDivElement>("#teacher-field")!;
+const teacherCheckboxEl =
+  document.querySelector<HTMLInputElement>("#teacher-checkbox")!;
 
 const messagesEl = document.querySelector<HTMLDivElement>("#messages")!;
 const chatContainerEl = document.querySelector<HTMLElement>("#chat-container")!;
@@ -351,6 +362,11 @@ function setAuthLoading(loading: boolean): void {
 const dashboardToggleEl = document.querySelector<HTMLButtonElement>("#dashboard-toggle")!;
 const dashboardViewEl = document.querySelector<HTMLElement>("#dashboard-view")!;
 const dashboardHostEl = document.querySelector<HTMLDivElement>("#dashboard-host")!;
+// The class view is the dashboard's sibling overlay: same shell, same
+// single-host rule, its own header button.
+const cohortToggleEl = document.querySelector<HTMLButtonElement>("#cohort-toggle")!;
+const cohortViewEl = document.querySelector<HTMLElement>("#cohort-view")!;
+const cohortHostEl = document.querySelector<HTMLDivElement>("#cohort-host")!;
 const owlStageEl = document.querySelector<HTMLElement>("#owl-stage")!;
 // The chat wrapper (not just #chat-container) must be hidden with the chat:
 // it is a flex-1 sibling of #dashboard-view, so leaving it visible while
@@ -435,6 +451,8 @@ let speakingRevertTimer: ReturnType<typeof setTimeout> | null = null;
 
 let dashboard: ReturnType<typeof createDashboard> | null = null;
 let dashboardVisible = false;
+let cohortPanel: ReturnType<typeof createCohortPanel> | null = null;
+let cohortVisible = false;
 
 /**
  * Replay an entrance animation on an element already in the document.
@@ -453,6 +471,9 @@ function playEntrance(el: HTMLElement): void {
 
 function setDashboardVisible(visible: boolean): void {
   dashboardVisible = visible;
+  // One overlay at a time: opening the dashboard closes the class view, and
+  // "off" means back to the chat, which closes it too.
+  closeCohortChrome();
   // Both directions animate: switching to the dashboard and coming back to the
   // lesson are both changes of context, and a hard cut between them reads as a
   // different page having loaded rather than the same app turning around.
@@ -558,6 +579,49 @@ function setDashboardVisible(visible: boolean): void {
       () => (teachLanguage === "hi" ? "hi" : "en"),
     );
   }
+}
+
+/**
+ * Take the class view off screen without touching any other surface.
+ *
+ * The dashboard and the class view are two overlays on the same shell, so
+ * whichever surface is being shown, this is the shared "classes are closed"
+ * half of the transition — a private helper so the two overlays cannot drift
+ * into both believing they own the screen.
+ */
+function closeCohortChrome(): void {
+  cohortVisible = false;
+  cohortViewEl.classList.add("hidden");
+  cohortToggleEl.setAttribute("aria-pressed", "false");
+  cohortToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+}
+
+function setCohortVisible(visible: boolean): void {
+  cohortVisible = visible;
+  if (visible) {
+    // Mirror of the dashboard path: only one host on screen. The dashboard's
+    // chrome goes first, without its chat-return animation — the chat is about
+    // to be hidden too, so animating it would be a change nobody sees.
+    dashboardVisible = false;
+    dashboardViewEl.classList.add("hidden");
+    dashboardToggleEl.setAttribute("aria-pressed", "false");
+    dashboardToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+    if (currentAuth && !cohortPanel) {
+      cohortPanel = createCohortPanel(cohortHostEl, {
+        role: currentAuth.user.role ?? "student",
+      });
+    }
+  }
+  // Both directions animate, exactly like the dashboard switch.
+  playEntrance(visible ? cohortViewEl : chatWrapperEl);
+  cohortViewEl.classList.toggle("hidden", !visible);
+  owlStageEl.classList.toggle("hidden", visible);
+  chatContainerEl.classList.toggle("hidden", visible);
+  chatWrapperEl.classList.toggle("hidden", visible);
+  controlBarEl.classList.toggle("hidden", visible);
+  cohortToggleEl.setAttribute("aria-pressed", String(visible));
+  cohortToggleEl.classList.toggle("border-indigo-500/60", visible);
+  cohortToggleEl.classList.toggle("text-indigo-300", visible);
 }
 
 function setAiStatus(next: AiStatus): void {
@@ -1224,6 +1288,7 @@ function setAuthMode(register: boolean): void {
   authToggleLinkEl.textContent = register ? "Sign in" : "Create an account";
   displayNameInputEl.classList.toggle("hidden", !register);
   usernameHintEl.classList.toggle("hidden", !register);
+  teacherFieldEl.classList.toggle("hidden", !register);
   passwordInputEl.placeholder = register
     ? "Password (8+ characters)"
     : "Password";
@@ -1275,6 +1340,9 @@ async function signOut(message?: string): Promise<void> {
   usernameInputEl.value = "";
   passwordInputEl.value = "";
   displayNameInputEl.value = "";
+  // The role checkbox belongs to the previous account; carrying it into the
+  // next sign-up form would silently make the next person a teacher.
+  teacherCheckboxEl.checked = false;
   // The strength meter is derived from the password; leaving it scoring a field
   // that is now empty would just be a stale lie.
   updatePasswordStrength();
@@ -1286,6 +1354,8 @@ async function signOut(message?: string): Promise<void> {
   setAiStatus("idle");
   dashboard?.destroy();
   dashboard = null;
+  cohortPanel?.destroy();
+  cohortPanel = null;
   setDashboardVisible(false);
   if (message) appendAuthError(message);
   showAuth();
@@ -1334,7 +1404,14 @@ authFormEl.addEventListener("submit", async (event) => {
 
   const endpoint = isRegisterMode ? "/api/auth/register" : "/api/auth/login";
   const body = isRegisterMode
-    ? { username, password, displayName: displayNameInputEl.value.trim() || username }
+    ? {
+        username,
+        password,
+        displayName: displayNameInputEl.value.trim() || username,
+        // The server honours only the literal "teacher"; anything else is a
+        // student, so this checkbox cannot grant more than it says.
+        role: teacherCheckboxEl.checked ? "teacher" : "student",
+      }
     : { username, password };
 
   setAuthLoading(true);
@@ -2403,6 +2480,9 @@ speakerToggleEl.addEventListener("click", () => {
 
 dashboardToggleEl.addEventListener("click", () =>
   setDashboardVisible(!dashboardVisible),
+);
+cohortToggleEl.addEventListener("click", () =>
+  setCohortVisible(!cohortVisible),
 );
 
 // ---------------------------------------------------------------------------

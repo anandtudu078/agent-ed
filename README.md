@@ -12,7 +12,6 @@ npm ci && npm ci --prefix client        # install
 cp .env.example .env                    # set MONGO_URI + JWT_SECRET (a key is optional)
 npm run dev                             # terminal 1 — API on :3000
 npm run dev --prefix client             # terminal 2 — app on :5173
-npm test                                # 716 checks, ~50s, no key or browser needed
 ```
 
 Then open **http://localhost:5173**, sign up, give consent, pick a course and press
@@ -92,7 +91,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 | [🛠️ Technologies used](#technologies-used) | stack, and the repository layout |
 | [⚙️ Setup & installation](#setup) · [🚀 How to run](#how-to-run) | prerequisites, env vars, the two terminals |
 | [✨ Features](#features) | course detail, notes, checkpoint tests |
-| [🧪 Tests](#tests) | 1,063 checks, 25 suites, and the quality gate |
+| [🧪 Verification](#verification) | typecheck, lint, and build gates |
 | [🧠 How the adaptive loop works](#the-adaptive-loop) | the core idea, end to end |
 | [🏗️ Architecture](#architecture) | the code, and the seams worth reading first |
 | [🔐 Session handling](#session-handling) · [🛡️ Security notes](#security-notes) | auth, cookies, CSRF, rate limits |
@@ -103,8 +102,7 @@ the real tutor, the real diagrams, the real grading. But nothing above needs it.
 **If you only read one thing**, read
 [How the adaptive loop works](#the-adaptive-loop) — it is the difference between
 this and a chatbot. If you are reviewing the work rather than the idea, go
-straight to [Tests](#tests): every claim in this file is backed by a suite you can
-run.
+straight to [Verification](#verification): what gates the code, stated plainly.
 
 ---
 
@@ -162,14 +160,14 @@ free tier pinned at zero does not add its retries to every reply.
 **Auth & security** — `httpOnly` cookies · JWT access + rotating refresh tokens ·
 `bcryptjs` · Helmet · CORS allowlist · `express-rate-limit` · CSRF header
 
-**Testing** — no framework. Plain Node scripts, because the project has none and
-consistency beats ceremony. Playwright drives the five browser suites; the pure
-logic suites run under `ts-node` or Node 24's native type stripping.
+**Verification** — no automated test suites. The gates are `tsc --strict` on
+both projects, one flat ESLint config, and a full build of each half. Playwright
+remains only for `npm run screenshots`.
 
 **Linting** — ESLint with a flat config (`eslint.config.mjs`), one config for the
 whole repository. Deliberately not type-aware: `tsc --strict` already proves the
 types, so the linter covers what it cannot — dead variables, orphaned
-expressions, and the `no-undef` holes that only bite plain-JS test scripts.
+expressions, and the `no-undef` holes that only bite plain-JS scripts.
 
 **Why no frontend framework?** The entire client is `main.ts` plus ten
 components. One cohesive event loop drives the owl, speech and the socket
@@ -187,9 +185,8 @@ src/                  Express API
   middleware/         auth, consent, rate limiting, AI spend
   data/               the authored AI/ML curriculum
 client/src/           Vite client — main.ts + 10 components/
-scripts/              server-side unit suites (no browser needed)
-client/scripts/       browser suites (Playwright)
-.github/workflows/    CI: types + unit tests, and the five browser suites
+client/scripts/       screenshot capture (Playwright)
+.github/workflows/    CI: types, lint, and builds of both halves
 ```
 
 ---
@@ -200,11 +197,9 @@ client/scripts/       browser suites (Playwright)
 
 **Prerequisites**
 
-- Node.js **24 or newer** — required, not preferred. The client test suites run
-  as `node scripts/*.ts` and rely on native type stripping; on Node 20 or 22 they
-  die with `ERR_UNKNOWN_FILE_EXTENSION` before a single check runs. Both
-  `package.json` files declare `"engines": { "node": ">=24" }` so npm warns you
-  rather than letting you discover it as a mysterious test failure.
+- Node.js **24 or newer** — both `package.json` files declare
+  `"engines": { "node": ">=24" }`, so npm warns you rather than letting you
+  discover an unsupported runtime as a mysterious failure later.
 - A MongoDB instance — local `mongod`, a container, or a free MongoDB Atlas cluster
 - An AI provider key — **optional**, see [No API key? Read this
   first](#no-api-key-read-this-first). A free [Groq](https://console.groq.com)
@@ -269,7 +264,7 @@ Then: sign up → give consent → pick a course → open its detail → *Start
 learning*. The tutor greets you with a question.
 
 The subsections below walk through what you should see. Everything after them is
-design rationale and test evidence.
+design rationale.
 
 ---
 
@@ -343,181 +338,31 @@ and the dashboard all work. Only the tutor, assessments and diagrams need one.
 
 ---
 
-## 🧪 Tests
+<a id="verification"></a>
 
-**1,063 checks across twenty-five suites**, all of which run in CI or from one command.
+## 🧪 Verification
 
-| | Suites | Checks | Needs |
-|---|---|---|---|
-| Pure logic (`npm test`) | 19 | 716 | nothing — no DB, no key, no browser |
-| Browser (Playwright) | 5 | 297 | the app running + MongoDB |
-| Tutor quality (`test:quality`) | 1 | 50 + judged | a live AI key |
-| **Total** | **25** | **1,063** | |
-
-Start here:
+The repository carries **no automated test suites** — the scripts that once
+lived in `scripts/` and `client/scripts/` were removed. What gates the code
+now, and what CI runs on every push and pull request:
 
 ```bash
-npm test              # runs every suite that needs no browser (19 suites, ~50s)
+npx tsc --noEmit                                 # server, strict
+npx tsc --noEmit --project client/tsconfig.json  # client
+npm run lint                                     # one flat ESLint config
+npm run build                                    # server -> dist/
+npm run build --prefix client                    # client -> client/dist/
 ```
 
-Or individually:
+Playwright remains only for `npm run screenshots`, which captures the images
+in `docs/screenshots/`.
 
-| Command | Checks | What it covers |
-|---|---|---|
-| `npm run test:parse` | 36 | `parseVisualSpec` — rejects hostile model output |
-| `npm run test:review` | 38 | Spaced-repetition scheduling |
-| `npm run test:profile` | 30 | The learner profile and its prompt rendering |
-| `npm run test:difficulty` | 32 | Adaptive difficulty bands, including topic matching across spellings |
-| `npm run test:prereqs` | 17 | The prerequisite graph |
-| `npm run test:flow` | 18 | Flow signals |
-| `npm run test:reaction` | 36 | How the owl reacts to a student's turn |
-| `npm run test:checkpoints` | 46 | Course checkpoint intervals and coverage |
-| `npm run test:return` | 32 | Return detection and first run |
-| `npm run test:course` | 26 | Course progress derivation, including malformed stored topics |
-| `npm run test:streak` | 51 | Study streaks and the daily goal — boundaries, gaps, and tone |
-| `npm run test:offline` | 128 | The offline AI gate (incl. the tutor stand-in), the auth cookie policy, and the consent rules |
-| `npm run test:quality` | 50 + judged | Whether the tutor actually teaches — **needs a live AI key** |
-| `npm run test:beats` | 24 | Lesson-beat segmentation |
-| `npm run test:notes` | 36 | Downloadable course notes (printable PDF) |
-| `npm run test:alerts` | 40 | Learning alerts and subtopic matching |
-| `npm run test:markdown` | 41 | The tutor's markdown renderer — escape-first, tag allowlist, hostile input |
-| `npm run test:encoding` | 6 | No mis-decoded punctuation in tracked source |
-| `npm run test:sketches` | 50 | Beat-sketch matching and SVG rendering |
-| `npm run test:render` | 29 | Diagram renderers (from `client/`) |
-| `npm run test:ui` | 102 | Full browser flows, consent step, no readable tokens (Playwright) |
-| `npm run test:workflow` | 55 | The first-run journey: landing → sign-up → consent → course detail → lesson |
-| `npm run test:playback` | 31 | Beat sequencing, turn-taking and sketch/board pairing (Playwright) |
-| `npm run test:security` | 94 | Auth, authz, CORS, CSRF, cookies, consent enforcement, XSS |
-| `npm run test:login` | 15 | The login page: render, validation, wrong password, register toggle (Playwright) |
-| `npm run test:journey` | 46 | **A real student, start to finish, against live providers** — see below |
+> The suites used to back every claim in this file with a runnable check.
+> They have been removed; the claims remain, and a reviewer now has to check
+> them by reading the code. That trade is recorded here rather than left for
+> a reader to discover.
 
-`npm run test:browsers` runs every browser suite in the order CI uses.
-
-**`test:journey` is the one to run before a demo.** Every other browser suite
-drives a single component or stubs the model; this is the only one that answers
-the question a user actually cares about — if a real person signs up and tries to
-learn something, does the whole thing work end to end? It needs a live key and an
-empty database (it exercises first-run, catalog seeding and the first-run
-greeting), so it is a deliberate manual gate rather than a CI step.
-
-The browser suites need the app running (`npm run dev` in both terminals) and a
-reachable MongoDB. Five of the six need no AI key:
-
-```bash
-npm run test:browsers   # all five, in CI's order
-
-# or individually, in this order:
-npm run test:login      # first: cheap, and warms nothing
-npm run test:security   # next: it can burn the auth rate-limit budget
-npm run test:ui
-npm run test:workflow
-npm run test:playback
-```
-
-`test:journey` is the exception and is deliberately not in that list — see above.
-
-`test:security` is listed first on purpose. It can optionally exhaust the auth
-rate limiter, which would then block the registration the UI suite depends on.
-
-Type-check and lint both projects:
-
-```bash
-npx tsc --noEmit              # server
-npx tsc --noEmit --project client/tsconfig.json
-npm run lint                  # ESLint: one flat config for server, suites, and client
-```
-
-> The `parse` and `render` suites are the security boundary for everything the
-> owl draws. They had no permanent coverage before — the earlier tests were a
-> throwaway script that was later deleted.
-
-### Does the tutor actually teach?
-
-Every other suite tests the app *around* the model - parsing, scheduling,
-segmentation, rendering, authorisation. `test:quality` asks the question none of
-them ask: is the teaching any good?
-
-```bash
-npm run test:quality     # needs GROQ_API_KEY or GEMINI_API_KEY
-```
-
-It calls the real `generateTutorResponse` with the real system prompts across
-eight cases - Socratic and Teach, English and Hindi, including a follow-up that
-has thread context and a student who demands the answer outright - and grades
-what comes back in two separate layers:
-
-**Contract checks (50) - deterministic, and they gate.** The promises the
-prompts make and the code depends on: Socratic mode must not hand over the
-answer, must ask something, must stay short enough to think about; Teach mode
-must explain substantively and close by checking understanding; Hindi must come
-back as Devanagari. A prompt is a request. These make some of them obligations.
-
-**Judged checks - one model call per case, reported but never gating.** Factual
-soundness, whether the withholding actually worked, whether it built on the
-thread, whether a beginner would understand it. These are a grader that is
-itself a language model, so failing a run on its opinion would produce a flaky
-suite nobody trusts. The scores are a baseline to watch for drift.
-
-Dimensions are only scored where they apply. `withholds` is not counted on a
-Teach-mode case, where explaining *is* the job, and `buildsOnThread` is not
-counted when the case has no prior turn. A baseline that punishes correct
-behaviour is worse than no baseline.
-
-Last run:
-
-```
-CONTRACT   50/50 passed
-JUDGED     withholds        5/5  (100%)
-           factuallySound   8/8  (100%)
-           onTopic          6/8  ( 75%)
-           helpsABeginner   7/8  ( 88%)
-           buildsOnThread   1/1  (100%)
-```
-
-Not in CI: it spends real provider quota and takes a few minutes. It is a manual
-gate before a release, not on every push. `QUALITY_SHOW_REPLIES=1` prints every
-reply for reading.
-
-> The honest limit: this measures whether the tutor *behaves* as specified. It
-> cannot prove the explanations are pedagogically good, and the judge shares a
-> blind spot with the model it is grading. It is a floor, not a ceiling.
-
-### Continuous integration
-
-`.github/workflows/ci.yml` runs on every push and pull request to `master`, in
-two jobs:
-
-- **Types, lint and unit tests** — both `tsc` projects, `npm run lint`, and the
-  no-browser suites. No services and no API keys, so a regression fails in under a minute.
-- **Browser suites** — a MongoDB service container, the built API on `:3000`,
-  Vite on `:5173`, and Playwright Chromium. Runs security, then UI, then
-  beat playback, and uploads failure screenshots as an artifact.
-
-The split is not a convenience. All four bugs fixed in the beat-and-sketch work
-passed review and passed every unit suite, and failed only in a browser — a
-sticky mood left behind by beat playback, a language switch that appeared to do
-nothing, a reaction talked over by a stale explanation. None were reachable from
-a pure logic test, which is the reason the slow job exists at all.
-
-CI uses no AI provider keys. The browser suites are made possible by a
-deterministic stand-in for the assessment endpoints
-(`src/services/offlineAi.ts`), which answers on the **server** rather than in the
-browser — so the whole pipeline runs for real: question → grade → `Progress` and
-`Session` writes → dashboard render. A browser-side stub would have painted a
-result panel while writing none of that, forcing the review-card and weak-point
-checks to be skipped.
-
-The stand-in is gated behind `ALLOW_OFFLINE_AI=1` and **refuses outright when
-`NODE_ENV=production`**. That guard is the entire safety story: a deploy with a
-missing key would otherwise show real students a fabricated score and invented
-feedback, which is strictly worse than the honest `502` the routes return today.
-`npm run test:offline` exists mostly to attack that guard.
-
-Its score is deliberately set below `REVIEW_PASS_SCORE`, so an offline run still
-records a weak point and a due review card. A higher score would take the happy
-path through a pipeline that would otherwise never execute in CI.
-
-### The owl takes turns
+## 🦉 The owl takes turns
 
 Beats made the tutor's delivery readable. They did not make it a *lesson*: a
 lesson that asks a question and then talks straight past it is still a monologue,
@@ -548,7 +393,7 @@ driven entirely on the client, so clearing the thread under a running lesson lef
 it talking — or, once turn-taking landed, waiting for an answer to a question
 that had just been deleted from the screen.
 
-### The owl reacts to the student
+## 🦉 The owl reacts to the student
 
 The owl's face is not decoration. It is a function of how the student's turn
 actually went (`src/services/tutorReaction.ts`), computed server-side so the rule
@@ -638,7 +483,8 @@ and *attribution* share a prefix and nothing else, and are still different topic
 because being handed remedial work on the wrong concept is worse than being handed
 a question that is slightly too hard. Where several records match, the **weakest**
 one decides — one lucky strong result cannot mask an earlier failure on the same
-concept. `test:difficulty` pins all of this, in both directions.
+concept. `difficultyForTopic` in `src/services/progressService.ts`
+implements this; nothing checks it automatically since the suites were removed.
 
 **They answer.** Three things are stored: the score, the *specific wrong idea*
 the answer revealed, and when. Strength blends with what was already known
@@ -691,8 +537,7 @@ client/src/
   components/markdown.ts       tutor prose - escape first, allowlisted tags
   components/celebration.ts    the one celebration moment, motion-guarded
 
-scripts/                       server-side suites (no browser needed)
-client/scripts/                browser suites (Playwright)
+client/scripts/                screenshot capture (Playwright)
 ```
 
 **One turn, end to end.** Every arrow is a real function; nothing here is
@@ -768,9 +613,8 @@ never had. Two defences, deliberately redundant:
 
 `Secure` is set in production and deliberately **not** in development: a `Secure`
 cookie over `http://localhost` silently vanishes, and the only symptom is "login
-is broken". `npm run test:offline` asserts both directions, including that
-`NODE_ENV=Production` (capitalised, as some hosts set it) still marks cookies
-secure — the same case-sensitivity trap that once left the offline AI gate open in
+is broken". The case matters: `NODE_ENV=Production` (capitalised, as some
+hosts set it) must still mark cookies secure — the same case-sensitivity trap that once left the offline AI gate open in
 production.
 
 Two things the migration could not keep, and did not try to:
@@ -887,8 +731,7 @@ most likely things to need changing.
 - The tutor's prose follows the same rule. Its markdown is rendered by
   `client/src/components/markdown.ts`, which escapes every line before it adds
   anything and only ever emits `strong`/`em`/`code`/`span`/`br` — no attribute
-  is derived from model text and no `href` exists to abuse. `test:markdown`
-  attacks it directly.
+  is derived from model text and no `href` exists to abuse.
 - Rate limits are keyed on the signed-in **user**, not IP, because a school
   puts a whole classroom behind one address.
 - Refresh tokens rotate on use and are stored only as a SHA-256 hash. Replaying
@@ -919,9 +762,8 @@ keeping in the README permanently, because of *how* it survived.
   a course without testing midway.
 
   It survived because the test suite *asserted the bug*: "the untested list is
-  capped" pinned the truncation in place. That check has been replaced with six
-  covering the actual invariant. A test that locks in the wrong behaviour is
-  worse than no test — it converts a bug into a specification.
+  capped" pinned the truncation in place. A test that locks in the wrong
+  behaviour is worse than no test — it converts a bug into a specification.
 
   The lesson generalises: **a value that crosses a trust boundary is not a
   display concern.** The moment a list is signed, stored, or asserted on, it
@@ -984,8 +826,11 @@ keeping in the README permanently, because of *how* it survived.
 - **Memory is 12 messages.** Enough for a thread, thin for a session.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.
-- **No teacher view.** Needed before real deployment in a school. The consent
-  flow is done; a teacher cannot yet see a cohort's progress.
+- **Teacher accounts are self-declared.** The class view exists — a teacher
+  creates a class, students join with its code, and the roster shows progress,
+  weak topics and last-active (never a student's conversations) — but "I'm a
+  teacher" at sign-up is a checkbox away from anyone, with no approval step and
+  no verification of the role itself.
 - Gemini's free tier is exhausted on the development account, so Groq has been
   carrying everything. Both paths work; only the fallback has been exercised
   recently.

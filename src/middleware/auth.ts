@@ -190,6 +190,14 @@ export interface AuthUser {
    * every message.
    */
   language: "en" | "hi";
+  /**
+   * Account role, carried for display only. Authorization never trusts it:
+   * `requireTeacher` re-reads the role from the database on every call, so a
+   * stale or forged claim in a token cannot open a roster. Role has no
+   * legitimate way to change after registration, which is what makes reading
+   * it from the token safe for deciding what to *render*.
+   */
+  role?: "student" | "teacher";
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -284,4 +292,45 @@ export async function requireAuth(
 
   request.authUser = user;
   next();
+}
+
+/**
+ * Teacher-only routes. Runs after `requireAuth`.
+ *
+ * The role is re-read from the database rather than taken from the token. The
+ * token is good enough to decide what UI to draw, but a roster is student data,
+ * and "the bearer of this token claims to be a teacher" is not an authorization
+ * model. One indexed `_id` read per call — the same price `requireAuth` already
+ * pays — buys a check that fails closed when the account is gone and can never
+ * be satisfied by an old token.
+ */
+export async function requireTeacher(
+  request: AuthenticatedRequest,
+  response: Response,
+  next: NextFunction,
+): Promise<void> {
+  const authUser = request.authUser;
+  if (!authUser) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  try {
+    const user = await User.findById(authUser.id).select({ role: 1 }).lean();
+    if (!user) {
+      response.status(401).json({
+        error: "That account no longer exists. Please sign in again.",
+      });
+      return;
+    }
+    if (user.role !== "teacher") {
+      response.status(403).json({ error: "Teacher account required." });
+      return;
+    }
+    next();
+  } catch {
+    // Fail the request, keep the session — same rule as requireAuth: a
+    // database blip must not be reported as a permission problem.
+    response.status(503).json({ error: "Unable to verify permissions. Try again." });
+  }
 }

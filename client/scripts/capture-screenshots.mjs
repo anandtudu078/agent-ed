@@ -54,8 +54,8 @@ try {
   await page.locator("#auth-submit").click();
 
   // 3. Consent — the gate that has to be answered before any AI call. Both the
-  // age band AND the terms checkbox are required; the ui-test proves the button
-  // refuses without them, so skipping the second box just re-shows the form.
+  // age band AND the terms checkbox are required; the submit button refuses
+  // without them, so skipping the second box just re-shows the form.
   await page.locator("#consent-view").waitFor({ state: "visible", timeout: 20000 });
   await page.locator('#consent-view input[name="consent-age"][value="18-plus"]').check();
   await page.locator("#consent-terms").check();
