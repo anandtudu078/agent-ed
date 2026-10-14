@@ -28,6 +28,7 @@ import accountRouter from "./routes/account";
 import assessmentRouter from "./routes/assessment";
 import coursesRouter from "./routes/courses";
 import classesRouter from "./routes/classes";
+import lessonsRouter from "./routes/lessons";
 import dashboardRouter, { seedCatalogOnce } from "./routes/dashboard";
 import {
   AuthenticatedRequest,
@@ -144,6 +145,7 @@ app.use("/api/account", accountRouter);
 app.use("/api/assessment", assessmentRouter);
 app.use("/api/courses", coursesRouter);
 app.use("/api/classes", classesRouter);
+app.use("/api/lessons", lessonsRouter);
 app.use("/api/dashboard", dashboardRouter);
 
 interface StudentMessagePayload {

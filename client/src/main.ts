@@ -10,6 +10,7 @@ import {
   type CourseInfo,
 } from "./components/dashboard";
 import { createCohortPanel } from "./components/cohort";
+import { createLessonsPanel } from "./components/lessons";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -367,6 +368,11 @@ const dashboardHostEl = document.querySelector<HTMLDivElement>("#dashboard-host"
 const cohortToggleEl = document.querySelector<HTMLButtonElement>("#cohort-toggle")!;
 const cohortViewEl = document.querySelector<HTMLElement>("#cohort-view")!;
 const cohortHostEl = document.querySelector<HTMLDivElement>("#cohort-host")!;
+// Saved lessons: the third sibling overlay on the same shell — same single-host
+// rule, its own header button — following the cohort view exactly.
+const lessonsToggleEl = document.querySelector<HTMLButtonElement>("#lessons-toggle")!;
+const lessonsViewEl = document.querySelector<HTMLElement>("#lessons-view")!;
+const lessonsHostEl = document.querySelector<HTMLDivElement>("#lessons-host")!;
 const owlStageEl = document.querySelector<HTMLElement>("#owl-stage")!;
 // The chat wrapper (not just #chat-container) must be hidden with the chat:
 // it is a flex-1 sibling of #dashboard-view, so leaving it visible while
@@ -453,6 +459,8 @@ let dashboard: ReturnType<typeof createDashboard> | null = null;
 let dashboardVisible = false;
 let cohortPanel: ReturnType<typeof createCohortPanel> | null = null;
 let cohortVisible = false;
+let lessonsPanel: ReturnType<typeof createLessonsPanel> | null = null;
+let lessonsVisible = false;
 
 /**
  * Replay an entrance animation on an element already in the document.
@@ -471,9 +479,10 @@ function playEntrance(el: HTMLElement): void {
 
 function setDashboardVisible(visible: boolean): void {
   dashboardVisible = visible;
-  // One overlay at a time: opening the dashboard closes the class view, and
-  // "off" means back to the chat, which closes it too.
+  // One overlay at a time: opening the dashboard closes the class view and the
+  // lessons view, and "off" means back to the chat, which closes those too.
   closeCohortChrome();
+  closeLessonsChrome();
   // Both directions animate: switching to the dashboard and coming back to the
   // lesson are both changes of context, and a hard cut between them reads as a
   // different page having loaded rather than the same app turning around.
@@ -601,11 +610,13 @@ function setCohortVisible(visible: boolean): void {
   if (visible) {
     // Mirror of the dashboard path: only one host on screen. The dashboard's
     // chrome goes first, without its chat-return animation — the chat is about
-    // to be hidden too, so animating it would be a change nobody sees.
+    // to be hidden too, so animating it would be a change nobody sees. The
+    // lessons view closes the same way, for the same reason.
     dashboardVisible = false;
     dashboardViewEl.classList.add("hidden");
     dashboardToggleEl.setAttribute("aria-pressed", "false");
     dashboardToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+    closeLessonsChrome();
     if (currentAuth && !cohortPanel) {
       cohortPanel = createCohortPanel(cohortHostEl, {
         role: currentAuth.user.role ?? "student",
@@ -622,6 +633,50 @@ function setCohortVisible(visible: boolean): void {
   cohortToggleEl.setAttribute("aria-pressed", String(visible));
   cohortToggleEl.classList.toggle("border-indigo-500/60", visible);
   cohortToggleEl.classList.toggle("text-indigo-300", visible);
+}
+
+/**
+ * Take the saved-lessons view off screen without touching any other surface.
+ *
+ * The third sibling overlay on the same shell, so it needs the same shared
+ * "lessons are closed" half of every transition — a private helper so no two
+ * overlays can drift into both believing they own the screen.
+ */
+function closeLessonsChrome(): void {
+  lessonsVisible = false;
+  lessonsViewEl.classList.add("hidden");
+  lessonsToggleEl.setAttribute("aria-pressed", "false");
+  lessonsToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+}
+
+function setLessonsVisible(visible: boolean): void {
+  lessonsVisible = visible;
+  if (visible) {
+    // Only one host on screen, exactly as the dashboard and cohort paths do:
+    // the other two overlays' chrome closes first, without their chat-return
+    // animation — the chat is about to be hidden too.
+    dashboardVisible = false;
+    dashboardViewEl.classList.add("hidden");
+    dashboardToggleEl.setAttribute("aria-pressed", "false");
+    dashboardToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+    cohortVisible = false;
+    cohortViewEl.classList.add("hidden");
+    cohortToggleEl.setAttribute("aria-pressed", "false");
+    cohortToggleEl.classList.remove("border-indigo-500/60", "text-indigo-300");
+    if (currentAuth && !lessonsPanel) {
+      lessonsPanel = createLessonsPanel(lessonsHostEl);
+    }
+  }
+  // Both directions animate, exactly like the other two overlays.
+  playEntrance(visible ? lessonsViewEl : chatWrapperEl);
+  lessonsViewEl.classList.toggle("hidden", !visible);
+  owlStageEl.classList.toggle("hidden", visible);
+  chatContainerEl.classList.toggle("hidden", visible);
+  chatWrapperEl.classList.toggle("hidden", visible);
+  controlBarEl.classList.toggle("hidden", visible);
+  lessonsToggleEl.setAttribute("aria-pressed", String(visible));
+  lessonsToggleEl.classList.toggle("border-indigo-500/60", visible);
+  lessonsToggleEl.classList.toggle("text-indigo-300", visible);
 }
 
 function setAiStatus(next: AiStatus): void {
@@ -2483,6 +2538,9 @@ dashboardToggleEl.addEventListener("click", () =>
 );
 cohortToggleEl.addEventListener("click", () =>
   setCohortVisible(!cohortVisible),
+);
+lessonsToggleEl.addEventListener("click", () =>
+  setLessonsVisible(!lessonsVisible),
 );
 
 // ---------------------------------------------------------------------------
