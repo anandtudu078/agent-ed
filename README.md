@@ -124,6 +124,7 @@ Around that loop:
 |---|---|
 | **Learning alerts** | what to do next, derived from the same state the tutor reads |
 | **Course notes** | the whole syllabus as a printable PDF, built in the browser, Hindi too |
+| **Saved lessons** | replay a finished lesson later, even after it has scrolled out of the chat |
 | **Checkpoint tests** | fall due as you work through a course, and can never be invented |
 | **An owl** | whose face, cap and speech are a function of how the last turn went |
 
@@ -520,9 +521,9 @@ src/
     assessmentService.ts       question generation and grading
     courseService.ts           prerequisite graph, progress derivation
     offlineAi.ts               the deterministic stand-in used by CI
-  models/                      User, Session, Progress, Course, tokens, usage
+  models/                      User, Session, Progress, Course, Lesson, tokens, usage
   middleware/                  auth, consent, rate limits, AI spend cap
-  routes/                      auth, courses, dashboard, assessment, account
+  routes/                      auth, courses, dashboard, assessment, account, lessons
 
 client/src/
   main.ts                      chat, speech, return path, first run
@@ -532,6 +533,7 @@ client/src/
   components/alerts.ts         what the student should know right now
   components/subtopics.ts      fuzzy match from a request to a subtopic
   components/notes.ts          course notes as a printable PDF
+  components/lessons.ts        save & replay a lesson (read-only transcript)
   components/beats.ts          splits a reply into playable lesson beats
   components/sketches.ts       16 hand-drawn SVGs matched to a beat
   components/markdown.ts       tutor prose - escape first, allowlisted tags
@@ -823,7 +825,11 @@ keeping in the README permanently, because of *how* it survived.
   "teach a child to recognise a cat" shows the cat — the thing being
   recognised — rather than the child. A beat naming nothing concrete gets no
   picture at all, and the board falls back to the topic diagram.
-- **Memory is 12 messages.** Enough for a thread, thin for a session.
+- **Memory is 12 messages.** Enough for a thread, thin for a session. Saved
+  lessons (`client/src/components/lessons.ts`) close the gap for the moments a
+  student wants to keep: a snapshot is an independent copy of the conversation,
+  capped at the session's own window, and replays as a read-only transcript —
+  but saving one is a deliberate tap, not automatic.
 - **Prerequisite coverage is 70 of 186 modules.** Maths and deep learning are
   solid; NLP, vision, speech and robotics are largely uncurated.
 - **Teacher accounts are self-declared.** The class view exists — a teacher

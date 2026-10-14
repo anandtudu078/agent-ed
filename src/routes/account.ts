@@ -11,6 +11,7 @@ import { Progress } from "../models/Progress";
 import { Cohort } from "../models/Cohort";
 import { RefreshToken } from "../models/RefreshToken";
 import { Session } from "../models/Session";
+import { Lesson } from "../models/Lesson";
 import { User } from "../models/User";
 import {
   AuthenticatedRequest,
@@ -60,6 +61,13 @@ router.get("/export", requireAuth, async (request, response) => {
       conversation: session?.conversationHistory ?? [],
       topicsVisited: session?.topicsVisited ?? [],
       learning: progress ?? null,
+      // Saved lesson snapshots. They are the student's own data like everything
+      // else here, and an export that omitted them would contradict both the
+      // erasure below (which deletes them) and the promise that the export is
+      // "everything we hold about this student".
+      savedLessons: await Lesson.find({ studentId: user.username })
+        .sort({ savedAt: -1 })
+        .lean(),
       // Class memberships, both directions. A roster that silently keeps a
       // deleted student — or an export that omits the classes someone was in —
       // would each contradict a promise this app makes elsewhere.
@@ -117,6 +125,11 @@ router.delete("/", requireAuth, async (request, response) => {
     await User.deleteOne({ _id: authUser.id });
     await Session.deleteMany({ studentId: user.username });
     await Progress.deleteMany({ studentId: user.username });
+    // Saved lesson snapshots go too — they are keyed by username like Session
+    // and Progress. Leaving them behind would mean "erase me" quietly kept a
+    // copy of the student's own words, the exact contradiction the erasure
+    // promise exists to prevent.
+    await Lesson.deleteMany({ studentId: user.username });
     // Class memberships go too: delete the classes this account taught, and
     // pull it from every roster it was in. Without this a teacher's roster
     // would keep naming a student the app claims to have erased — the exact

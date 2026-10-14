@@ -613,6 +613,16 @@
             >
               🏫 <span class="hidden lg:inline">Classes</span>
             </button>
+            <!-- Lessons: saved, replayable snapshots of past tutoring sessions. -->
+            <button
+              id="lessons-toggle"
+              type="button"
+              title="Saved lessons you can replay"
+              aria-pressed="false"
+              class="rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-indigo-500/50 hover:text-indigo-300"
+            >
+              📚 <span class="hidden lg:inline">Lessons</span>
+            </button>
             <span
               id="user-badge"
               class="flex max-w-[5.5rem] items-center truncate whitespace-nowrap rounded-full bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300 sm:max-w-[12rem]"
@@ -659,6 +669,17 @@
         aria-label="Class view"
       >
         <div id="cohort-host" class="h-full"></div>
+      </section>
+
+      <!-- Saved lessons: the third sibling overlay on the same shell, same
+           single-host rule, its own header button. Read-only replays of saved
+           tutoring sessions — hosts a component like #dashboard-host does. -->
+      <section
+        id="lessons-view"
+        class="hidden flex-1 overflow-hidden"
+        aria-label="Saved lessons"
+      >
+        <div id="lessons-host" class="h-full"></div>
       </section>
 
       <!-- Chat area -->
